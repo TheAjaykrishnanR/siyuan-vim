@@ -32,10 +32,12 @@
 
   &--vim-normal {
     caret-color: var(--b3-theme-primary);
+    caret-shape: block;
   }
 
   &--vim-insert {
     caret-color: var(--b3-theme-on-background);
+    caret-shape: auto;
   }
 
   [data-node-id] {
