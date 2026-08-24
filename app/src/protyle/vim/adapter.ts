@@ -287,14 +287,23 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
 
     public replaceRange(text: string, s: Pos, e?: Pos): void {
         const endPos = e || s;
-        const startLine = Math.min(s.line, endPos.line);
-        const endLine = Math.max(s.line, endPos.line);
-        const startCh = s.line < endPos.line ? s.ch : (s.line === endPos.line ? Math.min(s.ch, endPos.ch) : endPos.ch);
-        const endCh = s.line > endPos.line ? s.ch : (s.line === endPos.line ? Math.max(s.ch, endPos.ch) : endPos.ch);
+        let startLine = Math.min(s.line, endPos.line);
+        let endLine = Math.max(s.line, endPos.line);
+        let startCh = s.line < endPos.line ? s.ch : (s.line === endPos.line ? Math.min(s.ch, endPos.ch) : endPos.ch);
+        let endCh = s.line > endPos.line ? s.ch : (s.line === endPos.line ? Math.max(s.ch, endPos.ch) : endPos.ch);
 
         const allBlocks = this.getEditableBlocks();
         if (allBlocks.length === 0) {
             return;
+        }
+
+        if (startLine >= allBlocks.length) {
+            startLine = allBlocks.length - 1;
+            startCh = this.getBlockText(allBlocks[startLine]).length;
+        }
+        if (endLine >= allBlocks.length) {
+            endLine = allBlocks.length - 1;
+            endCh = this.getBlockText(allBlocks[endLine]).length;
         }
 
         // 1. 同一块内文字替换
@@ -307,9 +316,12 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
             const oldHTML = block.outerHTML;
             const lineText = this.getBlockText(block);
 
-            // 针对 visual mode 中选中空行并删除的特殊处理 (v mode + d on empty block)
-            if (text === "" && lineText.length === 0 && startCh === 0 && endCh === 0) {
-                if (this.state?.vim?.inputState?.operator === "d") {
+            // 行删除需删除整个内容块，而不是只清空文本。单块文档的 dd 会落入同一块替换分支。
+            const isLinewiseDelete = text === "" && startCh === 0 &&
+                (endCh === 0 || endCh >= lineText.length) &&
+                this.state?.vim?.inputState?.operator === "delete" &&
+                this.state?.vim?.inputState?.operatorArgs?.linewise;
+            if (isLinewiseDelete) {
                     const doOperations: IOperation[] = [];
                     const undoOperations: IOperation[] = [];
                     const blockID = block.getAttribute("data-node-id");
@@ -338,7 +350,6 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
                     transaction(this.protyle, doOperations, undoOperations);
                     this.setCursor(Math.max(0, startLine - 1), 0);
                     return;
-                }
             }
 
             // 若插入文本包含换行符（如回车换行或多行粘贴），拆分并创建新内容块
