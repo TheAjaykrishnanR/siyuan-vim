@@ -10,7 +10,7 @@ When merging `upstream/master` into `master`:
    - View incoming upstream commits: `git log --oneline master..upstream/master`
    - List files modified by upstream: `git diff --name-only master..upstream/master`
    - List files modified locally: `git diff --name-only upstream/master..master`
-4. **Context Loading:** Read `VIM_IMPLEMENTATION.md` to understand where our custom Vim implementation and logic hooks live. Pay special attention to any overlapping files from Step 3.
+4. **Context Loading:** Read `OUR_CHANGES.md` to understand where our custom Vim implementation and logic hooks live and other changes that are present. Pay special attention to any overlapping files from Step 3.
 5. **Merge & Conflict Resolution:** Run `git merge upstream/master`.
    - **NEVER** overwrite custom Vim features, bindings, custom dependencies, or configs with upstream defaults.
    - For code overlaps: Retain local Vim hooks while adopting new upstream APIs/fixes.

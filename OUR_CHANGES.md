@@ -43,3 +43,9 @@ Modifications were made to existing SiYuan frontend files to hook the Vim logic 
 
 - **`app/src/constants.ts`**
   - Additions to support Vim-related state or configuration constants.
+
+# Other Changes:
+
+1. A `build.ps1` script to automate releases.
+2. This `OUR_CHANGES.md` file.
+3. A `SYNC.md` containing instructions for updating with upstream.
