@@ -1,0 +1,601 @@
+{
+	"ID": "20210110175347-2xrwoiq",
+	"Spec": "2",
+	"Type": "NodeDocument",
+	"Properties": {
+		"id": "20210110175347-2xrwoiq",
+		"title": "日记",
+		"type": "doc",
+		"updated": "20260809232000"
+	},
+	"Children": [
+		{
+			"ID": "20260613180438-q02mnqc",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20260613180438-q02mnqc",
+				"updated": "20260803171606"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "概述"
+				}
+			]
+		},
+		{
+			"ID": "20260613180438-m5s8d4s",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260613180438-m5s8d4s",
+				"updated": "20260613180438"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "日记是一种按日期快速创建和定位文档的方式。可用于记录每日生活、工作日志、每日待办等。"
+				}
+			]
+		},
+		{
+			"ID": "20260613180438-ficw3e7",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260613180438-ficw3e7",
+				"updated": "20260809232000"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "创建和打开"
+				}
+			]
+		},
+		{
+			"ID": "20260613180438-lbirm0p",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260613180438-lbirm0p",
+				"updated": "20260809232000"
+			},
+			"Children": [
+				{
+					"ID": "20260613180438-uyzyax7",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260613180438-uyzyax7",
+						"updated": "20260809232000"
+					},
+					"Children": [
+						{
+							"ID": "20260613180438-8w4l3b6",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260613180438-8w4l3b6",
+								"updated": "20260809232000"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "入口"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：顶部主菜单中点击「日记」按钮，或使用快捷键 "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "Alt"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "+"
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "5"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "​（macOS 上 "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "⌃"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "+"
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "5"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "​）"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260613180438-jhyolqn",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260613180438-jhyolqn",
+						"updated": "20260613180438"
+					},
+					"Children": [
+						{
+							"ID": "20260613180438-bxbgvzg",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260613180438-bxbgvzg",
+								"updated": "20260613180438"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "快捷行为"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：使用快捷键打开日记时，沿用上次选择的笔记本"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260613180438-z1k8myy",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260613180438-z1k8myy",
+						"updated": "20260613180438"
+					},
+					"Children": [
+						{
+							"ID": "20260613180438-8dp3b89",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260613180438-8dp3b89",
+								"updated": "20260613180438"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "首次打开"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：打开当天日记时，若对应日期的文档尚不存在，系统会根据配置的存放路径和模板生成；已存在则直接打开"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
+			"ID": "20260613180438-konhms4",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260613180438-konhms4",
+				"updated": "20260803171606"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "配置"
+				}
+			]
+		},
+		{
+			"ID": "20260613180438-ctys2ye",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260613180438-ctys2ye",
+				"updated": "20260803171606"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "在笔记本右键菜单中打开 "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "设置"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "​，在新建日记设置中配置："
+				}
+			]
+		},
+		{
+			"ID": "20260613180438-24jbb0i",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260613180438-24jbb0i",
+				"updated": "20260614205004"
+			},
+			"Children": [
+				{
+					"ID": "20260613180438-rtu02yf",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260613180438-rtu02yf",
+						"updated": "20260614205004"
+					},
+					"Children": [
+						{
+							"ID": "20260613180438-i9q8ger",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260613180438-i9q8ger",
+								"updated": "20260613180459"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "存放路径"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：设置日记文档在笔记本下的存放路径，支持"
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "block-ref",
+									"TextMarkBlockRefID": "20210104091309-mvyh081",
+									"TextMarkBlockRefSubtype": "s",
+									"TextMarkTextContent": "模板变量"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "。"
+								}
+							]
+						},
+						{
+							"ID": "20260613180438-s3tximc",
+							"Type": "NodeList",
+							"ListData": {},
+							"Properties": {
+								"id": "20260613180438-s3tximc",
+								"updated": "20260614205004"
+							},
+							"Children": [
+								{
+									"ID": "20260613180438-bxgni3r",
+									"Type": "NodeListItem",
+									"ListData": {
+										"BulletChar": 42,
+										"Marker": "Kg=="
+									},
+									"Properties": {
+										"id": "20260613180438-bxgni3r",
+										"updated": "20260614205004"
+									},
+									"Children": [
+										{
+											"ID": "20260613180438-ggb0qsw",
+											"Type": "NodeParagraph",
+											"Properties": {
+												"id": "20260613180438-ggb0qsw",
+												"updated": "20260613180438"
+											},
+											"Children": [
+												{
+													"Type": "NodeText",
+													"Data": "常见示例："
+												}
+											]
+										},
+										{
+											"ID": "20260613180438-ulzp490",
+											"Type": "NodeList",
+											"ListData": {},
+											"Properties": {
+												"id": "20260613180438-ulzp490",
+												"updated": "20260614205004"
+											},
+											"Children": [
+												{
+													"ID": "20260613180438-zyhhaeb",
+													"Type": "NodeListItem",
+													"ListData": {
+														"BulletChar": 42,
+														"Marker": "Kg=="
+													},
+													"Properties": {
+														"id": "20260613180438-zyhhaeb",
+														"updated": "20260614205004"
+													},
+													"Children": [
+														{
+															"ID": "20260613180438-acg49un",
+															"Type": "NodeParagraph",
+															"Properties": {
+																"id": "20260613180438-acg49un",
+																"updated": "20260614205004"
+															},
+															"Children": [
+																{
+																	"Type": "NodeText",
+																	"Data": "​"
+																},
+																{
+																	"Type": "NodeTextMark",
+																	"TextMarkType": "code",
+																	"TextMarkTextContent": "/日记/{{now | date \"2006/01/2006-01-02\"}}"
+																},
+																{
+																	"Type": "NodeText",
+																	"Data": "​ — 按年/月分组，每天一个文件"
+																}
+															]
+														}
+													]
+												},
+												{
+													"ID": "20260613180438-u7zb7cm",
+													"Type": "NodeListItem",
+													"ListData": {
+														"BulletChar": 42,
+														"Marker": "Kg=="
+													},
+													"Properties": {
+														"id": "20260613180438-u7zb7cm",
+														"updated": "20260613180438"
+													},
+													"Children": [
+														{
+															"ID": "20260613180438-wcooe4o",
+															"Type": "NodeParagraph",
+															"Properties": {
+																"id": "20260613180438-wcooe4o",
+																"updated": "20260613180438"
+															},
+															"Children": [
+																{
+																	"Type": "NodeText",
+																	"Data": "​"
+																},
+																{
+																	"Type": "NodeTextMark",
+																	"TextMarkType": "code",
+																	"TextMarkTextContent": "/日记/{{now | date \"2006-01-02\"}}"
+																},
+																{
+																	"Type": "NodeText",
+																	"Data": "​ — 所有日记放一个文件夹"
+																}
+															]
+														}
+													]
+												},
+												{
+													"ID": "20260613180438-hfdlwey",
+													"Type": "NodeListItem",
+													"ListData": {
+														"BulletChar": 42,
+														"Marker": "Kg=="
+													},
+													"Properties": {
+														"id": "20260613180438-hfdlwey",
+														"updated": "20260613180438"
+													},
+													"Children": [
+														{
+															"ID": "20260613180438-rb8e8rq",
+															"Type": "NodeParagraph",
+															"Properties": {
+																"id": "20260613180438-rb8e8rq",
+																"updated": "20260613180438"
+															},
+															"Children": [
+																{
+																	"Type": "NodeText",
+																	"Data": "​"
+																},
+																{
+																	"Type": "NodeTextMark",
+																	"TextMarkType": "code",
+																	"TextMarkTextContent": "/{{now | date \"2006/01/02\"}}"
+																},
+																{
+																	"Type": "NodeText",
+																	"Data": "​ — 根目录下按日分组"
+																}
+															]
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260613180438-s289mll",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260613180438-s289mll",
+						"updated": "20260613180438"
+					},
+					"Children": [
+						{
+							"ID": "20260613180438-masohrc",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260613180438-masohrc",
+								"updated": "20260613180438"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "模板路径"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "（可选）：选择一个已有的文档作为日记模板，创建新日记时自动以模板内容作为初始内容。常用于预设每日待办结构、日报模板等场景"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
+			"ID": "20260613180438-2jqn4li",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260613180438-2jqn4li",
+				"updated": "20260613180727"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "使用技巧"
+				}
+			]
+		},
+		{
+			"ID": "20260613180438-7sv8wxk",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260613180438-7sv8wxk",
+				"updated": "20260613180520"
+			},
+			"Children": [
+				{
+					"ID": "20260613180438-5852mn8",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260613180438-5852mn8",
+						"updated": "20260613180520"
+					},
+					"Children": [
+						{
+							"ID": "20260613180438-j8w87ko",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260613180438-j8w87ko",
+								"updated": "20260613180520"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "嵌入待办汇总"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：在日记模板中使用"
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "block-ref",
+									"TextMarkBlockRefID": "20201117101902-2ewjjum",
+									"TextMarkBlockRefSubtype": "s",
+									"TextMarkTextContent": "嵌入块"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "，可以汇总待办事项或需要每日查看的内容块"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260613180438-ky82t1v",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260613180438-ky82t1v",
+						"updated": "20260613180438"
+					},
+					"Children": [
+						{
+							"ID": "20260613180438-h6ciws7",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260613180438-h6ciws7",
+								"updated": "20260613180438"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "不同笔记本不同配置"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：每个笔记本可以独立配置日记的存放路径和模板，互不影响"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
+			"ID": "20260613180727-jq56n4m",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260613180727-jq56n4m",
+				"updated": "20260613180727"
+			}
+		}
+	]
+}

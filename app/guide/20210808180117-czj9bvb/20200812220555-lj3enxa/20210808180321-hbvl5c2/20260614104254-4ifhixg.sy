@@ -1,0 +1,401 @@
+{
+	"ID": "20260614104254-4ifhixg",
+	"Spec": "2",
+	"Type": "NodeDocument",
+	"Properties": {
+		"id": "20260614104254-4ifhixg",
+		"title": "网络代理",
+		"type": "doc",
+		"updated": "20260803163440"
+	},
+	"Children": [
+		{
+			"ID": "20260614104306-6elp82o",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20260614104306-6elp82o",
+				"updated": "20260614104306"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "概述"
+				}
+			]
+		},
+		{
+			"ID": "20260614104306-l33oydh",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260614104306-l33oydh",
+				"updated": "20260614104306"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "思源支持通过设置网络代理来转发网络请求，适用于网络受限或需要通过代理访问网络服务的场景。"
+				}
+			]
+		},
+		{
+			"ID": "20260614104306-tylh2a2",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20260614104306-tylh2a2",
+				"updated": "20260803163440"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "配置方式"
+				}
+			]
+		},
+		{
+			"ID": "20260614104306-zvmmfua",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260614104306-zvmmfua",
+				"updated": "20260803163440"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "在 "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "设置"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "​ - "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "应用"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "​ - "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "常规"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "​ - "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "网络代理"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " ​ 中配置："
+				}
+			]
+		},
+		{
+			"ID": "20260614104306-s1ddhjq",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260614104306-s1ddhjq",
+				"updated": "20260614104306"
+			},
+			"Children": [
+				{
+					"ID": "20260614104306-z5vyah1",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260614104306-z5vyah1",
+						"updated": "20260614104306"
+					},
+					"Children": [
+						{
+							"ID": "20260614104306-ifs0z9h",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260614104306-ifs0z9h",
+								"updated": "20260614104306"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "协议"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：选择代理协议——直接连接（不使用代理）、HTTP、HTTPS 或 SOCKS5"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260614104306-vrvyzam",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260614104306-vrvyzam",
+						"updated": "20260614104306"
+					},
+					"Children": [
+						{
+							"ID": "20260614104306-ca3pajp",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260614104306-ca3pajp",
+								"updated": "20260614104306"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "主机"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：填写代理服务器地址，格式为 "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "code",
+									"TextMarkTextContent": "IP"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "​ 或 "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "code",
+									"TextMarkTextContent": "用户名:密码@IP"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "​（需要认证时）"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260614104306-kui7am5",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260614104306-kui7am5",
+						"updated": "20260614104306"
+					},
+					"Children": [
+						{
+							"ID": "20260614104306-abvldwa",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260614104306-abvldwa",
+								"updated": "20260614104306"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "strong",
+									"TextMarkTextContent": "端口"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "：填写代理服务器端口"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
+			"ID": "20260614104306-2r2y70j",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260614104306-2r2y70j",
+				"updated": "20260614104306"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "配置完成后点击确认即可生效，无需重启。"
+				}
+			]
+		},
+		{
+			"ID": "20260614104306-mplk72h",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20260614104306-mplk72h",
+				"updated": "20260614104306"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "作用范围"
+				}
+			]
+		},
+		{
+			"ID": "20260614104306-44ulung",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260614104306-44ulung",
+				"updated": "20260614104306"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "网络代理设置对以下功能生效："
+				}
+			]
+		},
+		{
+			"ID": "20260614104306-24z7zh1",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260614104306-24z7zh1",
+				"updated": "20260614104306"
+			},
+			"Children": [
+				{
+					"ID": "20260614104306-a3yfily",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260614104306-a3yfily",
+						"updated": "20260614104306"
+					},
+					"Children": [
+						{
+							"ID": "20260614104306-mkinui1",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260614104306-mkinui1",
+								"updated": "20260614104306"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "云端同步和数据备份"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260614104306-wmcd82b",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260614104306-wmcd82b",
+						"updated": "20260614104306"
+					},
+					"Children": [
+						{
+							"ID": "20260614104306-obymov4",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260614104306-obymov4",
+								"updated": "20260614104306"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "版本更新检查"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260614104306-691du5u",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260614104306-691du5u",
+						"updated": "20260614104306"
+					},
+					"Children": [
+						{
+							"ID": "20260614104306-ndnyrj0",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260614104306-ndnyrj0",
+								"updated": "20260614104306"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "AI 功能请求"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260614104306-rjtlnid",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260614104306-rjtlnid",
+						"updated": "20260614104306"
+					},
+					"Children": [
+						{
+							"ID": "20260614104306-v7nffko",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260614104306-v7nffko",
+								"updated": "20260614104306"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "其他所有需要联网的操作"
+								}
+							]
+						}
+					]
+				}
+			]
+		}
+	]
+}
