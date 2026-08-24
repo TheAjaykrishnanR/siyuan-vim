@@ -5,8 +5,49 @@ import {keyboardEventToVimKey} from "./keymap";
 import {updateVimStatus} from "./status";
 import {insertEmptyBlock} from "../../block/util";
 import {Constants} from "../../constants";
+import {showMessage} from "../../dialog/message";
 
 export const Vim = initVim(createCMMock());
+
+// 注册常用 Ex 命令
+Vim.defineEx("write", "w", () => {
+    showMessage(window.siyuan?.languages?.save || "Saved");
+});
+
+Vim.defineEx("quit", "q", (cm: any) => {
+    try {
+        const tab = cm?.protyle?.model?.parent;
+        if (tab && tab.parent && typeof tab.parent.removeTab === "function") {
+            tab.parent.removeTab(tab.id, true);
+        }
+    } catch (e) {
+        console.warn("[SiYuan Vim] :q failed to close tab:", e);
+    }
+});
+
+Vim.defineEx("wq", "wq", (cm: any) => {
+    showMessage(window.siyuan?.languages?.save || "Saved");
+    try {
+        const tab = cm?.protyle?.model?.parent;
+        if (tab && tab.parent && typeof tab.parent.removeTab === "function") {
+            tab.parent.removeTab(tab.id, true);
+        }
+    } catch (e) {
+        console.warn("[SiYuan Vim] :wq failed to close tab:", e);
+    }
+});
+
+Vim.defineEx("x", "x", (cm: any) => {
+    showMessage(window.siyuan?.languages?.save || "Saved");
+    try {
+        const tab = cm?.protyle?.model?.parent;
+        if (tab && tab.parent && typeof tab.parent.removeTab === "function") {
+            tab.parent.removeTab(tab.id, true);
+        }
+    } catch (e) {
+        console.warn("[SiYuan Vim] :x failed to close tab:", e);
+    }
+});
 
 /**
  * 检查 Vim 模式是否已启用（默认启用，可通过 localStorage 配置）
@@ -74,6 +115,11 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
 
         const handleKeyDown = (event: KeyboardEvent) => {
             if (!isVimEnabled()) {
+                return;
+            }
+
+            // 命令/搜索输入框激活时完全跳过 Vim 键盘拦截
+            if (adapter.dialogOpen) {
                 return;
             }
 

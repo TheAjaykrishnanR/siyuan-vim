@@ -23,6 +23,7 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
     public $lastChangeEndOffset = 0;
     public $lineHandleChanges: any[] | undefined = undefined;
     public virtualSelection: any = null;
+    public lastCursor: Pos = {line: 0, ch: 0};
     public options: any = {
         tabSize: 4,
         indentUnit: 4,
@@ -121,9 +122,14 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
     }
 
     public getCursor(p?: "head" | "anchor" | "start" | "end"): Pos {
+        // 搜索/Ex 输入框获得焦点后，getEditorRange 会强制焦点回到编辑器。
+        // 命令栏期间使用打开前保存的光标位置，避免增量搜索抢走输入焦点。
+        if (this.dialogOpen) {
+            return {...this.lastCursor};
+        }
         const range = getEditorRange(this.protyle.wysiwyg.element);
         if (!range) {
-            return {line: 0, ch: 0};
+            return {...this.lastCursor};
         }
         const container = p === "head" || p === "end" ? range.endContainer : range.startContainer;
         const block = (hasClosestBlock(container) || this.getBlockAtIndex(0)) as HTMLElement;
@@ -134,10 +140,11 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         const line = Math.max(0, blockIdx);
         const editElement = getContenteditableElement(block) || block;
         const offset = getSelectionOffset(editElement, this.protyle.wysiwyg.element, range);
-        return {
+        this.lastCursor = {
             line,
             ch: p === "head" || p === "end" ? offset.end : offset.start,
         };
+        return {...this.lastCursor};
     }
 
     public setCursor(lineOrPos: number | Pos, ch?: number): void {
@@ -160,6 +167,7 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         const textLength = editElement.textContent?.length || 0;
         const targetCol = Math.min(Math.max(0, col), textLength);
 
+        this.lastCursor = {line, ch: targetCol};
         focusByOffset(editElement, targetCol, targetCol, true);
         block.scrollIntoView({block: "nearest", inline: "nearest"});
     }
@@ -190,8 +198,19 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         const startBlock = this.getBlockAtIndex(startLine);
         const endBlock = this.getBlockAtIndex(endLine);
 
+        const allBlocks = this.getEditableBlocks();
+        allBlocks.forEach(b => b.classList.remove("protyle-wysiwyg--select"));
+
         if (!startBlock || !endBlock) {
             return;
+        }
+
+        if (this.state?.vim?.visualMode) {
+            for (let i = startLine; i <= endLine; i++) {
+                if (allBlocks[i]) {
+                    allBlocks[i].classList.add("protyle-wysiwyg--select");
+                }
+            }
         }
 
         const startEdit = getContenteditableElement(startBlock) || startBlock;
@@ -286,11 +305,45 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
             }
             const editElement = getContenteditableElement(block) || block;
             const oldHTML = block.outerHTML;
+            const lineText = this.getBlockText(block);
+
+            // 针对 visual mode 中选中空行并删除的特殊处理 (v mode + d on empty block)
+            if (text === "" && lineText.length === 0 && startCh === 0 && endCh === 0) {
+                if (this.state?.vim?.inputState?.operator === "d") {
+                    const doOperations: IOperation[] = [];
+                    const undoOperations: IOperation[] = [];
+                    const blockID = block.getAttribute("data-node-id");
+                    doOperations.push({action: "delete", id: blockID});
+                    undoOperations.push({
+                        action: "insert",
+                        id: blockID,
+                        data: block.outerHTML,
+                        previousID: block.previousElementSibling?.getAttribute("data-node-id"),
+                        parentID: block.parentElement?.getAttribute("data-node-id"),
+                    });
+                    block.remove();
+                    
+                    if (allBlocks.length === 1) {
+                        const newId = Lute.NewNodeID();
+                        const newElement = genEmptyElement(false, false, newId);
+                        this.protyle.wysiwyg.element.appendChild(newElement);
+                        doOperations.push({
+                            action: "insert",
+                            id: newId,
+                            data: newElement.outerHTML,
+                            parentID: this.protyle.block.id,
+                        });
+                        undoOperations.push({action: "delete", id: newId});
+                    }
+                    transaction(this.protyle, doOperations, undoOperations);
+                    this.setCursor(Math.max(0, startLine - 1), 0);
+                    return;
+                }
+            }
 
             // 若插入文本包含换行符（如回车换行或多行粘贴），拆分并创建新内容块
             if (text.includes("\n")) {
                 const lines = text.split("\n");
-                const lineText = this.getBlockText(block);
                 const prefix = lineText.substring(0, startCh);
                 const suffix = lineText.substring(endCh);
 
@@ -641,7 +694,8 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
 
     public addOverlay(): any {}
     public removeOverlay(): void {}
-    public getSearchCursor(query: RegExp, pos: Pos): {
+
+    public getSearchCursor(query: RegExp | string, pos: Pos): {
         findNext: () => string[] | null | undefined;
         findPrevious: () => string[] | null | undefined;
         find: (back?: boolean) => string[] | null | undefined;
@@ -650,33 +704,101 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         replace: (text: string) => void;
         readonly match: string[] | null;
     } {
-        let currentLine = pos.line;
-        let currentCh = pos.ch;
+        let currentLine = pos ? pos.line : 0;
+        let currentCh = pos ? pos.ch : 0;
         let lastMatch: string[] | null = null;
         let matchFrom: Pos | undefined;
         let matchTo: Pos | undefined;
 
-        return {
-            findNext: (): string[] | null | undefined => {
-                for (let l = currentLine; l < this.lineCount(); l++) {
-                    const lineText = this.getLine(l);
-                    const subText = l === currentLine ? lineText.substring(currentCh) : lineText;
-                    const match = subText.match(query);
-                    if (match && typeof match.index === "number") {
-                        const start = (l === currentLine ? currentCh : 0) + match.index;
-                        const end = start + match[0].length;
-                        matchFrom = {line: l, ch: start};
-                        matchTo = {line: l, ch: end};
-                        lastMatch = match;
-                        currentLine = l;
-                        currentCh = end;
-                        return match;
+        const regExp: RegExp = typeof query === "string" ? new RegExp(query, "i") : query;
+
+        const findNextMatch = (): string[] | null => {
+            const lineCount = this.lineCount();
+            for (let l = currentLine; l < lineCount; l++) {
+                const lineText = this.getLine(l);
+                const startOffset = (l === currentLine) ? currentCh : 0;
+                if (startOffset > lineText.length) {
+                    continue;
+                }
+                const subText = lineText.substring(startOffset);
+                const match = subText.match(regExp);
+                if (match && typeof match.index === "number") {
+                    const matchStart = startOffset + match.index;
+                    const matchEnd = matchStart + (match[0].length || 1);
+                    matchFrom = {line: l, ch: matchStart};
+                    matchTo = {line: l, ch: matchEnd};
+                    this.lastSearchMatch = { from: matchFrom, to: matchTo };
+                    lastMatch = match;
+                    currentLine = l;
+                    currentCh = matchEnd;
+                    return match;
+                }
+            }
+            return null;
+        };
+
+        const findPrevMatch = (): string[] | null => {
+            for (let l = currentLine; l >= 0; l--) {
+                const lineText = this.getLine(l);
+                const endOffset = (l === currentLine) ? currentCh : lineText.length;
+                const subText = lineText.substring(0, endOffset);
+                
+                let bestMatch: RegExpMatchArray | null = null;
+                let bestIndex = -1;
+                
+                if (regExp.global) {
+                    regExp.lastIndex = 0;
+                    let m: RegExpExecArray | null;
+                    while ((m = regExp.exec(subText)) !== null) {
+                        if (m.index + m[0].length <= endOffset) {
+                            bestMatch = m;
+                            bestIndex = m.index;
+                        }
+                        if (m.index === regExp.lastIndex) {
+                            regExp.lastIndex++;
+                        }
+                    }
+                } else {
+                    const globalReg = new RegExp(regExp.source, regExp.flags.includes("g") ? regExp.flags : regExp.flags + "g");
+                    let m: RegExpExecArray | null;
+                    while ((m = globalReg.exec(subText)) !== null) {
+                        if (m.index + m[0].length <= endOffset) {
+                            bestMatch = m;
+                            bestIndex = m.index;
+                        }
+                        if (m.index === globalReg.lastIndex) {
+                            globalReg.lastIndex++;
+                        }
                     }
                 }
-                return null;
-            },
-            findPrevious: (): string[] | null | undefined => null,
-            find: (): string[] | null | undefined => null,
+
+                if (bestMatch && bestIndex !== -1) {
+                    const matchStart = bestIndex;
+                    const matchEnd = bestIndex + (bestMatch[0].length || 1);
+                    matchFrom = {line: l, ch: matchStart};
+                    matchTo = {line: l, ch: matchEnd};
+                    this.lastSearchMatch = { from: matchFrom, to: matchTo };
+                    lastMatch = bestMatch;
+                    currentLine = l;
+                    currentCh = matchStart;
+                    return bestMatch;
+                }
+            }
+            return null;
+        };
+
+        const find = (back?: boolean): string[] | null => {
+            if (back) {
+                return findPrevMatch();
+            } else {
+                return findNextMatch();
+            }
+        };
+
+        return {
+            findNext: () => find(false),
+            findPrevious: () => find(true),
+            find: (back?: boolean) => find(back),
             from: (): Pos | undefined => matchFrom,
             to: (): Pos | undefined => matchTo,
             replace: (text: string): void => {
@@ -733,15 +855,182 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         }
     }
 
-    public scrollIntoView(pos?: Pos): void {
-        if (pos) {
-            const block = this.getBlockAtIndex(pos.line);
-            block?.scrollIntoView({block: "nearest", inline: "nearest"});
+    public lastSearchMatch?: { from: Pos, to: Pos };
+
+    public scrollIntoView(pos?: any): void {
+        console.log("[Vim Adapter] scrollIntoView called with pos:", pos);
+        if (!pos) {
+            return;
+        }
+        let targetLine = -1;
+        let fromPos: Pos | undefined;
+        let toPos: Pos | undefined;
+
+        if (typeof pos.line === "number") {
+            targetLine = pos.line;
+            fromPos = pos;
+            toPos = pos;
+            
+            // vim.js incremental search passes a single pos instead of {from, to}.
+            // We recover the true range from the last search match to highlight properly.
+            if (this.lastSearchMatch && this.lastSearchMatch.from.line === pos.line && this.lastSearchMatch.from.ch === pos.ch) {
+                toPos = this.lastSearchMatch.to;
+            }
+        } else if (pos.from && typeof pos.from.line === "number") {
+            targetLine = pos.from.line;
+            fromPos = pos.from;
+            toPos = pos.to;
+        }
+
+        if (targetLine >= 0) {
+            const block = this.getBlockAtIndex(targetLine);
+            if (block) {
+                console.log(`[Vim Adapter] scrollIntoView scrolling to block ${targetLine}`);
+                block.scrollIntoView({block: "nearest", inline: "nearest"});
+                
+                if (fromPos && toPos && (fromPos.line !== toPos.line || fromPos.ch !== toPos.ch)) {
+                    if (!this.dialogOpen) {
+                        console.log("[Vim Adapter] scrollIntoView applying final selection (dialog is closed)");
+                        // 如果不在对话框中，这是最终跳转，安全使用原生选区
+                        this.setSelection(fromPos, toPos);
+                    } else {
+                        console.log("[Vim Adapter] scrollIntoView applying incremental highlight (dialog is open)");
+                        // 在增量搜索阶段，我们不能使用原生 Selection API，因为在 contenteditable 中
+                        // 设置选区会强制浏览器将焦点转移到编辑器，从而导致输入框失焦并瞬间关闭！
+                        // 替代方案：高亮整个块，让用户知道匹配发生在哪里。
+                        document.querySelectorAll(".protyle-wysiwyg--hl").forEach(el => el.classList.remove("protyle-wysiwyg--hl"));
+                        block.classList.add("protyle-wysiwyg--hl");
+                    }
+                }
+            } else {
+                console.warn(`[Vim Adapter] scrollIntoView could not find block at line ${targetLine}`);
+            }
         }
     }
 
-    public openDialog(): (newVal?: string) => void {
-        return () => {};
+    // 当前是否有命令/搜索对话框处于活动状态，用于阻止 Vim 键盘拦截
+    public dialogOpen = false;
+
+    public openDialog(template: string | Node, callback: (value: string) => void, options?: any): () => void {
+        this.lastCursor = this.getCursor();
+
+        // 移除任何旧的命令栏，防止重复出现
+        document.body.querySelectorAll(".protyle-vim__dialog").forEach(el => el.remove());
+
+        const dialog = document.createElement("div");
+        dialog.className = "protyle-vim__dialog";
+        dialog.style.cssText = [
+            "position: fixed",
+            "bottom: 0",
+            "left: 0",
+            "width: 100%",
+            "background: var(--b3-theme-surface)",
+            "border-top: 1px solid var(--b3-border-color)",
+            "display: flex",
+            "align-items: center",
+            "padding: 0 8px",
+            "z-index: 9999",
+            "font-family: var(--b3-font-family-code)",
+            "font-size: 14px",
+            "box-sizing: border-box",
+            "height: 30px"
+        ].join(";");
+
+        let prefix = "";
+        if (typeof template === "string") {
+            const tmp = document.createElement("div");
+            tmp.innerHTML = template;
+            prefix = tmp.querySelector("span")?.textContent || "";
+        } else if (template instanceof Node) {
+            prefix = (template as HTMLElement).querySelector?.("span")?.textContent || "";
+        }
+
+        const prefixSpan = document.createElement("span");
+        prefixSpan.textContent = prefix;
+        prefixSpan.style.marginRight = "4px";
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "vim-cmd-input b3-text-field b3-text-field--text";
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.style.cssText = [
+            "flex: 1",
+            "background: transparent",
+            "border: none",
+            "outline: none",
+            "box-shadow: none",
+            "color: var(--b3-theme-on-background)",
+            "font-family: inherit",
+            "padding: 0"
+        ].join(";");
+
+        dialog.appendChild(prefixSpan);
+        dialog.appendChild(input);
+        document.body.appendChild(dialog);
+
+        this.dialogOpen = true;
+
+        const closeDialog = () => {
+            if (!this.dialogOpen) return;
+            this.dialogOpen = false;
+            dialog.remove();
+            
+            // 清理增量搜索时的块高亮
+            document.querySelectorAll(".protyle-wysiwyg--hl").forEach(el => el.classList.remove("protyle-wysiwyg--hl"));
+            
+            this.protyle.wysiwyg.element.focus();
+            if (options && options.onClose) {
+                options.onClose(input);
+            }
+        };
+
+        if (options && options.closeOnBlur !== false) {
+            input.addEventListener("blur", () => {
+                if (this.dialogOpen) {
+                    if (options.onKeyDown) {
+                        const escEvent = new KeyboardEvent("keydown", { key: "Escape" });
+                        options.onKeyDown(escEvent, input.value, closeDialog);
+                    }
+                    closeDialog();
+                }
+            });
+        }
+
+        if (options && options.onInput) {
+            input.addEventListener("input", (e: Event) => {
+                options.onInput(e, input.value, closeDialog);
+            });
+        }
+
+        if (options && options.onKeyUp) {
+            input.addEventListener("keyup", (e: KeyboardEvent) => {
+                e.stopPropagation();
+                options.onKeyUp(e, input.value, closeDialog);
+            });
+        }
+
+        input.addEventListener("keydown", (e: KeyboardEvent) => {
+            e.stopPropagation();
+            if (options && options.onKeyDown && options.onKeyDown(e, input.value, closeDialog)) {
+                return;
+            }
+            if (e.key === "Escape" || (options.closeOnEnter !== false && e.key === "Enter")) {
+                input.blur();
+                e.preventDefault();
+                closeDialog();
+            }
+            if (e.key === "Enter" && callback) {
+                callback(input.value);
+            }
+        });
+
+        if (options && options.value) {
+            input.value = options.value;
+        }
+
+        input.focus({preventScroll: true});
+        return closeDialog;
     }
 
     public openNotification(): () => void {
