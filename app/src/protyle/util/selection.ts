@@ -1093,6 +1093,12 @@ export const focusByRange = (range: Range) => {
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
+    const targetElement = (range.startContainer.nodeType === 3
+        ? range.startContainer.parentElement
+        : range.startContainer as HTMLElement)?.closest?.('[contenteditable="true"], .protyle-title__input');
+    if (targetElement && document.activeElement !== targetElement) {
+        (targetElement as HTMLElement).focus({preventScroll: true});
+    }
 };
 
 export const focusBlock = (element: Element, parentElement?: HTMLElement, toStart = true,

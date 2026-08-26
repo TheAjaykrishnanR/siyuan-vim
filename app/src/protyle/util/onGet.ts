@@ -9,7 +9,8 @@ import {bgFade, scrollCenter} from "../../util/highlightById";
 import {pushBack} from "../../util/backForward";
 /// #endif
 import {focusBlock, focusByOffset} from "./selection";
-import {hasClosestByAttribute} from "./hasClosest";
+import {hasClosestByAttribute, hasClosestByClassName} from "./hasClosest";
+import {isVimEnabled} from "../vim";
 import {preventScroll} from "../scroll/preventScroll";
 import {removeLoading} from "../ui/initUI";
 import {isMobile} from "../../util/functions";
@@ -563,7 +564,9 @@ const focusElementById = (protyle: IProtyle, action: string[], scrollAttr?: IScr
         preventScroll(protyle); // 搜索页签滚动会导致再次请求
         bgFade(focusElement);
     }
-    if (action.includes(Constants.CB_GET_FOCUS) || action.includes(Constants.CB_GET_FOCUSFIRST)) {
+    const shouldFocus = action.includes(Constants.CB_GET_FOCUS) || action.includes(Constants.CB_GET_FOCUSFIRST) ||
+        (isVimEnabled() && !protyle.element.classList.contains("fn__none") && !hasClosestByClassName(protyle.element, "fn__none"));
+    if (shouldFocus && focusElement) {
         setTimeout(() => {
             let range: Range;
             if (hasFocusOffsets(scrollAttr)) {

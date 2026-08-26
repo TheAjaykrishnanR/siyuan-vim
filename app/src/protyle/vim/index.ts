@@ -4,9 +4,9 @@ import {ProtyleVimAdapter} from "./adapter";
 import {keyboardEventToVimKey} from "./keymap";
 import {updateVimStatus} from "./status";
 import {insertEmptyBlock} from "../../block/util";
-import {hasClosestBlock} from "../util/hasClosest";
+import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";
 import {getTopAloneElement} from "../wysiwyg/getBlock";
-import {getEditorRange} from "../util/selection";
+import {focusBlock, getEditorRange} from "../util/selection";
 import {Constants} from "../../constants";
 import {showMessage} from "../../dialog/message";
 
@@ -131,6 +131,22 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
         if (isVimEnabled()) {
             setVimModeClasses("normal");
             updateVimStatus("normal");
+            setTimeout(() => {
+                if (protyle.element && !protyle.element.classList.contains("fn__none") && !hasClosestByClassName(protyle.element, "fn__none") && !protyle.disabled) {
+                    const sel = window.getSelection();
+                    const hasCaret = sel && sel.rangeCount > 0 &&
+                        (protyle.wysiwyg.element.contains(sel.getRangeAt(0).startContainer) ||
+                         Boolean(protyle.title?.editElement && protyle.title.editElement.contains(sel.getRangeAt(0).startContainer)));
+                    if (!hasCaret) {
+                        const targetBlock = protyle.wysiwyg.element.firstElementChild;
+                        if (targetBlock) {
+                            focusBlock(targetBlock);
+                        } else if (protyle.title?.editElement) {
+                            protyle.title.editElement.focus();
+                        }
+                    }
+                }
+            }, Constants.TIMEOUT_TRANSITION);
         }
 
         const getActiveBlock = (): HTMLElement | null => {

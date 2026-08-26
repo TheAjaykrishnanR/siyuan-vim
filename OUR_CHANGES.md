@@ -59,6 +59,7 @@ Modifications were made to existing SiYuan frontend files to hook the Vim logic 
 - **Code Block Caret Preservation Across Syntax Rendering**: Enhanced `highlightRender` to snapshot and restore the active selection offset across DOM reconstructions, preventing caret jumping to block offset 0 on `dd`, `dw`, `Shift+P`, `p`, and `u`.
 - **Code Block Undo (`u`) Caret Restoration**: Embedded temporary `<wbr>` tags into `oldHTML` snapshots before serialization in `replaceRange` and `replaceSelection`, enabling exact sub-line caret restoration when undoing actions in code blocks.
 - **Breakout & Mode Transitions**: Streamlined `Shift+Enter` / `Ctrl+Enter` / `Ctrl+Shift+Enter` breakout handling to avoid focus hijacking and maintain instant Insert mode readiness.
+- **Instant Vim Cursor Activation on Note Load**: Augmented `focusByRange` to apply `.focus({preventScroll: true})` to target `contenteditable` and title inputs so Chromium renders the block caret immediately, and auto-focused active visible Protyle instances on document load without requiring mouse clicks.
 
 # Other Changes:
 
