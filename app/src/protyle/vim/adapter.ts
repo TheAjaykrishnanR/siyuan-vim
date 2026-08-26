@@ -368,8 +368,9 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
             // 行删除需删除整个内容块，而不是只清空文本。单块文档的 dd 会落入同一块替换分支。
             const isLinewiseDelete = text === "" && startCh === 0 &&
                 (endCh === 0 || endCh >= lineText.length) &&
-                this.state?.vim?.inputState?.operator === "delete" &&
-                this.state?.vim?.inputState?.operatorArgs?.linewise;
+                (this.state?.vim?.inputState?.operator === "delete" ||
+                 this.state?.vim?.lastEditInputState?.operator === "delete" ||
+                 Boolean(this.curOp?.isVimOp));
             if (isLinewiseDelete) {
                     const targetDeleteBlock = getTopAloneElement(block);
                     const doOperations: IOperation[] = [];
@@ -477,30 +478,9 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
 
         const startLineText = this.getBlockText(startBlock);
         const endLineText = this.getBlockText(endBlock);
-
-        // 检测是否为整行块删除（如 dd: startCh=0, endCh=0 或最后一行 dd）
-        const isDdLastLine = (startLine === endLine - 1 && startCh === startLineText.length && endCh === endLineText.length && text === "");
+        // 检测是否为整行块删除（如 dd、V 行可视模式 d/x 等）
         const isWholeBlocks = (startCh === 0 && endCh === 0 && text === "") ||
                               (startCh === 0 && endCh >= endLineText.length && text === "");
-
-        if (isDdLastLine) {
-            const targetDeleteBlock = getTopAloneElement(endBlock);
-            const doOperations: IOperation[] = [];
-            const undoOperations: IOperation[] = [];
-            const blockID = targetDeleteBlock.getAttribute("data-node-id");
-            doOperations.push({action: "delete", id: blockID});
-            undoOperations.push({
-                action: "insert",
-                id: blockID,
-                data: targetDeleteBlock.outerHTML,
-                previousID: targetDeleteBlock.previousElementSibling?.getAttribute("data-node-id"),
-                parentID: targetDeleteBlock.parentElement?.getAttribute("data-node-id") || this.protyle.block.rootID,
-            });
-            targetDeleteBlock.remove();
-            transaction(this.protyle, doOperations, undoOperations);
-            this.setCursor(startLine, 0);
-            return;
-        }
 
         if (isWholeBlocks) {
             const deleteUpTo = (endCh === 0 && endLine > startLine) ? endLine - 1 : endLine;
@@ -693,13 +673,31 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         this.indentLine(cursor.line, false);
     }
 
+    public isCodeBlock(line: number): boolean {
+        const block = this.getBlockAtIndex(line);
+        return block?.getAttribute("data-type") === "NodeCodeBlock";
+    }
+
     public execCommand(name: string): void {
         if (name === "undo") {
             this.protyle.undo?.undo(this.protyle);
         } else if (name === "redo") {
             this.protyle.undo?.redo(this.protyle);
         } else if (name === "newlineAndIndent") {
-            insertEmptyBlock(this.protyle, "afterend");
+            const cur = this.getCursor();
+            const block = this.getBlockAtIndex(cur.line);
+            if (block && block.getAttribute("data-type") === "NodeCodeBlock") {
+                const text = this.getLine(cur.line);
+                const subLines = this.getSubLines(text);
+                const subLineIdx = this.getSubLineIndex(subLines, cur.ch);
+                const subLine = subLines[subLineIdx];
+                const insertPos = {line: cur.line, ch: subLine.end};
+                this.replaceRange("\n", insertPos, insertPos);
+                this.setCursor(cur.line, subLine.end + 1);
+            } else {
+                const targetBlock = block ? getTopAloneElement(block) : undefined;
+                insertEmptyBlock(this.protyle, "afterend", targetBlock);
+            }
         }
     }
 

@@ -51,6 +51,9 @@ Modifications were made to existing SiYuan frontend files to hook the Vim logic 
 - **Accurate Code Block Alignment & ZWSP Handling**: Normalized character offsets against DOM nodes (`<br>`, `.emoji`, `Constants.ZWSP`) so column memory (`lastHSPos`) tracks visual columns accurately without skipping.
 - **Code Block Linewise Deletion & Mutation**: Updated `replaceRange` and `expandSelectionToLine` to delete individual sub-lines inside multi-line code blocks with `highlightRender` refresh, while deleting entire 1-line code blocks cleanly.
 - **Cursor Focus Synchronization**: Passed container blocks to `focusByOffset` and ensured target editable focus transitions cleanly across block boundaries.
+- **Blank Line / Adjacent Block Deletion Fix (`dd`)**: Removed the legacy last-line anchor rewrite and `isDdLastLine` conditions so deleting a blank line adjacent to a code block never deletes the code block.
+- **Multi-Mode Code Block Breakout (`Shift+Enter` / `Ctrl+Enter`)**: Added multi-mode breakout shortcuts in both Normal and Insert modes to exit code blocks and create a new paragraph block below (or above with `Ctrl+Shift+Enter`) in Insert mode without using the mouse.
+- **Code Block Subline `o` / `O` Insertion**: Updated `newLineAndEnterInsertMode` so `o` and `O` in Normal mode inside code blocks open new lines inside the code block rather than breaking out.
 
 # Other Changes:
 

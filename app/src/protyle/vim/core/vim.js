@@ -2783,17 +2783,6 @@ export function initVim(CM) {
       if (!vim.visualBlock) {
         var anchor = ranges[0].anchor,
             head = ranges[0].head;
-        if (args.linewise &&
-            head.line != cm.firstLine() &&
-            anchor.line == cm.lastLine() &&
-            anchor.line == head.line - 1) {
-          // Special case for dd on last line (and first line).
-          if (anchor.line == cm.firstLine()) {
-            anchor.ch = 0;
-          } else {
-            anchor = new Pos(anchor.line - 1, lineLength(cm, anchor.line - 1));
-          }
-        }
         text = cm.getRange(anchor, head);
         cm.replaceRange("", anchor, head);
         finalHead = anchor;
@@ -3258,6 +3247,23 @@ export function initVim(CM) {
     newLineAndEnterInsertMode: function(cm, actionArgs, vim) {
       vim.insertMode = true;
       var insertAt = copyCursor(cm.getCursor());
+      var text = cm.getLine(insertAt.line);
+      var isCode = cm.isCodeBlock ? cm.isCodeBlock(insertAt.line) : false;
+      if ((text.indexOf('\n') !== -1 || isCode) && cm.getSubLines) {
+        var subLines = cm.getSubLines(text);
+        var subLineIdx = cm.getSubLineIndex(subLines, insertAt.ch);
+        if (actionArgs.after) {
+          var insertCh = subLines[subLineIdx].end;
+          cm.replaceRange("\n", new Pos(insertAt.line, insertCh));
+          cm.setCursor(insertAt.line, insertCh + 1);
+        } else {
+          var insertCh = subLines[subLineIdx].start;
+          cm.replaceRange("\n", new Pos(insertAt.line, insertCh));
+          cm.setCursor(insertAt.line, insertCh);
+        }
+        this.enterInsertMode(cm, { repeat: actionArgs.repeat }, vim);
+        return;
+      }
       if (insertAt.line === cm.firstLine() && !actionArgs.after) {
         // Special case for inserting newline before start of document.
         cm.replaceRange("\n", new Pos(cm.firstLine(), 0));

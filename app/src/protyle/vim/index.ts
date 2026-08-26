@@ -4,6 +4,9 @@ import {ProtyleVimAdapter} from "./adapter";
 import {keyboardEventToVimKey} from "./keymap";
 import {updateVimStatus} from "./status";
 import {insertEmptyBlock} from "../../block/util";
+import {hasClosestBlock} from "../util/hasClosest";
+import {getTopAloneElement} from "../wysiwyg/getBlock";
+import {getEditorRange} from "../util/selection";
 import {Constants} from "../../constants";
 import {showMessage} from "../../dialog/message";
 
@@ -113,7 +116,7 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
             updateVimStatus("normal");
         }
 
-        const handleKeyDown = (event: KeyboardEvent) => {
+        const handleKeyDown = async (event: KeyboardEvent) => {
             if (!isVimEnabled()) {
                 return;
             }
@@ -125,6 +128,29 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
 
             const vimState = adapter.state?.vim;
             if (!vimState) {
+                return;
+            }
+
+            // 0. Shift+Enter / Ctrl+Enter / Cmd+Enter：跳出当前块并在下方/上方插入新内容块（支持 Insert/Normal 模式）
+            if (event.key === "Enter" && (event.shiftKey || event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+
+                const range = getEditorRange(protyle.wysiwyg.element);
+                const curPos = adapter.getCursor();
+                const currentBlock = (range ? hasClosestBlock(range.startContainer) : null) || 
+                                     adapter.getBlockAtIndex(curPos.line) || 
+                                     (protyle.wysiwyg.element.firstElementChild as HTMLElement);
+                const targetBlock = currentBlock ? (getTopAloneElement(currentBlock) || currentBlock) : undefined;
+                const position = (event.shiftKey && (event.ctrlKey || event.metaKey)) ? "beforebegin" : "afterend";
+
+                await insertEmptyBlock(protyle, position, targetBlock);
+
+                Vim.handleKey(adapter, "i", "mapping");
+                updateVimStatus("insert");
+                wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
+                wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
                 return;
             }
 
@@ -149,27 +175,39 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
 
             // 2. Normal 模式下的特殊结构快捷键增强（o / O）
             if (!vimState.visualMode && !vimState.inputState?.operator) {
-                if (event.key === "o" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.stopImmediatePropagation();
-                    insertEmptyBlock(protyle, "afterend");
-                    Vim.handleKey(adapter, "i", "mapping");
-                    updateVimStatus("insert");
-                    wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
-                    wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
-                    return;
-                }
-                if (event.key === "O" && !event.ctrlKey && !event.altKey && !event.metaKey && event.shiftKey) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.stopImmediatePropagation();
-                    insertEmptyBlock(protyle, "beforebegin");
-                    Vim.handleKey(adapter, "i", "mapping");
-                    updateVimStatus("insert");
-                    wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
-                    wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
-                    return;
+                const range = getEditorRange(protyle.wysiwyg.element);
+                const curPos = adapter.getCursor();
+                const currentBlock = (range ? hasClosestBlock(range.startContainer) : null) || 
+                                     adapter.getBlockAtIndex(curPos.line) || 
+                                     (protyle.wysiwyg.element.firstElementChild as HTMLElement);
+                const isCodeBlock = currentBlock?.getAttribute("data-type") === "NodeCodeBlock";
+
+                // 在非代码块中，o/O 插入新内容块并进入 Insert 模式；代码块中由 Vim 引擎处理子行插入
+                if (!isCodeBlock) {
+                    if (event.key === "o" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.stopImmediatePropagation();
+                        const targetBlock = currentBlock ? (getTopAloneElement(currentBlock) || currentBlock) : undefined;
+                        await insertEmptyBlock(protyle, "afterend", targetBlock);
+                        Vim.handleKey(adapter, "i", "mapping");
+                        updateVimStatus("insert");
+                        wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
+                        wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
+                        return;
+                    }
+                    if (event.key === "O" && !event.ctrlKey && !event.altKey && !event.metaKey && event.shiftKey) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.stopImmediatePropagation();
+                        const targetBlock = currentBlock ? (getTopAloneElement(currentBlock) || currentBlock) : undefined;
+                        await insertEmptyBlock(protyle, "beforebegin", targetBlock);
+                        Vim.handleKey(adapter, "i", "mapping");
+                        updateVimStatus("insert");
+                        wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
+                        wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
+                        return;
+                    }
                 }
             }
 
