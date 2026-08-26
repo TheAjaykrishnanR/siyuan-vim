@@ -471,6 +471,8 @@ export interface CM5EditorInterface {
     setSelections(p: CM5RangeInterface[], primIndex?: number): void
     setSelection(anchor: Pos, head: Pos, options?: any): void
     getLine(row: number): string
+    getSubLines?(text: string): { text: string, start: number, end: number }[]
+    getSubLineIndex?(subLines: { text: string, start: number, end: number }[], ch: number): number
     getLineHandle(row: number): LineHandle
     getLineNumber(handle: any): number | null
     releaseLineHandles(): void

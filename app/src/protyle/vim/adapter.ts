@@ -1,8 +1,10 @@
 import {focusByOffset, getEditorRange, getSelectionOffset} from "../util/selection";
-import {getContenteditableElement, isNotEditBlock} from "../wysiwyg/getBlock";
+import {getContenteditableElement, isNotEditBlock, isContainerBlock, getTopAloneElement} from "../wysiwyg/getBlock";
 import {hasClosestBlock} from "../util/hasClosest";
 import {transaction, updateTransaction} from "../wysiwyg/transaction";
 import {genEmptyElement, insertEmptyBlock} from "../../block/util";
+import {Constants} from "../../constants";
+import {highlightRender} from "../render/highlightRender";
 import {setFold} from "../util/blockFold";
 import {listIndent, listOutdent} from "../wysiwyg/list";
 import type {Pos, CM5EditorInterface, CM5RangeInterface, Marker, LineHandle} from "./core/types";
@@ -47,12 +49,10 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         const blocks = Array.from(
             this.protyle.wysiwyg.element.querySelectorAll<HTMLElement>("[data-node-id]"),
         ).filter((el) => {
-            if (isNotEditBlock(el)) {
+            if (isNotEditBlock(el) || isContainerBlock(el)) {
                 return false;
             }
-            // 过滤子属性容器及非文本容器
-            const type = el.getAttribute("data-type");
-            return type !== "NodeList" && type !== "NodeSuperBlock";
+            return true;
         });
         return blocks;
     }
@@ -72,7 +72,52 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
 
     public getBlockText(block: HTMLElement): string {
         const editElement = getContenteditableElement(block) || block;
-        return editElement.textContent || "";
+        let text = "";
+        
+        const searchNode = (
+            container: Node,
+            startNode: Node,
+            predicate: (node: Node) => boolean,
+            excludeSibling?: boolean,
+        ): boolean => {
+            if (!startNode) {
+                return false;
+            }
+            if (predicate(startNode as Text)) {
+                return true;
+            }
+            for (let i = 0, len = startNode.childNodes.length; i < len; i++) {
+                if (searchNode(startNode, startNode.childNodes[i], predicate, true)) {
+                    return true;
+                }
+            }
+            if (!excludeSibling) {
+                let parentNode = startNode;
+                while (parentNode && parentNode !== container) {
+                    let nextSibling = parentNode.nextSibling;
+                    while (nextSibling) {
+                        if (searchNode(container, nextSibling, predicate, true)) {
+                            return true;
+                        }
+                        nextSibling = nextSibling.nextSibling;
+                    }
+                    parentNode = parentNode.parentNode;
+                }
+            }
+            return false;
+        };
+
+        searchNode(editElement, editElement.firstChild, (node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                text += (node as Text).data;
+            } else if (node.nodeType === Node.ELEMENT_NODE &&
+                ((node as Element).tagName === "BR" || (node as Element).classList.contains("emoji"))) {
+                text += (node as Element).tagName === "BR" ? "\n" : "*";
+            }
+            return false;
+        });
+
+        return text;
     }
 
     // ==================== CM5EditorInterface 核心接口实现 ====================
@@ -137,7 +182,10 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
             return {line: 0, ch: 0};
         }
         const blockIdx = this.getIndexOfBlock(block);
-        const line = Math.max(0, blockIdx);
+        if (blockIdx === -1) {
+            return {...this.lastCursor};
+        }
+        const line = blockIdx;
         const editElement = getContenteditableElement(block) || block;
         const offset = getSelectionOffset(editElement, this.protyle.wysiwyg.element, range);
         this.lastCursor = {
@@ -164,11 +212,12 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         }
 
         const editElement = getContenteditableElement(block) || block;
-        const textLength = editElement.textContent?.length || 0;
+        const textLength = this.getBlockText(block).length;
         const targetCol = Math.min(Math.max(0, col), textLength);
 
         this.lastCursor = {line, ch: targetCol};
-        focusByOffset(editElement, targetCol, targetCol, true);
+        focusByOffset(block, targetCol, targetCol, true);
+        (editElement as HTMLElement)?.focus?.();
         block.scrollIntoView({block: "nearest", inline: "nearest"});
     }
 
@@ -322,18 +371,19 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
                 this.state?.vim?.inputState?.operator === "delete" &&
                 this.state?.vim?.inputState?.operatorArgs?.linewise;
             if (isLinewiseDelete) {
+                    const targetDeleteBlock = getTopAloneElement(block);
                     const doOperations: IOperation[] = [];
                     const undoOperations: IOperation[] = [];
-                    const blockID = block.getAttribute("data-node-id");
+                    const blockID = targetDeleteBlock.getAttribute("data-node-id");
                     doOperations.push({action: "delete", id: blockID});
                     undoOperations.push({
                         action: "insert",
                         id: blockID,
-                        data: block.outerHTML,
-                        previousID: block.previousElementSibling?.getAttribute("data-node-id"),
-                        parentID: block.parentElement?.getAttribute("data-node-id"),
+                        data: targetDeleteBlock.outerHTML,
+                        previousID: targetDeleteBlock.previousElementSibling?.getAttribute("data-node-id"),
+                        parentID: targetDeleteBlock.parentElement?.getAttribute("data-node-id") || this.protyle.block.rootID,
                     });
-                    block.remove();
+                    targetDeleteBlock.remove();
                     
                     if (allBlocks.length === 1) {
                         const newId = Lute.NewNodeID();
@@ -350,6 +400,18 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
                     transaction(this.protyle, doOperations, undoOperations);
                     this.setCursor(Math.max(0, startLine - 1), 0);
                     return;
+            }
+
+            // 代码块内的文本替换与删除（如代码块内 dd 删除单行、普通删除、修改等）
+            if (block.getAttribute("data-type") === "NodeCodeBlock") {
+                const oldCode = editElement.textContent || "";
+                const newCode = oldCode.substring(0, startCh) + text + oldCode.substring(endCh);
+                editElement.textContent = newCode;
+                editElement.parentElement?.removeAttribute("data-render");
+                highlightRender(block);
+                updateTransaction(this.protyle, block, oldHTML);
+                this.setCursor(startLine, startCh + text.length);
+                return;
             }
 
             // 若插入文本包含换行符（如回车换行或多行粘贴），拆分并创建新内容块
@@ -391,7 +453,7 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
                 return;
             }
 
-            const range = focusByOffset(editElement, startCh, endCh, false) as Range;
+            const range = focusByOffset(block, startCh, endCh, false) as Range;
             if (range) {
                 range.deleteContents();
                 if (text) {
@@ -422,18 +484,19 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
                               (startCh === 0 && endCh >= endLineText.length && text === "");
 
         if (isDdLastLine) {
+            const targetDeleteBlock = getTopAloneElement(endBlock);
             const doOperations: IOperation[] = [];
             const undoOperations: IOperation[] = [];
-            const blockID = endBlock.getAttribute("data-node-id");
+            const blockID = targetDeleteBlock.getAttribute("data-node-id");
             doOperations.push({action: "delete", id: blockID});
             undoOperations.push({
                 action: "insert",
                 id: blockID,
-                data: endBlock.outerHTML,
-                previousID: startBlock.getAttribute("data-node-id"),
-                parentID: endBlock.parentElement?.getAttribute("data-node-id"),
+                data: targetDeleteBlock.outerHTML,
+                previousID: targetDeleteBlock.previousElementSibling?.getAttribute("data-node-id"),
+                parentID: targetDeleteBlock.parentElement?.getAttribute("data-node-id") || this.protyle.block.rootID,
             });
-            endBlock.remove();
+            targetDeleteBlock.remove();
             transaction(this.protyle, doOperations, undoOperations);
             this.setCursor(startLine, 0);
             return;
@@ -445,18 +508,24 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
             const undoOperations: IOperation[] = [];
             const remainingCount = allBlocks.length - (deleteUpTo - startLine + 1);
 
+            const deletedIds = new Set<string>();
             for (let i = startLine; i <= deleteUpTo; i++) {
                 const b = allBlocks[i];
-                const blockID = b.getAttribute("data-node-id");
+                const targetDeleteBlock = getTopAloneElement(b);
+                const blockID = targetDeleteBlock.getAttribute("data-node-id");
+                if (deletedIds.has(blockID)) {
+                    continue;
+                }
+                deletedIds.add(blockID);
                 doOperations.push({action: "delete", id: blockID});
                 undoOperations.push({
                     action: "insert",
                     id: blockID,
-                    data: b.outerHTML,
-                    previousID: b.previousElementSibling?.getAttribute("data-node-id"),
-                    parentID: b.parentElement?.getAttribute("data-node-id"),
+                    data: targetDeleteBlock.outerHTML,
+                    previousID: targetDeleteBlock.previousElementSibling?.getAttribute("data-node-id"),
+                    parentID: targetDeleteBlock.parentElement?.getAttribute("data-node-id") || this.protyle.block.rootID,
                 });
-                b.remove();
+                targetDeleteBlock.remove();
             }
 
             if (remainingCount === 0) {
@@ -823,21 +892,126 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         };
     }
 
+    public getSubLines(text: string): { text: string, start: number, end: number }[] {
+        const lines = [];
+        let start = 0;
+        const parts = text.split("\n");
+        if (parts.length > 1 && parts[parts.length - 1] === "") {
+            parts.pop();
+        }
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            lines.push({ text: part, start, end: start + part.length });
+            start += part.length + 1;
+        }
+        if (lines.length === 0) {
+            lines.push({ text: "", start: 0, end: 0 });
+        }
+        return lines;
+    }
+
+    public getSubLineIndex(subLines: { text: string, start: number, end: number }[], ch: number): number {
+        for (let i = 0; i < subLines.length; i++) {
+            if (ch >= subLines[i].start && ch <= subLines[i].end) return i;
+        }
+        return subLines.length - 1;
+    }
+
     public findPosV(start: Pos, amount: number, _unit: "page" | "line", goalColumn?: number): Pos & {hitSide?: boolean} {
-        const targetLine = Math.min(Math.max(0, start.line + amount), this.lastLine());
-        const lineLen = this.getLine(targetLine).length;
-        const col = typeof goalColumn === "number" ? goalColumn : start.ch;
-        const ch = Math.min(col, lineLen);
-        return {line: targetLine, ch, hitSide: targetLine === 0 || targetLine === this.lastLine()};
+        let currentBlockIndex = start.line;
+        let currentBlockText = this.getLine(currentBlockIndex);
+        
+        let subLines = this.getSubLines(currentBlockText);
+        let currentSubLineIndex = this.getSubLineIndex(subLines, start.ch);
+
+        let remainingAmount = amount;
+        
+        while (remainingAmount !== 0) {
+            if (remainingAmount > 0) {
+                if (currentSubLineIndex + remainingAmount < subLines.length) {
+                    currentSubLineIndex += remainingAmount;
+                    remainingAmount = 0;
+                } else {
+                    remainingAmount -= (subLines.length - 1 - currentSubLineIndex) + 1;
+                    if (currentBlockIndex >= this.lastLine()) {
+                        currentSubLineIndex = subLines.length - 1;
+                        remainingAmount = 0;
+                    } else {
+                        currentBlockIndex++;
+                        currentBlockText = this.getLine(currentBlockIndex);
+                        subLines = this.getSubLines(currentBlockText);
+                        currentSubLineIndex = 0;
+                    }
+                }
+            } else {
+                if (currentSubLineIndex + remainingAmount >= 0) {
+                    currentSubLineIndex += remainingAmount;
+                    remainingAmount = 0;
+                } else {
+                    remainingAmount += currentSubLineIndex + 1;
+                    if (currentBlockIndex <= 0) {
+                        currentSubLineIndex = 0;
+                        remainingAmount = 0;
+                    } else {
+                        currentBlockIndex--;
+                        currentBlockText = this.getLine(currentBlockIndex);
+                        subLines = this.getSubLines(currentBlockText);
+                        currentSubLineIndex = subLines.length - 1;
+                    }
+                }
+            }
+        }
+
+        const targetSubLine = subLines[currentSubLineIndex];
+        let visibleCol = 0;
+        if (typeof goalColumn === "number") {
+            visibleCol = goalColumn;
+        } else {
+            const startSubLines = this.getSubLines(this.getLine(start.line));
+            const startSubLine = startSubLines[this.getSubLineIndex(startSubLines, start.ch)];
+            visibleCol = this.getVisibleCol(startSubLine.text, start.ch - startSubLine.start);
+        }
+        
+        const chInSubLine = this.getOffsetFromVisibleCol(targetSubLine.text, visibleCol);
+        const ch = targetSubLine.start + chInSubLine;
+
+        return {
+            line: currentBlockIndex,
+            ch,
+            hitSide: (currentBlockIndex === 0 && currentSubLineIndex === 0) || 
+                     (currentBlockIndex === this.lastLine() && currentSubLineIndex === subLines.length - 1)
+        };
+    }
+
+    private getVisibleCol(subLineText: string, chInSubLine: number): number {
+        let visible = 0;
+        for (let i = 0; i < chInSubLine && i < subLineText.length; i++) {
+            if (subLineText[i] !== Constants.ZWSP) {
+                visible++;
+            }
+        }
+        return visible;
+    }
+
+    private getOffsetFromVisibleCol(subLineText: string, visibleCol: number): number {
+        let visible = 0;
+        let i = 0;
+        for (; i < subLineText.length; i++) {
+            if (visible >= visibleCol) break;
+            if (subLineText[i] !== Constants.ZWSP) {
+                visible++;
+            }
+        }
+        return i;
     }
 
     public charCoords(pos: Pos): {left: number; top: number; bottom: number} {
-        const block = this.getBlockAtIndex(pos.line);
-        if (block) {
-            const rect = block.getBoundingClientRect();
-            return {left: rect.left, top: rect.top, bottom: rect.bottom};
-        }
-        return {left: 0, top: 0, bottom: 0};
+        const text = this.getLine(pos.line);
+        const subLines = this.getSubLines(text);
+        const subLineIdx = this.getSubLineIndex(subLines, pos.ch);
+        const chInSubLine = pos.ch - subLines[subLineIdx].start;
+        const col = this.getVisibleCol(subLines[subLineIdx].text, chInSubLine);
+        return {left: col, top: subLineIdx, bottom: subLineIdx};
     }
 
     public coordsChar(): Pos {

@@ -44,6 +44,14 @@ Modifications were made to existing SiYuan frontend files to hook the Vim logic 
 - **`app/src/constants.ts`**
   - Additions to support Vim-related state or configuration constants.
 
+## 3. Recent Fixes & Improvements
+- **List & Container Motion Support**: Filtered container blocks (`NodeList`, `NodeListItem`) from editable block indexing so `j`/`k` motions do not get stuck or duplicate list lines.
+- **Whole-Item List Deletion (`dd`)**: Integrated `getTopAloneElement` for linewise deletions so `dd` removes the entire bullet point/item rather than leaving an empty bullet.
+- **Multi-line Code Block Navigation (`j`/`k`)**: Implemented sub-line virtualization in `adapter.ts` and adapted `vim.js` vertical motions (`moveByLines`, `moveToEol`, `expandToLine`, `expandSelectionToLine`) to navigate lines inside code blocks.
+- **Accurate Code Block Alignment & ZWSP Handling**: Normalized character offsets against DOM nodes (`<br>`, `.emoji`, `Constants.ZWSP`) so column memory (`lastHSPos`) tracks visual columns accurately without skipping.
+- **Code Block Linewise Deletion & Mutation**: Updated `replaceRange` and `expandSelectionToLine` to delete individual sub-lines inside multi-line code blocks with `highlightRender` refresh, while deleting entire 1-line code blocks cleanly.
+- **Cursor Focus Synchronization**: Passed container blocks to `focusByOffset` and ensured target editable focus transitions cleanly across block boundaries.
+
 # Other Changes:
 
 1. A `build.ps1` script to automate releases.

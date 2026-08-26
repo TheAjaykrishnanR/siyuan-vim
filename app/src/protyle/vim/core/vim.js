@@ -2151,7 +2151,26 @@ export function initVim(CM) {
                 ranges[i].head.ch = lineLength(cm, ranges[i].head.line);
               }
             } else if (mode == "line") {
-              ranges[0].head = new Pos(ranges[0].head.line + 1, 0);
+              var handled = false;
+              if (ranges[0].anchor.line === ranges[0].head.line) {
+                var text = cm.getLine(ranges[0].head.line);
+                if (text.indexOf('\n') !== -1) {
+                  var subLines = cm.getSubLines ? cm.getSubLines(text) : null;
+                  if (subLines && subLines.length > 1) {
+                    var endIdx = cm.getSubLineIndex(subLines, ranges[0].head.ch);
+                    if (endIdx < subLines.length - 1) {
+                      ranges[0].head = new Pos(ranges[0].head.line, subLines[endIdx + 1].start);
+                    } else {
+                      ranges[0].head = new Pos(ranges[0].head.line, text.length);
+                    }
+                    handled = true;
+                  }
+                }
+              }
+              if (!handled) {
+                var posV = cm.findPosV(ranges[0].head, 1, "line", 0);
+                ranges[0].head = new Pos(posV.line, posV.ch);
+              }
             }
           }
         } else {
@@ -2225,11 +2244,15 @@ export function initVim(CM) {
       var line = getUserVisibleLines(cm).bottom - motionArgs.repeat +1;
       return new Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
     },
-    expandToLine: function(_cm, head, motionArgs) {
+    expandToLine: function(cm, head, motionArgs) {
       // Expands forward to end of line, and then to next line if repeat is
       // >1. Does not handle backward motion!
       var cur = head;
-      return new Pos(cur.line + motionArgs.repeat - 1, Infinity);
+      var targetPos = cm.findPosV(cur, motionArgs.repeat - 1, "line", 0);
+      var text = cm.getLine(targetPos.line);
+      var endCh = text.indexOf('\n', targetPos.ch);
+      if (endCh === -1) endCh = text.length;
+      return new Pos(targetPos.line, endCh);
     },
     findNext: function(cm, _head, motionArgs) {
       var state = getSearchState(cm);
@@ -2420,11 +2443,8 @@ export function initVim(CM) {
       var first = cm.firstLine();
       var last = cm.lastLine();
       var posV = cm.findPosV(cur, (motionArgs.forward ? repeat : -repeat), "line", vim.lastHSPos);
-      var hasMarkedText = motionArgs.forward ? posV.line > line : posV.line < line;
-      if (hasMarkedText) {
-        line = posV.line;
-        endCh = posV.ch;
-      }
+      line = posV.line;
+      endCh = posV.ch;
       // Vim go to line begin or line end when cursor at first/last line and
       // move to previous/next line is triggered.
       if (line < first && cur.line == first){
@@ -2531,11 +2551,13 @@ export function initVim(CM) {
       return moveToEol(cm, head, motionArgs, vim, false);
     },
     moveToFirstNonWhiteSpaceCharacter: function(cm, head) {
-      // Go to the start of the line where the text begins, or the end for
-      // whitespace-only lines
-      var cursor = head;
-      return new Pos(cursor.line,
-                  findFirstNonWhiteSpaceCharacter(cm.getLine(cursor.line)));
+      var start = cm.findPosV(head, 0, "line", 0).ch;
+      var text = cm.getLine(head.line).substring(start);
+      var end = text.indexOf('\n');
+      if (end === -1) end = text.length;
+      var subText = text.substring(0, end);
+      var nonWs = findFirstNonWhiteSpaceCharacter(subText);
+      return new Pos(head.line, start + nonWs);
     },
     moveToMatchedSymbol: function(cm, head) {
       var cursor = head;
@@ -2561,8 +2583,8 @@ export function initVim(CM) {
         return cursor;
       }
     },
-    moveToStartOfLine: function(_cm, head) {
-      return new Pos(head.line, 0);
+    moveToStartOfLine: function(cm, head) {
+      return cm.findPosV(head, 0, "line", 0);
     },
     moveToLineOrEdgeOfDocument: function(cm, _head, motionArgs) {
       var lineNum = motionArgs.forward ? cm.lastLine() : cm.firstLine();
@@ -3056,7 +3078,11 @@ export function initVim(CM) {
       var head = actionArgs.head || cm.getCursor("head");
       var height = cm.listSelections().length;
       if (insertAt == "eol") {
-        head = new Pos(head.line, lineLength(cm, head.line));
+        var targetPos = cm.findPosV(head, 0, "line", 0);
+        var text = cm.getLine(targetPos.line);
+        var endCh = text.indexOf('\n', targetPos.ch);
+        if (endCh === -1) endCh = text.length;
+        head = new Pos(targetPos.line, endCh);
       } else if (insertAt == "bol") {
         head = new Pos(head.line, 0);
       } else if (insertAt == "charAfter") {
@@ -4002,11 +4028,34 @@ export function initVim(CM) {
   }
 
   // Expand the selection to line ends.
-  /** @arg {CodeMirror} _cm  @arg {Pos} curStart  @arg {Pos} curEnd */
-  function expandSelectionToLine(_cm, curStart, curEnd) {
-    curStart.ch = 0;
-    curEnd.ch = 0;
-    curEnd.line++;
+  /** @arg {CodeMirror} cm  @arg {Pos} curStart  @arg {Pos} curEnd */
+  function expandSelectionToLine(cm, curStart, curEnd) {
+    if (curStart.line === curEnd.line) {
+      var text = cm.getLine(curStart.line);
+      if (text.indexOf('\n') !== -1) {
+        var subLines = cm.getSubLines ? cm.getSubLines(text) : null;
+        if (subLines && subLines.length > 1) {
+          var startIdx = cm.getSubLineIndex(subLines, curStart.ch);
+          var endIdx = cm.getSubLineIndex(subLines, curEnd.ch);
+          if (startIdx !== 0 || endIdx !== subLines.length - 1) {
+            if (endIdx === subLines.length - 1) {
+              curStart.ch = subLines[startIdx === 0 ? 0 : startIdx - 1].end;
+              curEnd.line = curStart.line;
+              curEnd.ch = text.length;
+            } else {
+              curStart.ch = subLines[startIdx].start;
+              curEnd.line = curStart.line;
+              curEnd.ch = subLines[endIdx + 1].start;
+            }
+            return;
+          }
+        }
+      }
+    }
+    curStart.ch = cm.findPosV(curStart, 0, "line", 0).ch;
+    var targetPos = cm.findPosV(curEnd, 1, "line", 0);
+    curEnd.line = targetPos.line;
+    curEnd.ch = targetPos.ch;
   }
 
   /** @arg {string} [text] */
@@ -4431,7 +4480,12 @@ export function initVim(CM) {
    * @arg {boolean} keepHPos */
   function moveToEol(cm, head, motionArgs, vim, keepHPos) {
     var cur = head;
-    var retval= new Pos(cur.line + motionArgs.repeat - 1, Infinity);
+    var repeat = motionArgs.repeat;
+    var targetPos = cm.findPosV(cur, motionArgs.forward ? repeat - 1 : -repeat + 1, "line", 0);
+    var text = cm.getLine(targetPos.line);
+    var endCh = text.indexOf('\n', targetPos.ch);
+    if (endCh === -1) endCh = text.length;
+    var retval= new Pos(targetPos.line, endCh);
     var end=cm.clipPos(retval);
     end.ch--;
     if (!keepHPos) {
