@@ -1,6 +1,6 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
-import {focusByOffset} from "../util/selection";
+import {focusByOffset, getSelectionOffset} from "../util/selection";
 import {setCodeTheme} from "./util";
 import {escapeHtml} from "../../util/escape";
 
@@ -45,6 +45,7 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
                 }
                 const wbrElement = block.querySelector("wbr");
                 let startIndex = 0;
+                let hasCaret = false;
                 if (wbrElement) {
                     let previousSibling = wbrElement.previousSibling;
                     while (previousSibling) {
@@ -56,6 +57,14 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
                         previousSibling = previousSibling.previousSibling;
                     }
                     wbrElement.remove();
+                    hasCaret = true;
+                } else {
+                    const sel = window.getSelection();
+                    if (sel && sel.rangeCount > 0 && block.contains(sel.getRangeAt(0).startContainer)) {
+                        const offset = getSelectionOffset(block, undefined, sel.getRangeAt(0));
+                        startIndex = offset.start;
+                        hasCaret = true;
+                    }
                 }
 
                 let language;
@@ -109,7 +118,7 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
                         language,
                         ignoreIllegals: true
                     }).value;
-                if (wbrElement && getSelection().rangeCount > 0) {
+                if (hasCaret && getSelection().rangeCount > 0) {
                     focusByOffset(block, startIndex, startIndex);
                 }
             });

@@ -68,22 +68,25 @@ export const isVimEnabled = (): boolean => {
  * 切换 Vim 模式开关
  */
 export const toggleVimMode = (enable?: boolean): boolean => {
-    const next = typeof enable === "boolean" ? enable : !isVimEnabled();
+    const current = isVimEnabled();
+    const next = enable !== undefined ? enable : !current;
     try {
         localStorage.setItem("siyuan-vim-enabled", next ? "true" : "false");
     } catch (e) {
         console.error("[SiYuan Vim] Failed to save vim mode:", e);
     }
-    console.log("[SiYuan Vim] Vim mode set to:", next);
     if (!next) {
         updateVimStatus("");
-        document.querySelectorAll(".protyle-wysiwyg--vim-normal, .protyle-wysiwyg--vim-insert").forEach((el) => {
-            el.classList.remove("protyle-wysiwyg--vim-normal", "protyle-wysiwyg--vim-insert");
+        document.querySelectorAll(".protyle-wysiwyg--vim-normal, .protyle-wysiwyg--vim-insert, .protyle-title--vim-normal, .protyle-title--vim-insert").forEach((el) => {
+            el.classList.remove("protyle-wysiwyg--vim-normal", "protyle-wysiwyg--vim-insert", "protyle-title--vim-normal", "protyle-title--vim-insert");
         });
     } else {
         updateVimStatus("normal");
         document.querySelectorAll(".protyle-wysiwyg").forEach((el) => {
             el.classList.add("protyle-wysiwyg--vim-normal");
+        });
+        document.querySelectorAll(".protyle-title").forEach((el) => {
+            el.classList.add("protyle-title--vim-normal");
         });
     }
     return next;
@@ -111,10 +114,42 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
         const adapter = new ProtyleVimAdapter(protyle);
         Vim.maybeInitVimState_(adapter);
 
+        const setVimModeClasses = (mode: "normal" | "insert") => {
+            if (mode === "normal") {
+                wysiwygElement.classList.add("protyle-wysiwyg--vim-normal");
+                wysiwygElement.classList.remove("protyle-wysiwyg--vim-insert");
+                protyle.title?.element?.classList.add("protyle-title--vim-normal");
+                protyle.title?.element?.classList.remove("protyle-title--vim-insert");
+            } else {
+                wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
+                wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
+                protyle.title?.element?.classList.remove("protyle-title--vim-normal");
+                protyle.title?.element?.classList.add("protyle-title--vim-insert");
+            }
+        };
+
         if (isVimEnabled()) {
-            wysiwygElement.classList.add("protyle-wysiwyg--vim-normal");
+            setVimModeClasses("normal");
             updateVimStatus("normal");
         }
+
+        const getActiveBlock = (): HTMLElement | null => {
+            const titleEl = adapter.getTitleElement();
+            const titleEdit = protyle.title?.editElement;
+            const sel = window.getSelection();
+            if (titleEl && titleEdit && sel && sel.rangeCount > 0 && titleEdit.contains(sel.getRangeAt(0).startContainer)) {
+                return titleEl;
+            }
+            const range = getEditorRange(protyle.wysiwyg.element);
+            if (range) {
+                const b = hasClosestBlock(range.startContainer);
+                if (b) {
+                    return b as HTMLElement;
+                }
+            }
+            const curPos = adapter.getCursor();
+            return adapter.getBlockAtIndex(curPos.line) || (protyle.wysiwyg.element.firstElementChild as HTMLElement);
+        };
 
         const handleKeyDown = async (event: KeyboardEvent) => {
             if (!isVimEnabled()) {
@@ -144,20 +179,42 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
                 event.stopPropagation();
                 event.stopImmediatePropagation();
 
-                const range = getEditorRange(protyle.wysiwyg.element);
-                const curPos = adapter.getCursor();
-                const currentBlock = (range ? hasClosestBlock(range.startContainer) : null) || 
-                                     adapter.getBlockAtIndex(curPos.line) || 
-                                     (protyle.wysiwyg.element.firstElementChild as HTMLElement);
-                const targetBlock = currentBlock ? (getTopAloneElement(currentBlock) || currentBlock) : undefined;
-                const position = isInsertBefore ? "beforebegin" : "afterend";
+                protyle.wysiwyg.element.querySelectorAll("wbr").forEach(e => e.remove());
 
-                await insertEmptyBlock(protyle, position, targetBlock);
+                const currentBlock = getActiveBlock();
+                const isTitle = currentBlock === adapter.getTitleElement();
+                if (isTitle && isInsertAfter) {
+                    const firstBlock = protyle.wysiwyg.element.firstElementChild;
+                    if (firstBlock) {
+                        await insertEmptyBlock(protyle, "beforebegin", firstBlock);
+                    } else {
+                        await insertEmptyBlock(protyle, "afterend", currentBlock);
+                    }
+                } else {
+                    const targetBlock = currentBlock ? (getTopAloneElement(currentBlock) || currentBlock) : undefined;
+                    const position = isInsertBefore ? "beforebegin" : "afterend";
+                    await insertEmptyBlock(protyle, position, targetBlock);
+                }
 
-                Vim.handleKey(adapter, "i", "mapping");
+                if (adapter.state?.vim) {
+                    adapter.state.vim.insertMode = true;
+                    adapter.state.vim.visualMode = false;
+                    adapter.state.vim.visualLine = false;
+                    adapter.state.vim.visualBlock = false;
+                }
                 updateVimStatus("insert");
-                wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
-                wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
+                setVimModeClasses("insert");
+
+                const newRange = getEditorRange(protyle.wysiwyg.element);
+                if (newRange) {
+                    const newBlock = hasClosestBlock(newRange.startContainer) as HTMLElement;
+                    if (newBlock) {
+                        const newIdx = adapter.getIndexOfBlock(newBlock);
+                        if (newIdx !== -1) {
+                            adapter.lastCursor = {line: newIdx, ch: 0};
+                        }
+                    }
+                }
                 return;
             }
 
@@ -169,8 +226,7 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
                     event.stopImmediatePropagation();
                     Vim.handleKey(adapter, "<Esc>", "mapping");
                     updateVimStatus("normal");
-                    wysiwygElement.classList.add("protyle-wysiwyg--vim-normal");
-                    wysiwygElement.classList.remove("protyle-wysiwyg--vim-insert");
+                    setVimModeClasses("normal");
                     // Enter Normal mode: update the cursor to block style
                     const currentPos = adapter.getCursor();
                     adapter.setCursor(currentPos);
@@ -182,37 +238,60 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
 
             // 2. Normal 模式下的特殊结构快捷键增强（o / O）
             if (!vimState.visualMode && !vimState.inputState?.operator) {
-                const range = getEditorRange(protyle.wysiwyg.element);
-                const curPos = adapter.getCursor();
-                const currentBlock = (range ? hasClosestBlock(range.startContainer) : null) || 
-                                     adapter.getBlockAtIndex(curPos.line) || 
-                                     (protyle.wysiwyg.element.firstElementChild as HTMLElement);
+                const currentBlock = getActiveBlock();
+                const isTitle = currentBlock === adapter.getTitleElement();
                 const isCodeBlock = currentBlock?.getAttribute("data-type") === "NodeCodeBlock";
 
-                // 在非代码块中，o/O 插入新内容块并进入 Insert 模式；代码块中由 Vim 引擎处理子行插入
-                if (!isCodeBlock) {
+                // 在文档标题或非代码块中，o/O 插入新内容块并进入 Insert 模式；代码块中由 Vim 引擎处理子行插入
+                if (isTitle) {
                     if (event.key === "o" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
                         event.preventDefault();
                         event.stopPropagation();
                         event.stopImmediatePropagation();
+                        protyle.wysiwyg.element.querySelectorAll("wbr").forEach(e => e.remove());
+                        const firstBlock = protyle.wysiwyg.element.firstElementChild;
+                        if (firstBlock) {
+                            await insertEmptyBlock(protyle, "beforebegin", firstBlock);
+                        } else {
+                            await insertEmptyBlock(protyle, "afterend", currentBlock);
+                        }
+                        if (adapter.state?.vim) {
+                            adapter.state.vim.insertMode = true;
+                            adapter.state.vim.visualMode = false;
+                        }
+                        updateVimStatus("insert");
+                        setVimModeClasses("insert");
+                        return;
+                    }
+                } else if (!isCodeBlock) {
+                    if (event.key === "o" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.stopImmediatePropagation();
+                        protyle.wysiwyg.element.querySelectorAll("wbr").forEach(e => e.remove());
                         const targetBlock = currentBlock ? (getTopAloneElement(currentBlock) || currentBlock) : undefined;
                         await insertEmptyBlock(protyle, "afterend", targetBlock);
-                        Vim.handleKey(adapter, "i", "mapping");
+                        if (adapter.state?.vim) {
+                            adapter.state.vim.insertMode = true;
+                            adapter.state.vim.visualMode = false;
+                        }
                         updateVimStatus("insert");
-                        wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
-                        wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
+                        setVimModeClasses("insert");
                         return;
                     }
                     if (event.key === "O" && !event.ctrlKey && !event.altKey && !event.metaKey && event.shiftKey) {
                         event.preventDefault();
                         event.stopPropagation();
                         event.stopImmediatePropagation();
+                        protyle.wysiwyg.element.querySelectorAll("wbr").forEach(e => e.remove());
                         const targetBlock = currentBlock ? (getTopAloneElement(currentBlock) || currentBlock) : undefined;
                         await insertEmptyBlock(protyle, "beforebegin", targetBlock);
-                        Vim.handleKey(adapter, "i", "mapping");
+                        if (adapter.state?.vim) {
+                            adapter.state.vim.insertMode = true;
+                            adapter.state.vim.visualMode = false;
+                        }
                         updateVimStatus("insert");
-                        wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
-                        wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
+                        setVimModeClasses("insert");
                         return;
                     }
                 }
@@ -245,19 +324,30 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
             }
             if (currentVim.insertMode) {
                 updateVimStatus("insert");
-                wysiwygElement.classList.remove("protyle-wysiwyg--vim-normal");
-                wysiwygElement.classList.add("protyle-wysiwyg--vim-insert");
+                setVimModeClasses("insert");
             } else if (currentVim.visualMode) {
                 const subMode = currentVim.visualLine ? "linewise" : (currentVim.visualBlock ? "blockwise" : "");
                 updateVimStatus("visual", subMode);
             } else {
                 updateVimStatus("normal");
-                wysiwygElement.classList.add("protyle-wysiwyg--vim-normal");
-                wysiwygElement.classList.remove("protyle-wysiwyg--vim-insert");
+                setVimModeClasses("normal");
             }
         };
 
         wysiwygElement.addEventListener("keydown", handleKeyDown, {capture: true});
+        if (protyle.title?.element) {
+            protyle.title.element.addEventListener("keydown", handleKeyDown, {capture: true});
+            protyle.title.element.addEventListener("click", () => {
+                const vim = adapter.state?.vim;
+                if (!vim || vim.insertMode) {
+                    return;
+                }
+                setTimeout(() => {
+                    const pos = adapter.getCursor();
+                    adapter.setCursor(pos);
+                }, 0);
+            });
+        }
 
         return adapter;
     } catch (err) {

@@ -59,9 +59,9 @@ These shortcuts allow you to escape code blocks, blockquotes, tables, or any con
 ### Vertical & Block Movement
 | Key | Description |
 |---|---|
-| `j` / <kbd>Down</kbd> | Move cursor down one line (navigates sub-lines inside multi-line code blocks, traverses list items, and moves across blocks) |
-| `k` / <kbd>Up</kbd> | Move cursor up one line (navigates sub-lines inside multi-line code blocks, traverses list items, and moves across blocks) |
-| `gg` | Jump to the first block / line of the document |
+| `j` / <kbd>Down</kbd> | Move cursor down one line (navigates from Note Title into body blocks, moves across sub-lines inside multi-line code blocks, traverses list items, and moves across blocks) |
+| `k` / <kbd>Up</kbd> | Move cursor up one line (navigates from body blocks up into Note Title, moves across sub-lines inside multi-line code blocks, traverses list items, and moves across blocks) |
+| `gg` | Jump to the Note Title / first block of the document |
 | `G` | Jump to the last block / line of the document |
 | `H` | Jump cursor to the top line visible on screen |
 | `M` | Jump cursor to the middle line visible on screen |

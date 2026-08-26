@@ -1053,3 +1053,13 @@ body[data-format-painter] .protyle-wysiwyg[data-readonly="false"] {
   right: 0;
   top: 0;
 }
+
+.protyle-title--vim-normal .protyle-title__input {
+  caret-color: var(--b3-theme-primary);
+  caret-shape: block;
+}
+
+.protyle-title--vim-insert .protyle-title__input {
+  caret-color: var(--b3-theme-on-background);
+  caret-shape: auto;
+}

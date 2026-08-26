@@ -2154,9 +2154,10 @@ export function initVim(CM) {
               var handled = false;
               if (ranges[0].anchor.line === ranges[0].head.line) {
                 var text = cm.getLine(ranges[0].head.line);
-                if (text.indexOf('\n') !== -1) {
-                  var subLines = cm.getSubLines ? cm.getSubLines(text) : null;
-                  if (subLines && subLines.length > 1) {
+                var isSub = (text.indexOf('\n') !== -1 || (cm.isCodeBlock && cm.isCodeBlock(ranges[0].head.line))) && cm.getSubLines;
+                if (isSub) {
+                  var subLines = cm.getSubLines(text);
+                  if (subLines && subLines.length > 0) {
                     var endIdx = cm.getSubLineIndex(subLines, ranges[0].head.ch);
                     if (endIdx < subLines.length - 1) {
                       ranges[0].head = new Pos(ranges[0].head.line, subLines[endIdx + 1].start);
@@ -3345,13 +3346,32 @@ export function initVim(CM) {
       } else if (linewise) {
         if (vim.visualMode) {
           text = vim.visualLine ? text.slice(0, -1) : "\n" + text.slice(0, text.length - 1) + "\n";
-        } else if (actionArgs.after) {
-          // Move the newline at the end to the start instead, and paste just
-          // before the newline character of the line we are on right now.
-          text = "\n" + text.slice(0, text.length - 1);
-          cur.ch = lineLength(cm, cur.line);
         } else {
-          cur.ch = 0;
+          var lineText = cm.getLine(cur.line);
+          var isSubLines = (lineText.indexOf('\n') !== -1 || (cm.isCodeBlock && cm.isCodeBlock(cur.line))) && cm.getSubLines;
+          if (isSubLines) {
+            if (!text.endsWith("\n")) {
+              text = text + "\n";
+            }
+            var subLines = cm.getSubLines(lineText);
+            var subLineIdx = cm.getSubLineIndex(subLines, cur.ch);
+            if (actionArgs.after) {
+              if (subLines[subLineIdx].end < lineText.length && lineText[subLines[subLineIdx].end] === '\n') {
+                cur.ch = subLines[subLineIdx].end + 1;
+              } else {
+                cur.ch = lineText.length;
+              }
+            } else {
+              cur.ch = subLines[subLineIdx].start;
+            }
+          } else {
+            if (actionArgs.after) {
+              text = "\n" + text.slice(0, text.length - 1);
+              cur.ch = lineLength(cm, cur.line);
+            } else {
+              cur.ch = 0;
+            }
+          }
         }
       } else {
         cur.ch += actionArgs.after ? 1 : 0;
@@ -3421,7 +3441,21 @@ export function initVim(CM) {
           // Now fine tune the cursor to where we want it.
           if (linewise) {
             var line = actionArgs.after ? cur.line + 1 : cur.line;
-            curPosFinal = new Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
+            if (cm.getSubLines) {
+              var curText = cm.getLine(cur.line);
+              if (curText.indexOf('\n') !== -1 || (cm.isCodeBlock && cm.isCodeBlock(cur.line))) {
+                line = cur.line;
+                var subLines = cm.getSubLines(curText);
+                var insertedSubLineIdx = cm.getSubLineIndex(subLines, cur.ch);
+                var insertedSubLine = subLines[insertedSubLineIdx];
+                var nonWs = findFirstNonWhiteSpaceCharacter(insertedSubLine ? insertedSubLine.text : "");
+                curPosFinal = new Pos(line, (insertedSubLine ? insertedSubLine.start : cur.ch) + nonWs);
+              } else {
+                curPosFinal = new Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
+              }
+            } else {
+              curPosFinal = new Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
+            }
           } else {
             curPosFinal = copyCursor(cur);
             if (!/\n/.test(text)) {
@@ -3607,6 +3641,17 @@ export function initVim(CM) {
     var text = cm.getLine(line);
     var maxCh = text.length - 1 + Number(!!includeLineBreak);
     var ch = Math.min(Math.max(0, cur.ch), maxCh);
+
+    if ((text.indexOf('\n') !== -1 || (cm.isCodeBlock && cm.isCodeBlock(line))) && cm.getSubLines) {
+      var subLines = cm.getSubLines(text);
+      if (subLines) {
+        var startIdx = cm.getSubLineIndex(subLines, ch);
+        var subLine = subLines[startIdx];
+        var subMaxCh = subLine.end - 1 + Number(!!includeLineBreak);
+        ch = Math.min(ch, Math.max(subLine.start, subMaxCh));
+      }
+    }
+
     // prevent cursor from entering surrogate pair
     var charCode = text.charCodeAt(ch);
     if (0xDC00 <= charCode && charCode <= 0xDFFF) {
@@ -3928,6 +3973,28 @@ export function initVim(CM) {
         primary: 0
       };
     } else if (mode == "line") {
+      if (anchor.line === head.line) {
+        var text = cm.getLine(anchor.line);
+        var isSub = (text.indexOf('\n') !== -1 || (cm.isCodeBlock && cm.isCodeBlock(anchor.line))) && cm.getSubLines;
+        if (isSub) {
+          var subLines = cm.getSubLines(text);
+          if (subLines && subLines.length > 0) {
+            var aIdx = cm.getSubLineIndex(subLines, anchor.ch);
+            var hIdx = cm.getSubLineIndex(subLines, head.ch);
+            if (!cursorIsBefore(sel.head, sel.anchor)) {
+              anchor.ch = subLines[aIdx].start;
+              head.ch = subLines[hIdx].end;
+            } else {
+              head.ch = subLines[hIdx].start;
+              anchor.ch = subLines[aIdx].end;
+            }
+            return {
+              ranges: [{anchor: anchor, head: head}],
+              primary: 0
+            };
+          }
+        }
+      }
       if (!cursorIsBefore(sel.head, sel.anchor)) {
         anchor.ch = 0;
 
@@ -4010,6 +4077,18 @@ export function initVim(CM) {
     var selection = cm.getRange(curStart, curEnd);
     // Only clip if the selection ends with trailing newline + whitespace
     if (/\n\s*$/.test(selection)) {
+      if (curStart.line === curEnd.line) {
+        var text = cm.getLine(curStart.line);
+        var isSub = (text.indexOf('\n') !== -1 || (cm.isCodeBlock && cm.isCodeBlock(curStart.line))) && cm.getSubLines;
+        if (isSub) {
+          var subLines = cm.getSubLines(text);
+          if (subLines) {
+            var startIdx = cm.getSubLineIndex(subLines, curStart.ch);
+            curEnd.ch = subLines[startIdx].end;
+            return;
+          }
+        }
+      }
       var lines = selection.split("\n");
       // We know this is all whitespace.
       lines.pop();
@@ -4017,14 +4096,15 @@ export function initVim(CM) {
       // Cases:
       // 1. Last word is an empty line - do not clip the trailing '\n'
       // 2. Last word is not an empty line - clip the trailing '\n'
-      // Find the line containing the last word, and clip all whitespace up
-      // to it.
+      // Find the line containing the last word, and clip all whitespace up to it.
       for (var line = lines.pop(); lines.length > 0 && line && isWhiteSpaceString(line); line = lines.pop()) {
-        curEnd.line--;
-        curEnd.ch = 0;
+        if (curEnd.line > curStart.line) {
+          curEnd.line--;
+          curEnd.ch = 0;
+        }
       }
       // If the last word is not an empty line, clip an additional newline
-      if (line) {
+      if (line && curEnd.line > curStart.line) {
         curEnd.line--;
         curEnd.ch = lineLength(cm, curEnd.line);
       } else {
@@ -4038,23 +4118,25 @@ export function initVim(CM) {
   function expandSelectionToLine(cm, curStart, curEnd) {
     if (curStart.line === curEnd.line) {
       var text = cm.getLine(curStart.line);
-      if (text.indexOf('\n') !== -1) {
-        var subLines = cm.getSubLines ? cm.getSubLines(text) : null;
-        if (subLines && subLines.length > 1) {
+      var isSubLines = (text.indexOf('\n') !== -1 || (cm.isCodeBlock && cm.isCodeBlock(curStart.line))) && cm.getSubLines;
+      if (isSubLines) {
+        var subLines = cm.getSubLines(text);
+        if (subLines && subLines.length > 0) {
           var startIdx = cm.getSubLineIndex(subLines, curStart.ch);
           var endIdx = cm.getSubLineIndex(subLines, curEnd.ch);
-          if (startIdx !== 0 || endIdx !== subLines.length - 1) {
-            if (endIdx === subLines.length - 1) {
-              curStart.ch = subLines[startIdx === 0 ? 0 : startIdx - 1].end;
-              curEnd.line = curStart.line;
-              curEnd.ch = text.length;
-            } else {
-              curStart.ch = subLines[startIdx].start;
-              curEnd.line = curStart.line;
-              curEnd.ch = subLines[endIdx + 1].start;
-            }
-            return;
+          if (startIdx > endIdx) {
+            var tmp = startIdx;
+            startIdx = endIdx;
+            endIdx = tmp;
           }
+          curStart.ch = subLines[startIdx].start;
+          curEnd.line = curStart.line;
+          if (endIdx < subLines.length - 1) {
+            curEnd.ch = subLines[endIdx + 1].start;
+          } else {
+            curEnd.ch = text.length;
+          }
+          return;
         }
       }
     }

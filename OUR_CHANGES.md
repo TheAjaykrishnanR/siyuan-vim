@@ -54,6 +54,11 @@ Modifications were made to existing SiYuan frontend files to hook the Vim logic 
 - **Blank Line / Adjacent Block Deletion Fix (`dd`)**: Removed the legacy last-line anchor rewrite and `isDdLastLine` conditions so deleting a blank line adjacent to a code block never deletes the code block.
 - **Multi-Mode Code Block Breakout (`Shift+Enter` / `Ctrl+Enter`)**: Added multi-mode breakout shortcuts in both Normal and Insert modes to exit code blocks and create a new paragraph block below (or above with `Ctrl+Shift+Enter`) in Insert mode without using the mouse.
 - **Code Block Subline `o` / `O` Insertion**: Updated `newLineAndEnterInsertMode` so `o` and `O` in Normal mode inside code blocks open new lines inside the code block rather than breaking out.
+- **Note Title Motion Navigation (`j` / `k` / `gg`)**: Integrated `protyle.title` as line 0 in `getEditableBlocks()`. Supported seamless `k` navigation from the top body block into the document title, `j` navigation from the title into the body, full title text editing via Vim operators, title cursor styling, and document rename sync.
+- **Code Block Linewise Yank, Delete & Paste Fix (`yy` / `dd` / `p` / `P`)**: Fixed `expandSelectionToLine`, `continuePaste`, and `getRange` to handle single-line and multi-line code block boundaries without leaking cross-block newlines, phantom blank lines, or cursor displacement.
+- **Code Block Caret Preservation Across Syntax Rendering**: Enhanced `highlightRender` to snapshot and restore the active selection offset across DOM reconstructions, preventing caret jumping to block offset 0 on `dd`, `dw`, `Shift+P`, `p`, and `u`.
+- **Code Block Undo (`u`) Caret Restoration**: Embedded temporary `<wbr>` tags into `oldHTML` snapshots before serialization in `replaceRange` and `replaceSelection`, enabling exact sub-line caret restoration when undoing actions in code blocks.
+- **Breakout & Mode Transitions**: Streamlined `Shift+Enter` / `Ctrl+Enter` / `Ctrl+Shift+Enter` breakout handling to avoid focus hijacking and maintain instant Insert mode readiness.
 
 # Other Changes:
 

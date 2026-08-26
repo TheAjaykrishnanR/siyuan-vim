@@ -39,8 +39,18 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         this.protyle = protyle;
     }
 
+    public getTitleElement(): HTMLElement | null {
+        if (this.protyle?.title?.element && 
+            !this.protyle.title.element.classList.contains("fn__none") && 
+            this.protyle.title.editElement &&
+            this.protyle.options?.render?.title !== false) {
+            return this.protyle.title.element;
+        }
+        return null;
+    }
+
     /**
-     * 获取编辑器中所有可编辑的内容块
+     * 获取编辑器中所有可编辑的内容块（包含文档标题）
      */
     public getEditableBlocks(): HTMLElement[] {
         if (!this.protyle?.wysiwyg?.element) {
@@ -54,6 +64,12 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
             }
             return true;
         });
+
+        const titleEl = this.getTitleElement();
+        if (titleEl) {
+            blocks.unshift(titleEl);
+        }
+
         return blocks;
     }
 
@@ -66,6 +82,10 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
     }
 
     public getIndexOfBlock(block: HTMLElement): number {
+        const titleEl = this.getTitleElement();
+        if (titleEl && (block === titleEl || titleEl.contains(block))) {
+            return 0;
+        }
         const blocks = this.getEditableBlocks();
         return blocks.indexOf(block);
     }
@@ -172,12 +192,26 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         if (this.dialogOpen) {
             return {...this.lastCursor};
         }
+
+        // 先检测光标是否在文档标题内
+        const titleEl = this.getTitleElement();
+        const titleEdit = this.protyle?.title?.editElement;
+        const sel = window.getSelection();
+        if (titleEl && titleEdit && sel && sel.rangeCount > 0 && titleEdit.contains(sel.getRangeAt(0).startContainer)) {
+            const titleRange = sel.getRangeAt(0);
+            const offset = getSelectionOffset(titleEdit, undefined, titleRange);
+            const line = 0;
+            const ch = p === "head" || p === "end" ? offset.end : offset.start;
+            this.lastCursor = {line, ch};
+            return {...this.lastCursor};
+        }
+
         const range = getEditorRange(this.protyle.wysiwyg.element);
         if (!range) {
             return {...this.lastCursor};
         }
         const container = p === "head" || p === "end" ? range.endContainer : range.startContainer;
-        const block = (hasClosestBlock(container) || this.getBlockAtIndex(0)) as HTMLElement;
+        const block = (hasClosestBlock(container) || this.getBlockAtIndex(titleEl ? 1 : 0)) as HTMLElement;
         if (!block) {
             return {line: 0, ch: 0};
         }
@@ -322,14 +356,16 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         }
         const lines: string[] = [];
         for (let i = startLine; i <= endLine; i++) {
-            const lineText = this.getLine(i);
+            let lineText = this.getLine(i);
             if (i === startLine) {
-                lines.push(lineText.substring(startCh));
+                lineText = lineText.substring(startCh);
             } else if (i === endLine) {
-                lines.push(lineText.substring(0, endCh));
-            } else {
-                lines.push(lineText);
+                lineText = lineText.substring(0, endCh);
             }
+            if (i < endLine && lineText.endsWith("\n")) {
+                lineText = lineText.slice(0, -1);
+            }
+            lines.push(lineText);
         }
         return lines.join("\n");
     }
@@ -362,16 +398,46 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
                 return;
             }
             const editElement = getContenteditableElement(block) || block;
-            const oldHTML = block.outerHTML;
+            let oldHTML = block.outerHTML;
+            const tempRange = focusByOffset(editElement, startCh, startCh, false) as Range;
+            if (tempRange) {
+                const wbr = document.createElement("wbr");
+                tempRange.insertNode(wbr);
+                oldHTML = block.outerHTML;
+                wbr.remove();
+            }
             const lineText = this.getBlockText(block);
 
+            const isLinewise = Boolean(
+                this.state?.vim?.visualLine ||
+                this.state?.vim?.inputState?.operatorArgs?.linewise ||
+                this.state?.vim?.lastEditInputState?.operatorArgs?.linewise
+            );
             // 行删除需删除整个内容块，而不是只清空文本。单块文档的 dd 会落入同一块替换分支。
             const isLinewiseDelete = text === "" && startCh === 0 &&
                 (endCh === 0 || endCh >= lineText.length) &&
-                (this.state?.vim?.inputState?.operator === "delete" ||
-                 this.state?.vim?.lastEditInputState?.operator === "delete" ||
-                 Boolean(this.curOp?.isVimOp));
-            if (isLinewiseDelete) {
+                isLinewise;
+
+            // 0. 文档标题块内的文本替换与删除
+            if (block === this.getTitleElement()) {
+                if (isLinewiseDelete) {
+                    editElement.textContent = "";
+                    editElement.dispatchEvent(new Event("input"));
+                    this.setCursor(0, 0);
+                    return;
+                }
+                const oldTitle = editElement.textContent || "";
+                const newTitle = oldTitle.substring(0, startCh) + text + oldTitle.substring(endCh);
+                editElement.textContent = newTitle;
+                editElement.dispatchEvent(new Event("input"));
+                this.setCursor(startLine, startCh + text.length);
+                return;
+            }
+
+            // 1. 代码块内的文本替换与删除（如 dw, cw, x, s, r, d$, c$ 以及单行/多行代码块内部编辑）
+            if (block.getAttribute("data-type") === "NodeCodeBlock") {
+                const oldCode = editElement.textContent || "";
+                if (isLinewiseDelete) {
                     const targetDeleteBlock = getTopAloneElement(block);
                     const doOperations: IOperation[] = [];
                     const undoOperations: IOperation[] = [];
@@ -394,24 +460,53 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
                             action: "insert",
                             id: newId,
                             data: newElement.outerHTML,
-                            parentID: this.protyle.block.id,
+                            parentID: this.protyle.block.rootID,
                         });
-                        undoOperations.push({action: "delete", id: newId});
                     }
+                    
                     transaction(this.protyle, doOperations, undoOperations);
                     this.setCursor(Math.max(0, startLine - 1), 0);
                     return;
-            }
-
-            // 代码块内的文本替换与删除（如代码块内 dd 删除单行、普通删除、修改等）
-            if (block.getAttribute("data-type") === "NodeCodeBlock") {
-                const oldCode = editElement.textContent || "";
+                }
                 const newCode = oldCode.substring(0, startCh) + text + oldCode.substring(endCh);
                 editElement.textContent = newCode;
                 editElement.parentElement?.removeAttribute("data-render");
                 highlightRender(block);
                 updateTransaction(this.protyle, block, oldHTML);
                 this.setCursor(startLine, startCh + text.length);
+                return;
+            }
+
+            // 2. 普通内容块行删除（dd）需删除整个内容块，而不是只清空文本
+            if (isLinewiseDelete) {
+                const targetDeleteBlock = getTopAloneElement(block);
+                const doOperations: IOperation[] = [];
+                const undoOperations: IOperation[] = [];
+                const blockID = targetDeleteBlock.getAttribute("data-node-id");
+                doOperations.push({action: "delete", id: blockID});
+                undoOperations.push({
+                    action: "insert",
+                    id: blockID,
+                    data: targetDeleteBlock.outerHTML,
+                    previousID: targetDeleteBlock.previousElementSibling?.getAttribute("data-node-id"),
+                    parentID: targetDeleteBlock.parentElement?.getAttribute("data-node-id") || this.protyle.block.rootID,
+                });
+                targetDeleteBlock.remove();
+                
+                if (allBlocks.length === 1) {
+                    const newId = Lute.NewNodeID();
+                    const newElement = genEmptyElement(false, false, newId);
+                    this.protyle.wysiwyg.element.appendChild(newElement);
+                    doOperations.push({
+                        action: "insert",
+                        id: newId,
+                        data: newElement.outerHTML,
+                        parentID: this.protyle.block.id,
+                    });
+                    undoOperations.push({action: "delete", id: newId});
+                }
+                transaction(this.protyle, doOperations, undoOperations);
+                this.setCursor(Math.max(0, startLine - 1), 0);
                 return;
             }
 
@@ -491,9 +586,15 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
             const deletedIds = new Set<string>();
             for (let i = startLine; i <= deleteUpTo; i++) {
                 const b = allBlocks[i];
+                if (b === this.getTitleElement()) {
+                    const editElement = getContenteditableElement(b) || b;
+                    editElement.textContent = "";
+                    editElement.dispatchEvent(new Event("input"));
+                    continue;
+                }
                 const targetDeleteBlock = getTopAloneElement(b);
-                const blockID = targetDeleteBlock.getAttribute("data-node-id");
-                if (deletedIds.has(blockID)) {
+                const blockID = targetDeleteBlock?.getAttribute("data-node-id");
+                if (!blockID || deletedIds.has(blockID)) {
                     continue;
                 }
                 deletedIds.add(blockID);
@@ -587,7 +688,11 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         if (!block) {
             return;
         }
-        const oldHTML = block.outerHTML;
+        let oldHTML = block.outerHTML;
+        const wbr = document.createElement("wbr");
+        range.insertNode(wbr);
+        oldHTML = block.outerHTML;
+        wbr.remove();
         range.deleteContents();
         if (text) {
             const textNode = document.createTextNode(text);
