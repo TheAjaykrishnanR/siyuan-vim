@@ -18,6 +18,9 @@
 
 1. dd delete line
 2. yy copy current line
+3. Ctrl+Shift+Enter: insert block above container / codeblock
+4. Shift+Enter / Ctrl+Enter: insert block below container / codeblock
+5. o / O inside code block: insert sub-line inside code block
 
 ## Selection
 

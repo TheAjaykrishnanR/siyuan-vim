@@ -131,8 +131,15 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
                 return;
             }
 
-            // 0. Shift+Enter / Ctrl+Enter / Cmd+Enter：跳出当前块并在下方/上方插入新内容块（支持 Insert/Normal 模式）
-            if (event.key === "Enter" && (event.shiftKey || event.ctrlKey || event.metaKey)) {
+            // 0. Breakout 快捷键：
+            // - Ctrl+Shift+Enter / Cmd+Shift+Enter / Alt+Shift+Enter: 在上方插入新内容块 (beforebegin)
+            // - Shift+Enter / Ctrl+Enter / Cmd+Enter: 在下方插入新内容块 (afterend)
+            // 支持在 Insert 模式和 Normal 模式下直接触发
+            const isEnter = event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter";
+            const isInsertBefore = isEnter && event.shiftKey && (event.ctrlKey || event.metaKey || event.altKey);
+            const isInsertAfter = isEnter && !isInsertBefore && (event.shiftKey || event.ctrlKey || event.metaKey);
+
+            if (isInsertBefore || isInsertAfter) {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
@@ -143,7 +150,7 @@ export const initProtyleVim = (protyle: IProtyle, wysiwygElement: HTMLElement) =
                                      adapter.getBlockAtIndex(curPos.line) || 
                                      (protyle.wysiwyg.element.firstElementChild as HTMLElement);
                 const targetBlock = currentBlock ? (getTopAloneElement(currentBlock) || currentBlock) : undefined;
-                const position = (event.shiftKey && (event.ctrlKey || event.metaKey)) ? "beforebegin" : "afterend";
+                const position = isInsertBefore ? "beforebegin" : "afterend";
 
                 await insertEmptyBlock(protyle, position, targetBlock);
 
