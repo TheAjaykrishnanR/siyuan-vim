@@ -33,6 +33,8 @@ import {getEmbeddedDocInfoResponse} from "./docInfo";
 import {updateWidgetCacheVersion} from "./widgetCache";
 import {normalizeHTMLAssetIFrameSources} from "../../asset/html";
 import {hasFocusOffsets} from "./focusRestore";
+import {isIPhone} from "./compatibility";
+import {forEachPluginSubscriber} from "../../plugin/EventBusCore";
 /// #if MOBILE
 import {updateMobileTitleReadonly} from "./setEditMode";
 /// #endif
@@ -48,6 +50,7 @@ export const onGet = (options: {
     dataDocType?: string,
     isValid?: () => boolean,
     focusAfterZoom?: boolean,
+    suppressFocus?: boolean,
 }) => {
     if (options.isValid && !options.isValid()) {
         return;
@@ -139,7 +142,8 @@ export const onGet = (options: {
             refreshHeadingNumbers,
             afterCB: options.afterCB,
             scrollPosition: options.scrollPosition,
-            focusAfterZoom: options.focusAfterZoom
+            focusAfterZoom: options.focusAfterZoom,
+            suppressFocus: options.suppressFocus,
         }, options.protyle);
         removeLoading(options.protyle);
         return;
@@ -157,7 +161,8 @@ export const onGet = (options: {
             refreshHeadingNumbers,
             afterCB: options.afterCB,
             scrollPosition: options.scrollPosition,
-            focusAfterZoom: options.focusAfterZoom
+            focusAfterZoom: options.focusAfterZoom,
+            suppressFocus: options.suppressFocus,
         }, options.protyle);
         removeLoading(options.protyle);
         return;
@@ -188,7 +193,8 @@ export const onGet = (options: {
             refreshHeadingNumbers,
             afterCB: options.afterCB,
             scrollPosition: options.scrollPosition,
-            focusAfterZoom: options.focusAfterZoom
+            focusAfterZoom: options.focusAfterZoom,
+            suppressFocus: options.suppressFocus,
         }, options.protyle);
         removeLoading(options.protyle);
     };
@@ -219,6 +225,7 @@ const setHTML = (options: {
     refreshHeadingNumbers?: boolean,
     afterCB?: () => void,
     focusAfterZoom?: boolean,
+    suppressFocus?: boolean,
 }, protyle: IProtyle) => {
     if (protyle.contentElement.classList.contains("fn__none") && protyle.wysiwyg.element.innerHTML !== "") {
         return;
@@ -235,6 +242,10 @@ const setHTML = (options: {
     });
     normalizeHTMLAssetIFrameSources(doc);
     updateWidgetCacheVersion(doc, Constants.SIYUAN_VERSION);
+    protyle.wysiwyg.prepareLargeListVirtualization(
+        doc.body,
+        !options.action.includes(Constants.CB_GET_APPEND) && !options.action.includes(Constants.CB_GET_BEFORE)
+    );
     options.content = doc.body.innerHTML;
     const REMOVED_OVER_HEIGHT = protyle.contentElement.clientHeight * 8;
     const updateReadonly = typeof options.updateReadonly === "undefined" ? protyle.wysiwyg.element.innerHTML === "" : options.updateReadonly;
@@ -366,7 +377,8 @@ const setHTML = (options: {
         }
     }
 
-    focusElementById(protyle, options.action, options.scrollAttr, options.scrollPosition, options.focusAfterZoom);
+    focusElementById(protyle, options.action, options.scrollAttr, options.scrollPosition,
+        options.focusAfterZoom, options.suppressFocus);
 
     if (options.action.includes(Constants.CB_GET_SETID) ||
         (protyle.model && !protyle.block.showAll)) {
@@ -381,8 +393,8 @@ const setHTML = (options: {
     });
     protyle.options.defIds = [];
     if (options.action.includes(Constants.CB_GET_APPEND) || options.action.includes(Constants.CB_GET_BEFORE)) {
-        protyle.app.plugins.forEach(item => {
-            item.eventBus.emit("loaded-protyle-dynamic", {
+        forEachPluginSubscriber("loaded-protyle-dynamic", eventBus => {
+            eventBus.emit("loaded-protyle-dynamic", {
                 protyle,
                 position: options.action.includes(Constants.CB_GET_APPEND) ? "afterend" : "beforebegin"
             });
@@ -435,8 +447,8 @@ const setHTML = (options: {
         }
 
     }
-    protyle.app.plugins.forEach(item => {
-        item.eventBus.emit("loaded-protyle-static", {protyle});
+    forEachPluginSubscriber("loaded-protyle-static", eventBus => {
+        eventBus.emit("loaded-protyle-static", {protyle});
     });
 };
 
@@ -493,7 +505,7 @@ export const enableProtyle = (protyle: IProtyle) => {
         updateMobileTitleReadonly(protyle);
         /// #endif
     }
-    protyle.wysiwyg.element.setAttribute("contenteditable", "true");
+    protyle.wysiwyg.element.setAttribute("contenteditable", isIPhone() ? "false" : "true");
     protyle.wysiwyg.element.style.userSelect = "";
     // 用于区分移动端样式
     protyle.wysiwyg.element.setAttribute("data-readonly", "false");
@@ -538,7 +550,7 @@ export const enableProtyle = (protyle: IProtyle) => {
 };
 
 const focusElementById = (protyle: IProtyle, action: string[], scrollAttr?: IScrollAttr,
-                          scrollPosition?: ScrollLogicalPosition, focusAfterZoom = false) => {
+                          scrollPosition?: ScrollLogicalPosition, focusAfterZoom = false, suppressFocus = false) => {
     let focusElement: Element;
     if (scrollAttr && scrollAttr.focusId) {
         focusElement = protyle.wysiwyg.element.querySelector(`[data-node-id="${scrollAttr.focusId}"]`);
@@ -564,8 +576,8 @@ const focusElementById = (protyle: IProtyle, action: string[], scrollAttr?: IScr
         preventScroll(protyle); // 搜索页签滚动会导致再次请求
         bgFade(focusElement);
     }
-    const shouldFocus = action.includes(Constants.CB_GET_FOCUS) || action.includes(Constants.CB_GET_FOCUSFIRST) ||
-        (isVimEnabled() && !protyle.element.classList.contains("fn__none") && !hasClosestByClassName(protyle.element, "fn__none"));
+    const shouldFocus = !suppressFocus && (action.includes(Constants.CB_GET_FOCUS) || action.includes(Constants.CB_GET_FOCUSFIRST) ||
+        (isVimEnabled() && !protyle.element.classList.contains("fn__none") && !hasClosestByClassName(protyle.element, "fn__none")));
     if (shouldFocus && focusElement) {
         setTimeout(() => {
             let range: Range;

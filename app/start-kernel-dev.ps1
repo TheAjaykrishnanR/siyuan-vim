@@ -1,0 +1,1 @@
+./kernel/siyuan-kernel serve --mode=dev --workspace="$HOME\Documents\SiYuan-Test-Workspace"
