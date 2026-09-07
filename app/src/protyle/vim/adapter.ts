@@ -1,6 +1,6 @@
 import {focusByOffset, getEditorRange, getSelectionOffset} from "../util/selection";
 import {getContenteditableElement, isNotEditBlock, isContainerBlock, getTopAloneElement} from "../wysiwyg/getBlock";
-import {hasClosestBlock} from "../util/hasClosest";
+import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";
 import {transaction, updateTransaction} from "../wysiwyg/transaction";
 import {genEmptyElement, insertEmptyBlock} from "../../block/util";
 import {Constants} from "../../constants";
@@ -245,6 +245,11 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
             return;
         }
 
+        if (!this.state?.vim?.visualMode) {
+            this.getEditableBlocks().forEach(b => b.classList.remove("protyle-wysiwyg--select"));
+            this._selections = [];
+        }
+
         const editElement = getContenteditableElement(block) || block;
         const textLength = this.getBlockText(block).length;
         const targetCol = Math.min(Math.max(0, col), textLength);
@@ -286,14 +291,6 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
 
         if (!startBlock || !endBlock) {
             return;
-        }
-
-        if (this.state?.vim?.visualMode) {
-            for (let i = startLine; i <= endLine; i++) {
-                if (allBlocks[i]) {
-                    allBlocks[i].classList.add("protyle-wysiwyg--select");
-                }
-            }
         }
 
         const startEdit = getContenteditableElement(startBlock) || startBlock;
@@ -549,7 +546,7 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
                 return;
             }
 
-            const range = focusByOffset(block, startCh, endCh, false) as Range;
+            const range = focusByOffset(editElement, startCh, endCh, false) as Range;
             if (range) {
                 range.deleteContents();
                 if (text) {
@@ -755,27 +752,123 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         }
     }
 
-    public indentLine(line: number, more?: boolean): void {
+    public indentLine(line: number, more?: boolean, ch?: number): void {
         const block = this.getBlockAtIndex(line);
         if (!block) {
             return;
         }
-        const range = getEditorRange(this.protyle.wysiwyg.element) || document.createRange();
+
+        const indentUnit = (this.getOption("indentUnit") as number) || 4;
+        const indentStr = (this.getOption("indentWithTabs") as boolean) ? "\t" : " ".repeat(indentUnit);
+
+        // 1. 列表项块（NodeListItem 或位于 li 内）
+        const liBlock = block.classList.contains("li") ? block : (hasClosestByClassName(block, "li") as HTMLElement);
+        if (liBlock) {
+            const range = getEditorRange(this.protyle.wysiwyg.element) || document.createRange();
+            if (more) {
+                listIndent(this.protyle, [liBlock], range);
+            } else {
+                listOutdent(this.protyle, [liBlock], range);
+            }
+            return;
+        }
+
+        // 2. 代码块（NodeCodeBlock）
+        if (block.getAttribute("data-type") === "NodeCodeBlock") {
+            const codeText = this.getBlockText(block);
+            const subLines = this.getSubLines(codeText);
+            let targetSubLines: { text: string; start: number; end: number }[] = [];
+
+            if (typeof ch === "number") {
+                const subIdx = this.getSubLineIndex(subLines, ch);
+                if (subLines[subIdx]) {
+                    targetSubLines = [subLines[subIdx]];
+                }
+            } else {
+                targetSubLines = subLines;
+            }
+
+            // 从后往前替换，避免偏移量错乱
+            for (let i = targetSubLines.length - 1; i >= 0; i--) {
+                const subLine = targetSubLines[i];
+                if (more) {
+                    this.replaceRange(indentStr, {line, ch: subLine.start}, {line, ch: subLine.start});
+                } else {
+                    const match = subLine.text.match(/^(\t|[ ]{1,4})/);
+                    if (match && match[0].length > 0) {
+                        this.replaceRange("", {line, ch: subLine.start}, {line, ch: subLine.start + match[0].length});
+                    }
+                }
+            }
+            return;
+        }
+
+        // 3. 文档标题块
+        if (block === this.getTitleElement()) {
+            const titleText = this.getBlockText(block);
+            if (more) {
+                this.replaceRange(indentStr, {line, ch: 0}, {line, ch: 0});
+            } else {
+                const match = titleText.match(/^(\t|[ ]{1,4})/);
+                if (match && match[0].length > 0) {
+                    this.replaceRange("", {line, ch: 0}, {line, ch: match[0].length});
+                }
+            }
+            return;
+        }
+
+        // 4. 普通段落块 / 标题 / 引述块等
+        const lineText = this.getBlockText(block);
         if (more) {
-            listIndent(this.protyle, [block], range);
+            this.replaceRange(indentStr, {line, ch: 0}, {line, ch: 0});
         } else {
-            listOutdent(this.protyle, [block], range);
+            const match = lineText.match(/^(\t|[ ]{1,4})/);
+            if (match && match[0].length > 0) {
+                this.replaceRange("", {line, ch: 0}, {line, ch: match[0].length});
+            }
+        }
+    }
+
+    public indentSelection(more: boolean): void {
+        const selections = this._selections;
+        if (this.state?.vim?.visualMode || (selections && selections.length > 0 && 
+            (selections[0].anchor.line !== selections[0].head.line || selections[0].anchor.ch !== selections[0].head.ch))) {
+            const sel = selections && selections.length > 0 ? selections[0] : {anchor: this.getCursor(), head: this.getCursor()};
+            const minLine = Math.min(sel.anchor.line, sel.head.line);
+            const maxLine = Math.max(sel.anchor.line, sel.head.line);
+            for (let i = minLine; i <= maxLine; i++) {
+                const block = this.getBlockAtIndex(i);
+                if (block && block.getAttribute("data-type") === "NodeCodeBlock") {
+                    const codeText = this.getBlockText(block);
+                    const subLines = this.getSubLines(codeText);
+                    const startCh = i === minLine ? (sel.anchor.line < sel.head.line ? sel.anchor.ch : (sel.anchor.line === sel.head.line ? Math.min(sel.anchor.ch, sel.head.ch) : sel.head.ch)) : 0;
+                    const endCh = i === maxLine ? (sel.anchor.line > sel.head.line ? sel.anchor.ch : (sel.anchor.line === sel.head.line ? Math.max(sel.anchor.ch, sel.head.ch) : sel.head.ch)) : codeText.length;
+                    const startSubIdx = this.getSubLineIndex(subLines, startCh);
+                    const endSubIdx = this.getSubLineIndex(subLines, endCh);
+                    for (let s = endSubIdx; s >= startSubIdx; s--) {
+                        this.indentLine(i, more, subLines[s].start);
+                    }
+                } else {
+                    this.indentLine(i, more);
+                }
+            }
+        } else {
+            const cursor = this.getCursor();
+            const block = this.getBlockAtIndex(cursor.line);
+            if (block && block.getAttribute("data-type") === "NodeCodeBlock") {
+                this.indentLine(cursor.line, more, cursor.ch);
+            } else {
+                this.indentLine(cursor.line, more);
+            }
         }
     }
 
     public indentMore(): void {
-        const cursor = this.getCursor();
-        this.indentLine(cursor.line, true);
+        this.indentSelection(true);
     }
 
     public indentLess(): void {
-        const cursor = this.getCursor();
-        this.indentLine(cursor.line, false);
+        this.indentSelection(false);
     }
 
     public isCodeBlock(line: number): boolean {

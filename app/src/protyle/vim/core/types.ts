@@ -492,8 +492,8 @@ export interface CM5EditorInterface {
     blur(): void
     defaultTextHeight(): number
     findMatchingBracket(pos: Pos, _options?: any): { to: Pos } | { to: undefined }
-    scanForBracket(pos: Pos, dir: 1 | -1, style: any, config: any): false | { pos: Pos, ch: string } | null
-    indentLine(line: number, more?: boolean): void
+    indentLine(line: number, more?: boolean, ch?: number): void
+    indentSelection?(more: boolean): void
     indentMore(): void
     indentLess(): void
     execCommand(name: string): void

@@ -2842,27 +2842,22 @@ export function initVim(CM) {
           else cm.indentLess();
         }
       } else {
-        var startLine = ranges[0].anchor.line;
-        var endLine = vim.visualBlock ?
-          ranges[ranges.length - 1].anchor.line :
-          ranges[0].head.line;
-        if (args.linewise) {
-          // The only way to delete a newline is to delete until the start of
-          // the next line, so in linewise mode evalInput will include the next
-          // line. We don't want this in indent, so we go back a line.
-          endLine--;
+        var minLine = Math.min(ranges[0].anchor.line, ranges[0].head.line);
+        var maxLine = Math.max(ranges[0].anchor.line, ranges[0].head.line);
+        if (args.linewise && maxLine > minLine) {
+          maxLine--;
         }
-        for (var i = startLine; i <= endLine; i++) {
+        for (var i = minLine; i <= maxLine; i++) {
           for (var j = 0; j < repeat; j++) {
             cm.indentLine(i, args.indentRight);
           }
         }
       }
-      return motions.moveToFirstNonWhiteSpaceCharacter(cm, ranges[0].anchor);
+      return motions.moveToFirstNonWhiteSpaceCharacter(cm, cursorMin(ranges[0].anchor, ranges[0].head));
     },
     indentAuto: function(cm, _args, ranges) {
       cm.execCommand("indentAuto");
-      return motions.moveToFirstNonWhiteSpaceCharacter(cm, ranges[0].anchor);
+      return motions.moveToFirstNonWhiteSpaceCharacter(cm, cursorMin(ranges[0].anchor, ranges[0].head));
     },
     hardWrap: function(cm, operatorArgs, ranges, oldAnchor) {
       if (!cm.hardWrap) return;
