@@ -24,7 +24,7 @@ export const genNumberInputHtml = (
     const fieldClass = unit ? "fn__flex-1" : "fn__flex-center fn__size200";
     const input = `<input class="b3-text-field ${fieldClass}" id="${id}" type="number" min="${min ?? ""}" max="${max ?? ""}" step="${step ?? ""}" value="${value}"/>`;
     if (unit) {
-        return `<div class="fn__size200 fn__flex-center fn__flex">${input}<span class="fn__space"></span><span class="ft__on-surface fn__flex-center">${unit}</span></div>`;
+        return `<div class="fn__size200 fn__flex-center fn__flex config-item__number">${input}<span class="fn__space"></span><span class="ft__on-surface fn__flex-center">${unit}</span></div>`;
     }
     return input;
 };
@@ -69,7 +69,7 @@ const genTextBlockFieldHtml = (
 ): string => {
     const spellcheck = window.siyuan.config.editor.spellcheck ? "true" : "false";
     if (mode === "textarea") {
-        return `<textarea class="b3-text-field fn__block" id="${id}" spellcheck="${spellcheck}">${value}</textarea>`;
+        return `<textarea class="b3-text-field fn__block" id="${id}" spellcheck="${spellcheck}">${Lute.EscapeHTMLStr(value)}</textarea>`;
     }
     if (mode === "input-password") {
         return `<div class="b3-form__icona fn__block">

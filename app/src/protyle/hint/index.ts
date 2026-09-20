@@ -1,4 +1,5 @@
 import {Constants} from "../../constants";
+import {isBuiltinSlashHint} from "./builtinSlash";
 import {
     hasClosestBlock,
     hasClosestByAttribute,
@@ -15,7 +16,7 @@ import {
     getSelectionPosition,
     getUndoFocusContext,
 } from "../util/selection";
-import {genHintItemHTML, hintEmbed, hintRef, hintSlash} from "./extend";
+import {genHintItemHTML, hintEmbed, hintRef, hintSlash, hintTag} from "./extend";
 import {
     getBlockRefAnchorText,
     getDocCreateTemplatePath,
@@ -45,7 +46,8 @@ import {
 } from "../../emoji";
 import {blockRender} from "../render/blockRender";
 import {getUploadInsertRange, uploadFiles} from "../upload";
-import {createUploadInsertPosition} from "../upload/insertPosition";
+import {showMessage} from "../../dialog/message";
+import {captureUploadDocument, createUploadInsertPosition, isUploadDocumentAvailable} from "../upload/insertPosition";
 /// #if !MOBILE
 import {openFileById} from "../../editor/util";
 /// #endif
@@ -57,6 +59,8 @@ import {isNotCtrl, isOnlyMeta} from "../util/compatibility";
 import {avRender} from "../render/av/render";
 import {genIconHTML} from "../render/util";
 import {updateAttrViewCellAnimation} from "../render/av/action";
+import {getAVBindingOperations} from "../render/av/binding";
+import {genCellValueByElement} from "../render/av/cell";
 import {setFold} from "../util/blockFold";
 import {getIconValueKind} from "../../emoji/iconValue";
 import {getCreateTargetContext, isSameCreateTargetContext} from "./createTargetContext";
@@ -71,7 +75,7 @@ import {
 import {getMobileHintPosition} from "./mobileHintPosition";
 import {getVisibleViewportBounds} from "../../mobile/util/visibleViewport";
 import {getTopBarHeight} from "../../layout/getTopBarHeight";
-import {stripSemanticMarkersFromRangeText} from "../util/inlineElementMarker";
+import {getSemanticInlineVisibleText, stripSemanticMarkersFromRangeText} from "../util/inlineElementMarker";
 import {areProtylePluginExtensionsEnabled} from "../runtimeCapabilities";
 
 const genEmojiInsertHTML = (value: string) => {
@@ -114,6 +118,7 @@ export class Hint {
     public enableExtend = false;
     public splitChar = "";
     public lastIndex = -1;
+    public hashTagSearchElement?: HTMLElement;
     private source: THintSource;
     private createTargetSessionID = 0;
     private createTargetRenderID = 0;
@@ -175,6 +180,17 @@ export class Hint {
         this.destroyEmojiPanel();
     }
 
+    // 新建空标签后进入标签搜索状态，输入过程中弹出候选标签列表
+    public startHashTagSearch(protyle: IProtyle, tagElement: HTMLElement) {
+        if (!protyle.options.hint.extend.some((item) => item.hint === hintTag)) {
+            return;
+        }
+        this.hashTagSearchElement = tagElement;
+        this.splitChar = "";
+        this.lastIndex = -1;
+        hintTag("", protyle);
+    }
+
     public prepareCreateTarget(protyle: IProtyle, type: TCreateTargetType) {
         const {notebookId, path} = getCreateTargetContext(protyle);
         if (this.element.classList.contains("fn__none") || !this.createTargetSession ||
@@ -217,6 +233,22 @@ export class Hint {
             this.element.classList.add("fn__none");
             clearTimeout(this.timeId);
             return;
+        }
+        // 新建的空标签处于搜索状态，输入时按标签内容过滤候选
+        if (this.hashTagSearchElement) {
+            const selection = getSelection();
+            if (!this.hashTagSearchElement.isConnected ||
+                !protyle.wysiwyg.element.contains(this.hashTagSearchElement) ||
+                !selection.focusNode || !this.hashTagSearchElement.contains(selection.focusNode)) {
+                this.hashTagSearchElement = undefined;
+            } else {
+                clearTimeout(this.timeId);
+                const tagKey = getSemanticInlineVisibleText(this.hashTagSearchElement);
+                this.timeId = window.setTimeout(() => {
+                    hintTag(tagKey, protyle);
+                }, protyle.options.hint.delay);
+                return;
+            }
         }
         if (!this.enableExtend) {
             clearTimeout(this.timeId);
@@ -295,7 +327,7 @@ export class Hint {
             if (protyle.lite) {
                 protyle.options.hint.extend.find((item) => {
                     if (item.key === "/" && item.hint) {
-                        item.hint(key, protyle, "hint");
+                        this.genHTML(item.hint(key, protyle, "hint"), protyle, false, "hint");
                         return true;
                     }
                 });
@@ -352,7 +384,7 @@ export class Hint {
             Constants.BLOCK_HINT_CLOSE_KEYS[this.splitChar], Constants.SIZE_TITLE);
     }
 
-    private getMobileSelectionTop(protyle: IProtyle) {
+    private getMobileSelectionBounds(protyle: IProtyle) {
         const range = getEditorRange(protyle.wysiwyg.element);
         const position = getSelectionPosition(protyle.wysiwyg.element, range);
         if (range.startContainer.nodeType === 3 && range.startContainer.textContent.length > 0) {
@@ -369,13 +401,19 @@ export class Hint {
             const rects = textRange.getClientRects();
             const rect = rects[rects.length - 1];
             if (rect?.height > 0) {
-                return rect.top;
+                return {
+                    top: rect.top,
+                    bottom: rect.bottom,
+                };
             }
         }
-        return position.top;
+        return {
+            top: position.top,
+            bottom: position.top + 26,
+        };
     }
 
-    private setMobilePosition(anchorTop: number) {
+    private setMobilePosition(anchorTop: number, anchorBottom: number) {
         const viewportBounds = getVisibleViewportBounds();
         const viewportTop = Math.max(viewportBounds.top, getTopBarHeight());
         let viewportBottom = viewportBounds.bottom;
@@ -386,14 +424,14 @@ export class Hint {
         viewportBottom = Math.max(viewportTop, viewportBottom);
         const heightLimit = (viewportBottom - viewportTop) / 3;
         const gap = 8;
-        let position = getMobileHintPosition(anchorTop, this.element.scrollHeight, viewportTop, viewportBottom,
-            heightLimit, gap);
+        let position = getMobileHintPosition(anchorTop, anchorBottom, this.element.scrollHeight, viewportTop,
+            viewportBottom, heightLimit, gap);
         const hintStyle = getComputedStyle(this.element);
         const verticalInset = parseFloat(hintStyle.paddingTop) + parseFloat(hintStyle.paddingBottom) +
             parseFloat(hintStyle.borderTopWidth) + parseFloat(hintStyle.borderBottomWidth);
         this.element.style.maxHeight = `${Math.max(0, position.maxHeight - verticalInset)}px`;
-        position = getMobileHintPosition(anchorTop, this.element.getBoundingClientRect().height, viewportTop,
-            viewportBottom, heightLimit, gap);
+        position = getMobileHintPosition(anchorTop, anchorBottom, this.element.getBoundingClientRect().height,
+            viewportTop, viewportBottom, heightLimit, gap);
         this.element.style.left = "0";
         this.element.style.top = `${position.top}px`;
     }
@@ -410,7 +448,7 @@ export class Hint {
                     /// #if !MOBILE
                     setPosition(this.element, cellRect.left, cellRect.bottom, cellRect.height);
                     /// #else
-                    this.setMobilePosition(cellRect.top);
+                    this.setMobilePosition(cellRect.top, cellRect.bottom);
                     /// #endif
                 }
             } else {
@@ -418,7 +456,8 @@ export class Hint {
                 /// #if !MOBILE
                 setPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
                 /// #else
-                this.setMobilePosition(this.getMobileSelectionTop(protyle));
+                const selectionBounds = this.getMobileSelectionBounds(protyle);
+                this.setMobilePosition(selectionBounds.top, selectionBounds.bottom);
                 /// #endif
             }
         } else if (!this.element.querySelector(".fn__loading")) {
@@ -442,17 +481,26 @@ export class Hint {
                     getUndoFocusContext(protyle.wysiwyg.element, range, true));
             };
             let insertPosition = captureInsertPosition();
+            let uploadDocument = captureUploadDocument(protyle);
             item.addEventListener("click", () => {
                 insertPosition = captureInsertPosition();
+                uploadDocument = captureUploadDocument(protyle);
             });
             item.addEventListener("change", (event: InputEvent & { target: HTMLInputElement }) => {
                 if (event.target.files.length === 0) {
                     return;
                 }
-                const range = getUploadInsertRange(protyle, insertPosition);
+                const range = isUploadDocumentAvailable(protyle, uploadDocument) ?
+                    getUploadInsertRange(protyle, insertPosition) : undefined;
+                if (!range) {
+                    event.target.value = "";
+                    showMessage(window.siyuan.languages.uploadInsertTargetUnavailable);
+                    return;
+                }
                 range.deleteContents();
                 range.collapse(true);
                 uploadFiles(protyle, event.target.files, event.target, undefined, undefined, {
+                    document: uploadDocument,
                     htmlAsIframe: event.target.dataset.uploadMode === "html-iframe",
                     insertPosition: createUploadInsertPosition(range,
                         getUndoFocusContext(protyle.wysiwyg.element, range, true)),
@@ -507,7 +555,7 @@ export class Hint {
                 /// #if !MOBILE
                 setPosition(this.element, cellRect.left, cellRect.bottom, cellRect.height);
                 /// #else
-                this.setMobilePosition(cellRect.top);
+                this.setMobilePosition(cellRect.top, cellRect.bottom);
                 /// #endif
             }
         } else {
@@ -515,7 +563,8 @@ export class Hint {
             /// #if !MOBILE
             setPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
             /// #else
-            this.setMobilePosition(this.getMobileSelectionTop(protyle));
+            const selectionBounds = this.getMobileSelectionBounds(protyle);
+            this.setMobilePosition(selectionBounds.top, selectionBounds.bottom);
             /// #endif
         }
         this.element.scrollTop = 0;
@@ -566,7 +615,7 @@ export class Hint {
     private genSearchHTML(protyle: IProtyle, searchElement: HTMLInputElement, nodeElement: false | HTMLElement, oldValue: string, source: THintSource) {
         const createTarget = this.prepareCreateTarget(protyle, "ref");
         this.element.lastElementChild.innerHTML = '<div class="ft__center"><img style="height:32px;width:32px;" src="/stage/loading-pure.svg"></div>';
-        const searchParam: IObject = {
+        const searchParam: import("../../types/api").SearchRefBlockRequestInput = {
             k: searchElement.value,
             id: nodeElement ? nodeElement.getAttribute("data-node-id") : protyle.block.parentID,
             beforeLen: Math.floor((Math.max(protyle.element.clientWidth / 2, 320) - 58) / 28.8),
@@ -692,6 +741,24 @@ ${genHintItemHTML(item)}
         if (!nodeElement) {
             return;
         }
+        // 新建标签的搜索状态：用选中的标签替换原空标签
+        if (this.hashTagSearchElement && this.source === "hint") {
+            const tagElement = this.hashTagSearchElement;
+            this.hashTagSearchElement = undefined;
+            this.splitChar = "";
+            this.lastIndex = -1;
+            if (tagElement.isConnected && protyle.wysiwyg.element.contains(tagElement) && value) {
+                const tagRange = document.createRange();
+                tagRange.setStartBefore(tagElement);
+                tagRange.setEndAfter(tagElement);
+                tagRange.deleteContents();
+                tagRange.collapse(true);
+                focusByRange(tagRange);
+                protyle.toolbar.range = tagRange;
+                insertHTML(protyle.lute.SpinBlockDOM(value), protyle, false, isMobile());
+            }
+            return;
+        }
         if (this.source === "av") {
             let cellElement = hasClosestByClassName(protyle.toolbar.range.startContainer, "av__cell");
             if (!cellElement) {
@@ -706,6 +773,7 @@ ${genHintItemHTML(item)}
             }
             const previousID = rowElement.dataset.id;
             const avID = nodeElement.getAttribute("data-av-id");
+            const previousValue = genCellValueByElement("block", cellElement);
             let tempElement = document.createElement("div");
             tempElement.innerHTML = value.replace(/<mark>/g, "").replace(/<\/mark>/g, "");
             tempElement = tempElement.firstElementChild as HTMLDivElement;
@@ -716,22 +784,9 @@ ${genHintItemHTML(item)}
                 const realFileName = fileNames.length === 1 ? fileNames[0] : fileNames[1];
                 const newID = Lute.NewNodeID();
                 const bindNewDoc = () => {
-                    transaction(protyle, [{
-                        action: "replaceAttrViewBlock",
-                        avID,
-                        previousID,
-                        nextID: newID,
-                        isDetached: false,
-                        blockID: nodeElement.dataset.nodeId,
-                        context: {protyleID: protyle.id},
-                    }], [{
-                        action: "replaceAttrViewBlock",
-                        avID,
-                        previousID,
-                        isDetached: true,
-                        blockID: nodeElement.dataset.nodeId,
-                        context: {protyleID: protyle.id},
-                    }]);
+                    const operations = getAVBindingOperations(avID, previousID, newID, nodeElement.dataset.nodeId,
+                        previousValue, {protyleID: protyle.id});
+                    transaction(protyle, operations.doOperations, operations.undoOperations);
                 };
                 if (isNewSubDoc) {
                     newSubDocByRefHint(protyle, realFileName, bindNewDoc, newID);
@@ -745,22 +800,9 @@ ${genHintItemHTML(item)}
                 });
             } else {
                 const sourceId = tempElement.getAttribute("data-id");
-                transaction(protyle, [{
-                    action: "replaceAttrViewBlock",
-                    avID,
-                    previousID,
-                    nextID: sourceId,
-                    isDetached: false,
-                    blockID: nodeElement.dataset.nodeId,
-                    context: {protyleID: protyle.id},
-                }], [{
-                    action: "replaceAttrViewBlock",
-                    avID,
-                    previousID,
-                    isDetached: true,
-                    blockID: nodeElement.dataset.nodeId,
-                    context: {protyleID: protyle.id},
-                }]);
+                const operations = getAVBindingOperations(avID, previousID, sourceId, nodeElement.dataset.nodeId,
+                    previousValue, {protyleID: protyle.id});
+                transaction(protyle, operations.doOperations, operations.undoOperations);
                 updateAttrViewCellAnimation(cellElement, {
                     type: "block",
                     isDetached: false,
@@ -862,8 +904,14 @@ ${genHintItemHTML(item)}
             blockRender(protyle, protyle.wysiwyg.element);
             return;
         } else if (this.splitChar === "/" || this.splitChar === "、") {
-            if (protyle.lite) {
+            // 精简模式的自定义候选按文本插入，内置候选执行命令；块引用保留本地事务和后续提示。
+            if (protyle.lite && (Constants.BLOCK_HINT_KEYS.includes(value) ||
+                !isBuiltinSlashHint(protyle.options.hint.extend.find((item) => item.key === "/" && item.hint)?.hint))) {
                 insertHTML(value, protyle, false, false, false, undefined, undoContext);
+                if (Constants.BLOCK_HINT_KEYS.includes(value)) {
+                    this.enableExtend = true;
+                    this.render(protyle);
+                }
             } else if (value === "((" || value === "{{") {
                 this.enableExtend = true;
                 if (value === "((") {
@@ -1185,6 +1233,19 @@ ${genHintItemHTML(item)}
                 }
             }
         }
+        // 新建表格后直接接管当前单元格，后续输入与鼠标点击进入编辑使用相同的限制。
+        const selection = getSelection();
+        const focus = selection?.focusNode;
+        const focusElement = focus instanceof Element ? focus : focus?.parentElement;
+        const cell = focusElement?.closest<HTMLTableCellElement>("td, th");
+        if (cell && cell.closest(".protyle-wysiwyg") === protyle.wysiwyg.element &&
+            cell.contains(selection.anchorNode)) {
+            void import("../render/tableCellRichEditor").then(module => {
+                if (cell.contains(getSelection()?.focusNode)) {
+                    module.openTableCellRichEditor(protyle, cell);
+                }
+            });
+        }
     }
 
     public select(event: KeyboardEvent, protyle: IProtyle) {
@@ -1262,7 +1323,12 @@ ${genHintItemHTML(item)}
         const prevLastIndex = this.lastIndex;
         this.lastIndex = -1;
         this.splitChar = "";
+        const disableHashTagSearch = window.siyuan.config.editor.hashTagSearch === false;
         extend.forEach((item) => {
+            // 关闭标签搜索后 # 不再作为触发符，避免影响 / 等后续提示
+            if (disableHashTagSearch && item.key === "#") {
+                return;
+            }
             let currentLastIndex = currentLineValue.lastIndexOf(item.key);
             // https://ld246.com/article/1701670704754
             if (Constants.BLOCK_HINT_KEYS.includes(item.key) && currentLastIndex > -1) {
@@ -1282,6 +1348,7 @@ ${genHintItemHTML(item)}
         // 上一次提示没有结束时不能被其余提示干扰 https://github.com/siyuan-note/siyuan/issues/14324
         if (!this.element.classList.contains("fn__none") && prevSplit && prevSplit !== this.splitChar &&
             prevLastIndex > -1 && currentLineValue.startsWith(prevSplit, prevLastIndex) &&
+            !(disableHashTagSearch && prevSplit === "#") &&
             !(["/", "、"].includes(prevSplit) && this.splitChar === ":")) {
             this.splitChar = prevSplit;
             this.lastIndex = prevLastIndex;

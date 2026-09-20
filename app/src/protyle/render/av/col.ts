@@ -1,3 +1,4 @@
+import {isAVRenderData} from "./renderData";
 import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {fetchPost, fetchSyncPost} from "../../../util/fetch";
@@ -107,7 +108,7 @@ export const getEditHTML = (options: {
     <span class="b3-menu__label ft__center">${window.siyuan.languages.edit}</span>
 </button>
 <button class="b3-menu__separator" data-id="separator_1"></button>
-<button class="b3-menu__item" data-type="nobg">
+<button class="b3-menu__item av__panel-name" data-type="nobg">
     <div class="fn__block">
         <div class="fn__flex">
             <span class="b3-menu__avemoji" data-col-type="${colData.type}" data-icon="${escapeAttr(colData.icon)}" data-type="update-icon">${colData.icon ? unicode2Emoji(colData.icon) : `<svg style="width: 14px;height: 14px"><use xlink:href="#${getColIconByType(colData.type)}"></use></svg>`}</span>
@@ -161,7 +162,7 @@ export const getEditHTML = (options: {
     } else if (colData.type === "template") {
         html += `<button class="b3-menu__separator" data-id="separator_2"></button>
 <button class="b3-menu__item" data-type="nobg">
-    <textarea spellcheck="false" rows="${Math.min(colData.template.split("\n").length, 8)}" placeholder="${window.siyuan.languages.template}" data-type="updateTemplate" style="margin: 4px 0" rows="1" class="fn__block b3-text-field">${colData.template}</textarea>
+    <textarea spellcheck="false" rows="${Math.min(colData.template.split("\n").length, 8)}" placeholder="${window.siyuan.languages.template}" data-type="updateTemplate" style="margin: 4px 0" rows="1" class="fn__block b3-text-field">${escapeHtml(colData.template)}</textarea>
 </button>`;
     } else if (colData.type === "relation") {
         const isSelf = colData.relation?.avID === options.data.id;
@@ -172,7 +173,6 @@ export const getEditHTML = (options: {
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item${colData.relation?.avID ? "" : " b3-menu__item--disabled"}" data-type="goAttrViewColFilters" data-filter-type="relation">
-    <svg class="b3-menu__icon"><use xlink:href="#iconFilter"></use></svg>
     <span class="b3-menu__label">${window.siyuan.languages.filter}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
@@ -799,16 +799,16 @@ export const setFreezeColumn = (protyle: IProtyle, blockElement: Element, freeze
     if (freezeColId === oldFreezeColId) {
         return;
     }
-    const operation = {
-        action: "setAttrViewColPin" as TOperation,
+    const operation: Extract<IOperation, {action: "setAttrViewColPin"}> = {
+        action: "setAttrViewColPin",
         id: freezeColId || oldFreezeColId,
         avID: blockElement.getAttribute("data-av-id"),
         data: !!freezeColId,
         blockID: blockElement.getAttribute("data-node-id"),
         viewID: blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
     };
-    const undoOperation = {
-        action: "setAttrViewColPin" as TOperation,
+    const undoOperation: Extract<IOperation, {action: "setAttrViewColPin"}> = {
+        action: "setAttrViewColPin",
         id: oldFreezeColId || freezeColId,
         avID: operation.avID,
         data: !!oldFreezeColId,
@@ -834,8 +834,8 @@ const setAVColumnWidths = (protyle: IProtyle, blockElement: HTMLElement, widths:
     if (Object.keys(newWidths).length === 0) {
         return;
     }
-    const operation = {
-        action: "setAttrViewColsWidth" as TOperation,
+    const operation: Extract<IOperation, {action: "setAttrViewColsWidth"}> = {
+        action: "setAttrViewColsWidth",
         avID: blockElement.dataset.avId,
         blockID: blockElement.dataset.nodeId,
         viewID: blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
@@ -1008,7 +1008,7 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
     <div class="fn__hr"></div>
     <div class="fn__flex">
         <span class="fn__space"></span>
-        <textarea placeholder="${window.siyuan.languages.addDesc}" rows="1" class="b3-text-field fn__block" type="text" data-value="${escapeAttr(oldDesc)}">${oldDesc}</textarea>
+        <textarea placeholder="${window.siyuan.languages.addDesc}" rows="1" class="b3-text-field fn__block" type="text" data-value="${escapeAttr(oldDesc)}">${escapeHtml(oldDesc)}</textarea>
         <span class="fn__space"></span>    
     </div>
 </div>
@@ -1374,6 +1374,9 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                         id: avID,
                         blockID,
                     }, (response) => {
+                        if (!isAVRenderData(response.data)) {
+                            return;
+                        }
                         duplicateCol({
                             blockElement,
                             viewID,
@@ -1392,11 +1395,17 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             async click() {
                 if (type === "relation") {
                     const response = await fetchSyncPost("/api/av/getAttributeView", {id: avID});
+                    if (response.code !== 0) {
+                        return;
+                    }
                     const colData = response.data.av.keyValues.find((item: {
                         key: { id: string }
                     }) => item.key.id === colId);
                     if (colData.key.relation?.isTwoWay) {
                         const relResponse = await fetchSyncPost("/api/av/getAttributeView", {id: colData.key.relation.avID});
+                        if (relResponse.code !== 0) {
+                            return;
+                        }
                         const dialog = new Dialog({
                             title: window.siyuan.languages.removeColConfirm,
                             content: `<div class="b3-dialog__content">
@@ -1505,6 +1514,7 @@ const removeColByMenu = (options: {
         action: "removeAttrViewCol",
         id: options.colId,
         avID: options.avID,
+        blockID: options.blockID,
         removeDest: options.removeDest
     }, {
         action: "doUpdateUpdated",
@@ -1514,6 +1524,7 @@ const removeColByMenu = (options: {
         action: "addAttrViewCol",
         name: options.oldValue,
         avID: options.avID,
+        blockID: options.blockID,
         type: options.type,
         format: options.cellElement.dataset.dateFormat || "",
         id: options.colId,
@@ -1553,6 +1564,7 @@ export const removeCol = (options: {
         action: "removeAttrViewCol",
         id: colId,
         avID: options.avID,
+        blockID: options.blockID,
         removeDest: options.isTwoWay
     }, {
         action: "doUpdateUpdated",
@@ -1562,6 +1574,7 @@ export const removeCol = (options: {
         action: "addAttrViewCol",
         name: colData.name,
         avID: options.avID,
+        blockID: options.blockID,
         type: colData.type,
         format: colData.dateFormat || "",
         id: colId,

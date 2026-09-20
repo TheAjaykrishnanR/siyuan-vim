@@ -135,11 +135,13 @@ type Criterion struct {
 	K            string                 `json:"k"`            // 搜索关键字
 	R            string                 `json:"r"`            // 替换关键字
 	Types        *CriterionTypes        `json:"types"`        // 类型过滤选项
-	SubTypes     map[string]bool        `json:"subTypes"`     // 子类型过滤选项
+	SubTypes     SearchSubTypes         `json:"subTypes"`     // 子类型过滤选项
 	ReplaceTypes *CriterionReplaceTypes `json:"replaceTypes"` // 替换类型过滤选项
 }
 
 type CriterionTypes struct {
+	CustomBlock *bool `json:"customBlock,omitempty"`
+
 	MathBlock     bool `json:"mathBlock"`
 	Table         bool `json:"table"`
 	Blockquote    bool `json:"blockquote"`
@@ -158,6 +160,8 @@ type CriterionTypes struct {
 	IFrameBlock   bool `json:"iframeBlock"`
 	WidgetBlock   bool `json:"widgetBlock"`
 	Callout       bool `json:"callout"`
+	Tabs          bool `json:"tabs"`
+	TabItem       bool `json:"tabItem"`
 }
 
 type CriterionReplaceTypes struct {

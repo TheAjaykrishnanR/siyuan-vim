@@ -1,4 +1,7 @@
 import {closePanel} from "../util/closePanel";
+import {buildSearchRequest} from "../../search/config";
+import {getAttr} from "../../search/attrs";
+import type {APICallbackResponse, APIPOSTRoutes} from "../../types/api";
 import {getCurrentEditor, openMobileFileById} from "../editor";
 import {Constants} from "../../constants";
 import {fetchPost} from "../../util/fetch";
@@ -61,10 +64,10 @@ const replace = (element: Element, config: Config.IUILayoutTabSearchConfig, isAl
         k: config.method === 0 || config.method === 1 ? getKeyByLiElement(currentLiElement) : (document.querySelector("#toolbarSearch") as HTMLInputElement).value,
         r: replaceInputElement.value,
         ids: isAll ? [] : [currentId],
-        types: config.types,
+        types: {...config.types},
         subTypes: config.subTypes,
         method: config.method,
-        replaceTypes: config.replaceTypes,
+        replaceTypes: {...config.replaceTypes},
         paths: config.idPath || [],
         groupBy: config.group,
         orderBy: config.sort,
@@ -152,8 +155,10 @@ const updateConfig = (element: Element, newConfig: Config.IUILayoutTabSearchConf
     }
     if (newConfig.k || clear) {
         (document.querySelector("#toolbarSearch") as HTMLInputElement).value = newConfig.k;
+        document.querySelector("#toolbarSearch").dispatchEvent(new Event("change"));
     }
     (element.querySelector("#toolbarReplace") as HTMLInputElement).value = newConfig.r;
+    element.querySelector("#toolbarReplace").dispatchEvent(new Event("change"));
     config = JSON.parse(JSON.stringify(newConfig));
     window.siyuan.storage[Constants.LOCAL_SEARCHDATA] = Object.assign({}, config);
     setStorageVal(Constants.LOCAL_SEARCHDATA, window.siyuan.storage[Constants.LOCAL_SEARCHDATA]);
@@ -194,6 +199,7 @@ ${getFileTreeIconHTML(getNotebookIcon(item.box), "notebook", "b3-list-item__grap
 <svg class="b3-list-item__graphic"><use xlink:href="#${getIconByType(childItem.type)}"></use></svg>
 ${unicode2Emoji(childItem.ial.icon, "b3-list-item__graphic", true)}
 <span class="b3-list-item__text">${childItem.content}</span>
+${getAttr(childItem)}
 ${childItem.tag ? `<span class="b3-list-item__meta b3-list-item__meta--ellipsis">${childItem.tag.replace(/#/g, "")}</span>` : ""}
 </div>`;
             });
@@ -212,6 +218,7 @@ ${childItem.tag ? `<span class="b3-list-item__meta b3-list-item__meta--ellipsis"
         <svg class="b3-list-item__graphic"><use xlink:href="#${getIconByType(item.type)}"></use></svg>
         ${unicode2Emoji(item.ial.icon, "b3-list-item__graphic", true)}
         <span class="b3-list-item__text">${item.content}</span>
+        ${getAttr(item)}
     </div>
     <div class="fn__flex">
         ${item.tag ? `<span class="b3-list-item__meta b3-list-item__meta--ellipsis">${item.tag.replace(/#/g, "")}</span><span class="fn__space"></span>` : ""}
@@ -313,17 +320,7 @@ export const updateSearchResult = (config: Config.IUILayoutTabSearchConfig, elem
                 previousElement.setAttribute("disabled", "disabled");
             }
             const endpoint = requestConfig.method === 4 ? "/api/search/semanticSearchBlock" : "/api/search/fullTextSearchBlock";
-            const searchParam: Record<string, any> = {
-                query: requestConfig.query,
-                method: requestConfig.method,
-                types: requestConfig.types,
-                subTypes: requestConfig.subTypes,
-                paths: requestConfig.idPath || [],
-                groupBy: requestConfig.group,
-                orderBy: requestConfig.sort,
-                page: requestConfig.page,
-                pageSize: 32,
-            };
+            const searchParam = buildSearchRequest(requestConfig);
             // 限定在单个加密 box 内搜索时带 notebook，让内核走加密 db；跨 box 或全局搜索走原函数
             const idPaths = requestConfig.idPath || [];
             if (idPaths.length > 0) {
@@ -336,7 +333,7 @@ export const updateSearchResult = (config: Config.IUILayoutTabSearchConfig, elem
                 method: requestConfig.method,
                 version,
                 run(signal: AbortSignal, isCurrent: () => boolean) {
-                    return fetchPost(endpoint, searchParam, (response) => {
+                    return fetchPost(endpoint, searchParam, (response: APICallbackResponse<APIPOSTRoutes[typeof endpoint]["response"]>) => {
                         if (!isCurrent()) {
                             return;
                         }
@@ -734,7 +731,7 @@ const initSearchEvent = (app: App, element: Element, config: Config.IUILayoutTab
                             preventScroll(window.siyuan.mobile.editor.protyle);
                         }
                         checkFold(id, (zoomIn) => {
-                            openMobileFileById(app, id, zoomIn ? [Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
+                            openMobileFileById(app, id, zoomIn ? [Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL], "start");
                         });
                         closePanel();
                     } else {

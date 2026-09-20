@@ -239,6 +239,9 @@ ${data.shorthandContent}
                     fetchPost("/api/inbox/getShorthand", {
                         id: itemElement.dataset.id
                     }, (response) => {
+                        if (response.code !== 0 || !response.data) {
+                            return;
+                        }
                         this.data[response.data.oId] = response.data;
                         itemElement.outerHTML = this.genItemHTML(response.data);
                     });
@@ -249,6 +252,9 @@ ${data.shorthandContent}
                     fetchPost("/api/inbox/getShorthand", {
                         id: detailsElement.getAttribute("data-id")
                     }, (response) => {
+                        if (response.code !== 0 || !response.data) {
+                            return;
+                        }
                         this.data[response.data.oId] = response.data;
                         detailsElement.innerHTML = this.genDetail(response.data);
                         detailsElement.scrollTop = 0;
@@ -300,7 +306,13 @@ ${data.shorthandContent}
             },
             separatorPosition: "top",
         });
-        window.siyuan.menus.menu.popup({x: event.clientX, y: event.clientY + 16});
+        const button = (event.target as Element).closest("[data-type='more']");
+        const rect = (itemElement || button)?.getBoundingClientRect();
+        window.siyuan.menus.menu.popup({
+            x: !itemElement && rect ? rect.left : event.clientX,
+            y: rect ? rect.bottom : event.clientY + 16,
+            h: rect ? rect.height : 0,
+        });
     }
 
     private remove(removeIds?: string[]) {
@@ -331,6 +343,9 @@ ${data.shorthandContent}
                     const response = await fetchSyncPost("/api/inbox/getShorthand", {
                         id: idItem
                     });
+                    if (response.code !== 0 || !response.data) {
+                        return;
+                    }
                     this.data[response.data.oId] = response.data;
                     let md = response.data.shorthandMd;
                     if ("" === md && "" === response.data.shorthandContent && "" != response.data.shorthandURL) {
@@ -370,6 +385,9 @@ ${data.shorthandContent}
         loadingElement.classList.remove("fn__none");
         fetchPost("/api/inbox/getShorthands", {page: this.currentPage}, (response) => {
             loadingElement.classList.add("fn__none");
+            if (response.code !== 0 || !response.data) {
+                return;
+            }
             let html = "";
             if (response.data.data.shorthands.length === 0) {
                 html = `<ul class="b3-list b3-list--background"><li class="b3-list--empty">${window.siyuan.languages.inboxTip}</li></ul>`;

@@ -1,5 +1,28 @@
 @use "../util/mixin";
 @use "tabs";
+@use "task";
+
+// 任务点击保持隐藏布局，正文编辑时恢复引用块；折叠的列表项和标题保留定位内容。
+.protyle-wysiwyg[data-backlink-hide-reference]:is(:not(:focus-within), [data-backlink-task-focus]) {
+  [data-backlink-reference]:not([fold="1"]):not(.li[fold="1"] *) {
+    display: none !important;
+  }
+
+  .li[data-backlink-reference-list]:not([fold="1"]):not(.li[fold="1"] *) {
+    min-height: 0;
+
+    &::before,
+    > .protyle-action,
+    > .protyle-attr {
+      display: none !important;
+    }
+
+    > [data-node-id] {
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+  }
+}
 
 .protyle-cross-block-preview {
   pointer-events: none;
@@ -15,7 +38,8 @@
   pointer-events: none;
 }
 
-.protyle-wysiwyg {
+.protyle-wysiwyg,
+.table__cell-rich {
   padding: 16px 16px 16px 24px;
   box-sizing: border-box;
   // 移除三击无法选中整个 https://github.com/siyuan-note/siyuan/issues/8511
@@ -54,7 +78,8 @@
     cursor: text;
   }
 
-  [data-node-id] {
+  [data-node-id],
+  [data-table-cell-node] {
     position: relative;
 
     &.protyle-wysiwyg--navigation {
@@ -127,7 +152,8 @@
       box-shadow: 2px 0 0 0 var(--b3-protyle-inline-mark-background) inset;
     }
 
-    [spellcheck] {
+    [spellcheck],
+    [data-table-cell-content] {
       min-height: 1.625em;
       word-break: break-word;
       // https://github.com/siyuan-note/siyuan/issues/10483
@@ -191,11 +217,11 @@
         border-left-color: var(--b3-scroll-color);
       }
 
-      & > [data-node-id] {
+      & > :is([data-node-id], [data-table-cell-node]) {
         margin-left: 34px;
       }
 
-      & > [data-node-id]:not(.p):not(.code-block) {
+      & > :is([data-node-id], [data-table-cell-node]):not(.p):not(.code-block) {
         padding-right: 0;
       }
 
@@ -313,8 +339,8 @@
         direction: rtl;
       }
 
-      .li > [data-node-id],
-      & > [data-node-id] {
+      .li > :is([data-node-id], [data-table-cell-node]),
+      & > :is([data-node-id], [data-table-cell-node]) {
         margin-right: 34px;
         margin-left: 0;
       }
@@ -487,10 +513,7 @@
       color: var(--b3-protyle-inline-link-color);
       cursor: pointer;
       transition: var(--b3-transition);
-
-      &:hover {
-        border-bottom: 1px solid;
-      }
+      border-bottom: 1px solid;
     }
 
     span[data-type~="search-mark"] {
@@ -518,22 +541,36 @@
 
     span[data-type~="block-ref"]:not(.av__celltext),
     span[data-type~="file-annotation-ref"] {
-      color: var(--b3-protyle-inline-blockref-color);
-      opacity: .86;
+      --protyle-ref-line-color: var(--b3-protyle-inline-blockref-color);
       transition: var(--b3-transition);
     }
 
     span[data-type~="file-annotation-ref"] {
-      color: var(--b3-protyle-inline-fileref-color);
+      --protyle-ref-line-color: var(--b3-protyle-inline-fileref-color);
+    }
+
+    span[data-type~="block-ref"]:not(.av__celltext),
+    span[data-type~="file-annotation-ref"] {
+      // 按固定长度绘制虚线，并在换行后的每段文字下方重复显示。
+      padding-bottom: 2px;
+      background-image: repeating-linear-gradient(to right, var(--protyle-ref-line-color) 0 6px, transparent 6px 9px);
+      background-position: left bottom;
+      background-size: 9px 1px;
+      background-repeat: repeat-x;
+      -webkit-box-decoration-break: clone;
+      box-decoration-break: clone;
+    }
+
+    span[data-type="virtual-block-ref"]:hover,
+    span[data-type~="block-ref"]:not(.av__celltext):hover,
+    span[data-type~="file-annotation-ref"]:hover {
+      background-color: var(--b3-list-hover);
+      border-radius: 2px;
     }
 
     span[data-type~="block-ref"],
     span[data-type~="file-annotation-ref"] {
       cursor: pointer;
-
-      &:hover {
-        opacity: 1;
-      }
     }
 
     &.render-node {
@@ -847,7 +884,8 @@
     background-color: var(--b3-theme-surface-lighter);
     display: block;
     position: absolute;
-    left: -16px;
+    // 与块标到内容的 4 像素间距保持一致，使折叠三角形位于圆圈中央。
+    left: -20px;
     top: 50%;
     border-radius: var(--b3-border-radius-b);
     margin-top: -8px;
@@ -856,7 +894,7 @@
 
   .bq > div[fold="1"][data-type="NodeHeading"]::before,
   .callout-content > div[fold="1"][data-type="NodeHeading"]::before {
-    left: -26px;
+    left: -30px;
   }
 
   [data-node-id][fold="1"]:not(.li):not([data-type="NodeHeading"]) {

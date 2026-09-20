@@ -16,6 +16,11 @@ import * as dayjs from "dayjs";
 import {getAVBlockRefSubtype} from "./cellValue";
 import {getAVColorStyle} from "./color";
 import {createAVPlainTextEditValue} from "./richTextValue";
+import {isMobile} from "../../../util/functions";
+/// #if MOBILE
+import {activeBlur} from "../../../mobile/util/keyboardToolbar";
+import {bindBottomSheetDialog} from "../../../mobile/util/bindBottomSheetDialog";
+/// #endif
 
 interface ICreatePosition {
     previousID?: string;
@@ -145,7 +150,7 @@ const getValueInputHTML = (column: IAVColumn, fieldValue?: IAVNewItemFieldValue)
     const value = fieldValue?.value;
     if (column.type === "checkbox") {
         const checked = value?.checkbox?.checked || false;
-        return `<button class="fn__flex-center" data-role="field-value" data-value-type="checkbox" aria-pressed="${checked}" type="button" style="background:transparent;border:0;color:inherit;padding:0"><svg class="av__checkbox"><use xlink:href="#icon${checked ? "Check" : "Uncheck"}"></use></svg></button>`;
+        return `<button class="fn__flex-center" data-role="field-value" data-value-type="checkbox" aria-label="${escapeAttr(column.name || window.siyuan.languages.checkbox)}" aria-pressed="${checked}" type="button" style="background:transparent;border:0;color:inherit;padding:0"><svg class="av__checkbox"><use xlink:href="#icon${checked ? "Check" : "Uncheck"}"></use></svg></button>`;
     }
     if (["select", "mSelect"].includes(column.type)) {
         const selected = value?.mSelect?.map(item => item.content) || [];
@@ -229,6 +234,7 @@ const openFieldSelectMenu = (target: HTMLElement, column: IAVColumn) => {
         type: "empty",
         label: `<div class="fn__flex fn__flex-column" style="max-height:calc(100vh - 60px)">${getFieldSelectMenuHTML(column, getSelectedOptionNames(target))}</div>`,
         bind: element => {
+            element.classList.add("b3-menu__custom");
             const panelElement = element.firstElementChild as HTMLElement;
             const render = (keyword = "") => {
                 panelElement.innerHTML = getFieldSelectMenuHTML(column, getSelectedOptionNames(target), keyword);
@@ -410,11 +416,12 @@ const openContentTemplateMenu = (target: HTMLElement) => {
     let searchRequest = 0;
     menu.addItem({
         type: "empty",
-        label: `<div data-menu="true" style="padding:4px;width:360px">
+        label: `<div data-menu="true" style="padding:4px;width:360px;max-width:100%;box-sizing:border-box">
     <input class="b3-text-field fn__block" placeholder="${window.siyuan.languages.searchPlaceholder}">
     <div class="b3-list b3-list--background" style="margin-top:4px;max-height:240px;overflow:auto"></div>
 </div>`,
         bind: menuElement => {
+            menuElement.classList.add("b3-menu__custom");
             const inputElement = menuElement.querySelector("input") as HTMLInputElement;
             const listElement = menuElement.querySelector(".b3-list") as HTMLElement;
             const selectItem = (item: HTMLElement) => {
@@ -607,18 +614,34 @@ export const openNewItemTemplateDialog = (options: {
     }
     let defaultTemplateID = options.data.defaultTemplateID || "";
     const dialog = new Dialog({
-        title: window.siyuan.languages.itemTemplate,
-        width: "820px",
-        height: "70vh",
+        title: isMobile() ? undefined : window.siyuan.languages.itemTemplate,
+        width: isMobile() ? "100vw" : "820px",
+        height: isMobile() ? "60vh" : "70vh",
         containerClassName: "b3-dialog__container--theme",
+        hideCloseIcon: isMobile(),
         content: `<div class="fn__flex fn__flex-column" style="height:100%">
-    <div class="fn__flex fn__flex-1" style="min-height:0">
+    <div class="av__template-panels fn__flex fn__flex-1" style="min-height:0">
         <ul class="av__template-list b3-list b3-list--background" data-role="template-list"></ul>
         <div data-role="editor-host" class="fn__flex-1 fn__flex"></div>
     </div>
     <div class="b3-dialog__action"><button class="b3-button b3-button--cancel" data-role="cancel">${window.siyuan.languages.cancel}</button><div class="fn__space"></div><button class="b3-button b3-button--text" data-role="confirm">${window.siyuan.languages.confirm}</button></div>
 </div>`,
+        destroyCallback: () => {
+            /// #if MOBILE
+            disposeSheet();
+            /// #endif
+        },
     });
+    /// #if MOBILE
+    const destroyDialog = dialog.destroy.bind(dialog);
+    dialog.destroy = (destroyOptions?: IObject) => {
+        if (dialog.element.contains(document.activeElement)) {
+            activeBlur(true);
+        }
+        destroyDialog(destroyOptions);
+    };
+    const disposeSheet = bindBottomSheetDialog(dialog, async () => dialog.destroy());
+    /// #endif
     const root = dialog.element;
     const listElement = root.querySelector('[data-role="template-list"]') as HTMLElement;
     const hostElement = root.querySelector('[data-role="editor-host"]') as HTMLElement;
@@ -764,7 +787,7 @@ export const openNewItemTemplateDialog = (options: {
             },
         });
         const rect = target.getBoundingClientRect();
-        menu.open({x: rect.right, y: rect.top, h: rect.height});
+        menu.open({x: rect.right, y: rect.bottom, h: rect.height});
     };
 
     let draggingIndex = -1;
@@ -905,11 +928,11 @@ export const createAttributeViewItem = (options: {
         app: options.protyle.app.appId,
         session: options.protyle.id,
     }, response => {
-        if (response.code === 1 && response.data?.unavailableNotebook) {
+        if (response.code === 1 && response.data && "unavailableNotebook" in response.data && response.data.unavailableNotebook) {
             showMessage(window.siyuan.languages.newItemTemplateUnavailableNotebookTip, 6000, "error");
             return;
         }
-        const warnings = (response.data?.warnings || []) as string[];
+        const warnings = response.data && "warnings" in response.data ? response.data.warnings || [] : [];
         if (warnings.length) {
             showMessage(warnings.map(item => escapeHtml(item)).join("<br>"));
         }
@@ -936,11 +959,11 @@ export const createAttributeViewItemDocs = (options: {
         app: options.protyle.app.appId,
         session: options.protyle.id,
     }, response => {
-        if (response.code === 1 && response.data?.unavailableNotebook) {
+        if (response.code === 1 && response.data && "unavailableNotebook" in response.data && response.data.unavailableNotebook) {
             showMessage(window.siyuan.languages.newItemTemplateUnavailableNotebookTip, 6000, "error");
             return;
         }
-        const warnings = (response.data?.warnings || []) as string[];
+        const warnings = response.data && "warnings" in response.data ? response.data.warnings || [] : [];
         if (warnings.length) {
             showMessage(warnings.map(item => escapeHtml(item)).join("<br>"));
         }

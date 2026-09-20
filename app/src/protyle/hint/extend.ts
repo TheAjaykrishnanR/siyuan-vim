@@ -1,5 +1,7 @@
 import {fetchPost} from "../../util/fetch";
+import {registerBuiltinSlashHint} from "./builtinSlash";
 import {insertHTML} from "../util/insertHTML";
+import {TABLE_CELL_SLASH_IDS} from "../util/tableCellRichMenu";
 import {getIconByType} from "../../editor/getIcon";
 import {isDisabledFeature, updateHotkeyTip} from "../util/compatibility";
 import {blockRender} from "../render/blockRender";
@@ -25,7 +27,6 @@ import {zoomOut} from "../../menus/protyle";
 import {hideElements} from "../ui/hideElements";
 import {genAssetHTML} from "../../asset/renderAssets";
 import {unicode2Emoji} from "../../emoji";
-import {avRender} from "../render/av/render";
 import {addWidgetCacheVersion} from "../util/widgetCache";
 import {
     getEntryCatalogNode,
@@ -52,7 +53,7 @@ import {
     setBlockSelectionModeElement
 } from "../wysiwyg/blockSelection";
 import {countBlockWord} from "../../layout/status";
-import {genTemplateDocTreePlanHTML, ITemplateDocTreePlan} from "../../template/docTree";
+import {genTemplateDocTreePlanHTML} from "../../template/docTree";
 
 const slashBuiltinStyleIDs: Partial<Record<string, TBuiltinInlineStyleID>> = {
     infoStyle: "info",
@@ -175,7 +176,7 @@ export const getBuiltinSlashMenuItems = (protyle: IProtyle): IHintData[] => {
         value: "> " + Lute.Caret,
         html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconQuote"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.quote}</span>${getHotkeyOrMarker(window.siyuan.config.keymap.editor.insert.quote.custom, ">")}</div>`,
     }, {
-        filter: [window.siyuan.languages.tabs, "tabs", "页签", "yeqian"],
+        filter: [window.siyuan.languages.tabs, "tabs", "页签", "yeqian", "yq"],
         id: "tabs",
         value: `::: tabs\n@tab\n\n${Lute.Caret}\n\n@tab\n\n:::\n`,
         html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconTabs"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.tabs}</span></div>`,
@@ -424,7 +425,7 @@ export const getBuiltinSlashMenuItems = (protyle: IProtyle): IHintData[] => {
     }];
 };
 
-export const hintSlash = (key: string, protyle: IProtyle, sourceOrHideConfiguredCreate: THintSource | boolean = false) => {
+export const hintSlash = registerBuiltinSlashHint((key: string, protyle: IProtyle, sourceOrHideConfiguredCreate: THintSource | boolean = false) => {
     const enabled = isEntryVisible(SLASH_MENU_ROOT_PATH);
     if (!enabled) {
         return [];
@@ -441,6 +442,7 @@ export const hintSlash = (key: string, protyle: IProtyle, sourceOrHideConfigured
             plugin.protyleSlash.forEach(slash => {
                 allList.push({
                     filter: slash.filter,
+                    showInLite: slash.showInLite,
                     id: slash.id,
                     entryKey: getPluginSlashEntryKey(plugin.name, slash.id,
                         slash.html === "separator" ? "separator" : "entry"),
@@ -455,18 +457,26 @@ export const hintSlash = (key: string, protyle: IProtyle, sourceOrHideConfigured
         allList.pop();
     }
     refreshSlashMenuCatalog(areProtylePluginExtensionsEnabled(protyle) ? protyle.app.plugins : []);
+    const selection = getSelection();
+    const focus = selection?.focusNode;
+    const focusElement = focus instanceof Element ? focus : focus?.parentElement;
+    const cell = focusElement?.closest("td, th");
+    const inTableCell = cell && cell.closest(".protyle-wysiwyg") === protyle.wysiwyg.element;
     return resolveSlashMenuItems(allList.filter((item) => {
         const builtinStyleID = slashBuiltinStyleIDs[item.entryKey];
-        return getEntryCatalogNode(getSlashMenuEntryPath(item.entryKey)) &&
+        return (!inTableCell || TABLE_CELL_SLASH_IDS.has(item.id)) &&
+            getEntryCatalogNode(getSlashMenuEntryPath(item.entryKey)) &&
             (!builtinStyleID || isBuiltinInlineStyleVisible("style1", builtinStyleID));
     }), {
         enabled,
         hideConfiguredCreate,
+        lite: protyle.lite,
+        canUpload: !!(protyle.options.upload.handler || (protyle.options.upload.url && protyle.upload)),
         key,
         order: getEntryOrder(SLASH_MENU_ROOT_PATH),
         visible: (entryKey) => isEntryVisible(getSlashMenuEntryPath(entryKey)),
     });
-};
+});
 
 export const hintTag = (key: string, protyle: IProtyle): IHintData[] => {
     protyle.hint.genLoading(protyle);
@@ -540,7 +550,7 @@ export const hintRef = (key: string, protyle: IProtyle, source: THintSource): IH
     const nodeElement = hasClosestBlock(getEditorRange(protyle.wysiwyg.element).startContainer);
     const createTarget = protyle.hint.prepareCreateTarget(protyle, "ref");
     protyle.hint.genLoading(protyle);
-    let refParam: IObject;
+    let refParam: import("../../types/api").SearchRefBlockRequestInput;
     if (protyle.lite) {
         refParam = {k: key, id: "", rootID: "", beforeLen: 48, isDatabase: false, isSquareBrackets: true};
     } else {
@@ -624,7 +634,7 @@ export const hintEmbed = (key: string, protyle: IProtyle): IHintData[] => {
     }
     protyle.hint.genLoading(protyle);
     const nodeElement = hasClosestBlock(getEditorRange(protyle.wysiwyg.element).startContainer);
-    const embedParam: IObject = {
+    const embedParam: import("../../types/api").SearchRefBlockRequestInput = {
         k: key,
         isDatabase: false,
         beforeLen: Math.floor((Math.max(protyle.element.clientWidth / 2, 320) - 58) / 28.8),
@@ -675,10 +685,9 @@ export const hintRenderTemplate = (value: string, protyle: IProtyle, nodeElement
             blockRender(protyle, protyle.wysiwyg.element);
             processRender(protyle.wysiwyg.element);
             highlightRender(protyle.wysiwyg.element);
-            avRender(protyle.wysiwyg.element, protyle);
             hideElements(["util"], protyle);
         };
-        const docTreePlan = response.data.docTreePlan as ITemplateDocTreePlan | undefined;
+        const docTreePlan = response.data.docTreePlan;
         if (docTreePlan?.id) {
             hideElements(["util"], protyle);
             confirmDialog(window.siyuan.languages.template, genTemplateDocTreePlanHTML(docTreePlan, window.siyuan.languages.newSubDoc), () => {

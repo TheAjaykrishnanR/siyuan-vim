@@ -1,4 +1,6 @@
 import {Layout} from "./index";
+import {openStandaloneDatabaseItemByURI} from "../protyle/render/av/openStandaloneDatabaseItem";
+import {withFetchTimeout} from "../util/fetchTimeout";
 import {Wnd} from "./Wnd";
 import {Tab} from "./Tab";
 import type {Model} from "./Model";
@@ -31,6 +33,7 @@ import {afterLayoutReady} from "../plugin/loader";
 import {newCenterEmptyTab, resizeTabs, setTabPosition} from "./tabUtil";
 import {
     isDisabledFeature,
+    isPhablet,
     isSensitiveLayoutData,
     isSensitiveSearchConfig,
     setStorageVal,
@@ -195,10 +198,11 @@ export const saveLayout = () => {
             sessionStorage.setItem("layout", JSON.stringify(layoutJSON));
         } else {
             if (!window.siyuan.config.readonly) {
-                fetchPost("/api/system/setUILayout", {
+                const request = {
                     layout: layoutJSON,
                     errorExit: false    // 后台不接受该参数，用于请求发生错误时退出程序
-                });
+                };
+                fetchPost("/api/system/setUILayout", request);
             }
         }
     }
@@ -209,9 +213,20 @@ export const exportLayout = async (options: {
     errorExit: boolean
 }) => {
     const editors = getAllEditor();
-    for (let i = 0; i < editors.length; i++) {
-        await saveScroll(editors[i].protyle);
-    }
+    await withFetchTimeout(async (signal) => {
+        for (let i = 0; i < editors.length; i++) {
+            if (signal?.aborted) {
+                return;
+            }
+            await saveScroll(editors[i].protyle);
+        }
+    }, undefined, options.errorExit ? 30000 : 0).catch((error) => {
+        if (error?.name !== "TimeoutError") {
+            throw error;
+        }
+        // 关闭时滚动位置保存超时，继续保存布局并执行退出流程。
+        console.warn("Save scroll timed out before closing");
+    });
     if (isWindow()) {
         const layoutJSON: any = {
             layout: {},
@@ -237,10 +252,11 @@ export const exportLayout = async (options: {
     if (window.siyuan.config.readonly) {
         options.cb();
     } else {
-        fetchPost("/api/system/setUILayout", {
+        const request = {
             layout: layoutJSON,
             errorExit: options.errorExit    // 后台不接受该参数，用于请求发生错误时退出程序
-        }, () => {
+        };
+        fetchPost("/api/system/setUILayout", request, () => {
             options.cb();
         });
     }
@@ -347,14 +363,14 @@ const removedTabs: Tab[] = [];
 
 export const JSONToCenter = (
     app: App,
-    json: Config.TUILayoutItem,
+    json: Config.TPersistedUILayoutItem,
     layout?: Layout | Wnd | Tab | Model,
 ) => {
     let child: Layout | Wnd | Tab | Model;
     if (json.instance === "Layout") {
         // TabA 向右分屏后向下分屏，依次关闭右侧、上侧分屏无法移除 layout 嵌套，故在此解决 https://github.com/siyuan-note/siyuan/issues/12196
-        while (json.children.length === 1 && json.children[0].instance === "Layout" &&
-        json.children[0].type === "normal" && json.children[0].children.length === 1) {
+        while (Array.isArray(json.children) && json.children.length === 1 && json.children[0].instance === "Layout" &&
+        json.children[0].type === "normal" && Array.isArray(json.children[0].children) && json.children[0].children.length === 1) {
             json.children = json.children[0].children;
         }
         if (!layout) {
@@ -556,7 +572,9 @@ export const JSONToLayout = (app: App, isStart: boolean) => {
     });
 
     const info = parseUriInfo();
-    if (info.id) {
+    if (info.id && openStandaloneDatabaseItemByURI(app, info)) {
+        // 独立条目链接不需要打开数据库所在文档。
+    } else if (info.id) {
         if (info.avItemID) {
             queueAVLocateRequest(info.id, {
                 itemID: info.avItemID,
@@ -829,7 +847,7 @@ export const resizeTopBar = () => {
     const hideIds: string[] = [];
     while (toolbarElement.scrollWidth > toolbarElement.clientWidth + 2 &&
         afterDragElement && afterDragElement.id !== "barMore" && afterDragElement.id !== "windowControls") {
-        // 跳过默认即隐藏的元素（如桌面端 #barExit），它们本就不占溢出空间，
+        // 跳过默认即隐藏的元素，它们本就不占溢出空间，
         // 若为其打上 data-hide，最大化后恢复阶段会误将其显示出来
         if (!afterDragElement.classList.contains("fn__none") &&
             afterDragElement.getAttribute("data-entry-hidden") !== "true" &&
@@ -909,6 +927,11 @@ export const newModelByInitData = (app: App, tab: Tab, json: any) => {
                 json.action = json.action.filter((item: string) => item !== Constants.CB_GET_ALL);
             }
         }
+        const action = Array.isArray(json.action) ? [...json.action] : (json.action ? [json.action] : []);
+        // 手机和平板恢复页签时只恢复浏览位置，避免自动聚焦弹出输入法。
+        if (!isPhablet()) {
+            action.push(Constants.CB_GET_FOCUS);
+        }
         const editorModel = new Editor({
             app,
             tab,
@@ -917,8 +940,7 @@ export const newModelByInitData = (app: App, tab: Tab, json: any) => {
             notebookId: json.notebookId,
             mode: json.mode,
             scrollPosition: json.scrollPosition,
-            action: Array.isArray(json.action) ? json.action.concat(Constants.CB_GET_FOCUS) :
-                (json.action ? [json.action, Constants.CB_GET_FOCUS] : [Constants.CB_GET_FOCUS]),
+            action,
             afterInitProtyle(editor) {
                 if (json.databaseRowId) {
                     editor.protyle.databaseAttributePanel?.expand();

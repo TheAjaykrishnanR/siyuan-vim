@@ -17,7 +17,7 @@ import {clearSelect} from "../../util/clear";
 import {isCustomAttr} from "./blockAttr";
 import {getColIconByType, getColNameByType} from "./col";
 import {unicode2Emoji} from "../../../emoji";
-import {escapeAttr} from "../../../util/escape";
+import {escapeAriaLabel, escapeAttr} from "../../../util/escape";
 import {getCompressURL} from "../../../util/image";
 import {
     getAVSelectStat,
@@ -111,7 +111,7 @@ ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.ro
                 html += `<div class="av__gallery-field av__gallery-field--name${fullRowClass}" data-empty="${isEmpty}">
     <div class="av__gallery-name">
         ${galleryData.fields[fieldsIndex].icon ? unicode2Emoji(galleryData.fields[fieldsIndex].icon, "av__gallery-fieldicon", true) : `<svg><use xlink:href="#${getColIconByType(galleryData.fields[fieldsIndex].type)}"></use></svg>`}${Lute.EscapeHTMLStr(galleryData.fields[fieldsIndex].name)}
-        ${galleryData.fields[fieldsIndex].desc ? `<svg aria-label="${galleryData.fields[fieldsIndex].desc}" data-position="north" class="ariaLabel"><use xlink:href="#iconInfo"></use></svg>` : ""}
+        ${galleryData.fields[fieldsIndex].desc ? `<svg aria-label="${escapeAriaLabel(galleryData.fields[fieldsIndex].desc)}" data-position="north" class="ariaLabel"><use xlink:href="#iconInfo"></use></svg>` : ""}
     </div>
     ${cellHTML}
 </div>`;
@@ -180,7 +180,7 @@ ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.ro
                 html += `<div class="av__gallery-field av__gallery-field--name${fullRowClass}" data-empty="${isEmpty}">
     <div class="av__gallery-name">
         ${kanbanData.fields[fieldsIndex].icon ? unicode2Emoji(kanbanData.fields[fieldsIndex].icon, "av__gallery-fieldicon", true) : `<svg><use xlink:href="#${getColIconByType(kanbanData.fields[fieldsIndex].type)}"></use></svg>`}${Lute.EscapeHTMLStr(kanbanData.fields[fieldsIndex].name)}
-        ${kanbanData.fields[fieldsIndex].desc ? `<svg aria-label="${kanbanData.fields[fieldsIndex].desc}" data-position="north" class="ariaLabel"><use xlink:href="#iconInfo"></use></svg>` : ""}
+        ${kanbanData.fields[fieldsIndex].desc ? `<svg aria-label="${escapeAriaLabel(kanbanData.fields[fieldsIndex].desc)}" data-position="north" class="ariaLabel"><use xlink:href="#iconInfo"></use></svg>` : ""}
     </div>
     ${cellHTML}
 </div>`;
@@ -595,7 +595,9 @@ export const stickyRow = (blockElement: HTMLElement, scrollElement: HTMLElement,
     // 先批量读取所有几何信息，再统一写入 style，避免读-写交错触发强制重排
     const elementRect = scrollElement.getBoundingClientRect();
     const breadcrumbElement = scrollElement.previousElementSibling as HTMLElement;
-    const breadcrumbBottom = breadcrumbElement?.classList.contains("protyle-breadcrumb") ?
+    // 移动端面包屑隐藏后仍保留布局尺寸，吸顶位置需回到滚动视口顶部。
+    const breadcrumbBottom = breadcrumbElement?.classList.contains("protyle-breadcrumb") &&
+        breadcrumbElement.getAttribute("aria-hidden") !== "true" ?
         breadcrumbElement.getBoundingClientRect().bottom : elementRect.top;
     const scrollTop = scrollElement.scrollTop;
     const scrollLeft = scrollEl ? scrollEl.scrollLeft : 0;
@@ -858,7 +860,8 @@ export const setPageSize = (options: {
     const rect = options.target.getBoundingClientRect();
     menu.open({
         x: rect.left,
-        y: rect.bottom
+        y: rect.bottom,
+        h: rect.height
     });
 };
 
@@ -877,17 +880,14 @@ export const deleteRow = (blockElement: HTMLElement, protyle: IProtyle) => {
     selectedItems.forEach(item => blockIds.push(item.itemID));
     selectedItems.forEach((item, index) => {
         const blockValue = primaryValues[index];
-        const itemID = Lute.NewNodeID();
-        // 撤销会使用新的条目 ID 恢复该行，重做时需要同时删除这个新条目。
-        blockIds.push(itemID);
         undoOperations.push({
             action: "insertAttrViewBlock",
             avID,
             previousID: item.previousID,
             srcs: [{
-                itemID,
-                id: item.itemID,
-                isDetached: blockValue.isDetached,
+                itemID: item.itemID,
+                id: blockValue.isDetached ? item.itemID : blockValue.block.id,
+                isDetached: blockValue.isDetached === true,
                 content: blockValue.block.content
             }],
             blockID: blockElement.dataset.nodeId,
@@ -904,6 +904,7 @@ export const deleteRow = (blockElement: HTMLElement, protyle: IProtyle) => {
         action: "removeAttrViewBlock",
         srcIDs: blockIds,
         avID,
+        blockID: blockElement.dataset.nodeId,
     }, {
         action: "doUpdateUpdated",
         id: blockElement.dataset.nodeId,
@@ -933,9 +934,10 @@ export const insertRows = (options: {
     const srcs: IOperationSrcs[] = [];
     new Array(options.count).fill(0).forEach(() => {
         const newNodeID = Lute.NewNodeID();
-        srcIDs.push(newNodeID);
+        const itemID = Lute.NewNodeID();
+        srcIDs.push(itemID);
         srcs.push({
-            itemID: Lute.NewNodeID(),
+            itemID,
             id: newNodeID,
             isDetached: true,
             content: "",

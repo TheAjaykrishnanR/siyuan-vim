@@ -17,6 +17,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -159,6 +160,7 @@ func TestGetNotebookInfoHidesInvisibleNotebookFromReader(t *testing.T) {
 			)
 			request.Header.Set("Content-Type", "application/json")
 			engine.ServeHTTP(recorder, request)
+			requireAPIContract(t, http.MethodPost, "/api/notebook/getNotebookInfo", recorder)
 
 			response := &struct {
 				Code int    `json:"code"`
@@ -184,6 +186,49 @@ func TestGetNotebookInfoHidesInvisibleNotebookFromReader(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSetNotebookIconRejectsPathTraversal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	oldConf, oldDataDir := model.Conf, util.DataDir
+	util.DataDir = t.TempDir()
+	model.Conf = model.NewAppConf()
+	model.Conf.FileTree = conf.NewFileTree()
+	t.Cleanup(func() {
+		model.Conf, util.DataDir = oldConf, oldDataDir
+	})
+
+	escapedDir := filepath.Join(filepath.Dir(util.DataDir), "escaped")
+	body, err := json.Marshal(map[string]string{
+		"notebook": "../" + filepath.Base(escapedDir),
+		"icon":     "1f600",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	engine := gin.New()
+	engine.POST("/api/notebook/setNotebookIcon", setNotebookIcon)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/notebook/setNotebookIcon", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+
+	response := &struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), response); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if response.Code != -1 {
+		t.Fatalf("path traversal notebook ID was accepted: %s", recorder.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(escapedDir, ".siyuan", "conf.json")); !os.IsNotExist(err) {
+		t.Fatalf("conf.json was written outside the workspace: %v", err)
 	}
 }
 
@@ -252,6 +297,7 @@ func TestGetNotebookConfHidesEncryptedNotebookFromReader(t *testing.T) {
 					Conf *conf.BoxConf `json:"conf"`
 				} `json:"data"`
 			}{}
+			requireAPIContract(t, http.MethodPost, "/api/notebook/getNotebookConf", recorder)
 			if err := json.Unmarshal(recorder.Body.Bytes(), response); err != nil {
 				t.Fatalf("unmarshal response failed: %v", err)
 			}
@@ -326,6 +372,7 @@ func TestGetEncryptedNotebookStatusAuthorization(t *testing.T) {
 				t.Fatalf("%s request returned status %d: %s", test.name, recorder.Code, recorder.Body.String())
 			}
 			if test.role == model.RoleAdministrator {
+				requireAPIContract(t, http.MethodPost, "/api/notebook/getEncryptedNotebookStatus", recorder)
 				response := &struct {
 					Code int `json:"code"`
 				}{}

@@ -1,4 +1,5 @@
 import {Constants} from "../../constants";
+import {openStandaloneDatabaseItemByURI} from "../../protyle/render/av/openStandaloneDatabaseItem";
 import {closeModel, closePanel} from "./closePanel";
 import {getCurrentEditor, openMobileFileById} from "../editor";
 import {openMobileOnboarding} from "../../onboarding";
@@ -360,6 +361,9 @@ export const initFramework = async (app: App, isStart: boolean) => {
         }
         const info = parseUriInfo();
         if (info.id) {
+            if (openStandaloneDatabaseItemByURI(app, info)) {
+                return;
+            }
             if (info.avItemID) {
                 queueAVLocateRequest(info.id, {
                     itemID: info.avItemID,
@@ -369,7 +373,7 @@ export const initFramework = async (app: App, isStart: boolean) => {
             }
             openMobileFileById(app, info.id, info.avItemID ? [Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL] :
                 (info.focus ? [Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]),
-            undefined, undefined, info.avItemID ? (protyle) => activateQueuedAVLocate(protyle, info.id) : undefined);
+            info.avItemID ? undefined : "start", undefined, info.avItemID ? (protyle) => activateQueuedAVLocate(protyle, info.id) : undefined);
             return;
         }
         if (openMobileOnboarding(app)) {

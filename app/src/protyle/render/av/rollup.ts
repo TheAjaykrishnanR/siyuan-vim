@@ -115,7 +115,7 @@ const genSearchList = (element: Element, keyword: string, avId: string, isRelati
         keyword
     }, (response) => {
         let html = "";
-        response.data.keys.forEach((item: IAVColumn, index: number) => {
+        response.data.keys.forEach((item, index) => {
             html += `<div class="b3-list-item b3-list-item--narrow${index === 0 ? " b3-list-item--focus" : ""}" data-col-id="${item.id}" ${isRelation ? `data-target-av-id="${item.relation.avID}"` : `data-col-type="${item.type}"`}>
         ${item.icon ? unicode2Emoji(item.icon, "b3-list-item__graphic", true) : `<svg class="b3-list-item__graphic"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
         <span class="b3-list-item__text">${escapeHtml(item.name || window.siyuan.languages.title)}</span>
@@ -221,7 +221,6 @@ export const getRollupHTML = (options: { data?: IAV, cellElements?: HTMLElement[
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item${canFilter ? "" : " b3-menu__item--disabled"}" data-type="goAttrViewColFilters" data-filter-type="rollup">
-    <svg class="b3-menu__icon"><use xlink:href="#iconFilter"></use></svg>
     <span class="b3-menu__label">${window.siyuan.languages.filter}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>`;
@@ -249,7 +248,7 @@ export const bindRollupData = (options: {
         }
         if (oldValue.keyID && targetKeyAVId) {
             fetchPost("/api/av/getAttributeView", {id: targetKeyAVId}, (response) => {
-                response.data.av.keyValues.find((item: { key: { id: string, name: string, type: TAVCol } }) => {
+                response.data.av.keyValues.find((item) => {
                     if (item.key.id === oldValue.keyID) {
                         goSearchRollupTargetElement.querySelector(".b3-menu__accelerator").textContent = item.key.name;
                         const goSearchRollupCalcElement = options.menuElement.querySelector('[data-type="goSearchRollupCalc"]') as HTMLElement;

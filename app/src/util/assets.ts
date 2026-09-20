@@ -1,4 +1,5 @@
 import {Constants} from "../constants";
+import {getBodyGradientImage} from "./bodyGradient";
 import {addScript} from "../protyle/util/addScript";
 import {addStyle} from "../protyle/util/addStyle";
 import {getAllEditor, getAllModels} from "../layout/getAll";
@@ -99,6 +100,7 @@ export const refreshThemeStyle = (themeAddress: string) => {
 };
 
 export const loadAssets = (appearance: Config.IAppearance) => {
+    setBodyHighlight(appearance.bodyGradient);
     const data = getHostCapabilities().customAppearance ? appearance : {
         ...appearance,
         themeLight: "daylight",
@@ -389,7 +391,7 @@ export const setInlineStyle = async (set = true, servePath = "../../../") => {
 }`;
     }
     style += getGlobalFontStyle(globalFonts);
-    if (!set && globalFonts.length > 0) {
+    if (!set) {
         style += "\n" + await getExportCustomFontStyle([...globalFonts, ...editorFonts, ...codeFonts]);
     }
     const editorFontFamilies = editorFonts.map((font) => CSS.escape(font.family)).join(", ");
@@ -518,7 +520,13 @@ export const getThemeMode = () => {
     }
 };
 
-export const setBodyHighlight = () => {
+export const setBodyHighlight = (gradient = window.siyuan.config.appearance.bodyGradient) => {
+    const image = getBodyGradientImage(gradient, getThemeMode());
+    if (image) {
+        document.documentElement.style.setProperty("--b3-body-background-gradient", image);
+    } else {
+        document.documentElement.style.removeProperty("--b3-body-background-gradient");
+    }
     const name = getWorkspaceName();
     if (!name) {
         return;

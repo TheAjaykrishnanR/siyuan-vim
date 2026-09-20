@@ -28,6 +28,8 @@ import {
     getUserSkillsBlockKeywords,
     mountUserSkillsBlock,
 } from "./aiSkillUi";
+import {isAgentStreamingMarkdownEnabled, setAgentStreamingMarkdownEnabled} from "./agentStreamingMarkdown";
+import {openSkillManager} from "../../../ai/skills/manager";
 
 const registerAiProvidersGroup = (tab: SettingTabBuilder) => {
     const group = tab.group("providers", window.siyuan.languages.apiProvider);
@@ -88,6 +90,12 @@ const registerAiAgentGroup = (tab: SettingTabBuilder) => {
         title: window.siyuan.languages.apiMaxTokens,
         desc: window.siyuan.languages.apiMaxTokensTip,
         min: 0,
+    });
+    group.switch("agentStreamingMarkdown", {
+        title: window.siyuan.languages.agentStreamingMarkdown,
+        desc: window.siyuan.languages.agentStreamingMarkdownTip,
+        readConfig: isAgentStreamingMarkdownEnabled,
+        save: (value) => setAgentStreamingMarkdownEnabled(value === true),
     });
     group.number("ai.agent.maxToolCallRounds", {
         title: window.siyuan.languages.agentMaxToolCallRounds,
@@ -162,6 +170,16 @@ const registerAiImageGenerationGroup = (tab: SettingTabBuilder) => {
 const registerAiSkillsGroup = (tab: SettingTabBuilder) => {
     const group = tab.group("skills", window.siyuan.languages.tokenCatSkills);
 
+    group.button({
+        id: "aiWorkspaceSkills",
+        title: window.siyuan.languages.agentWorkspaceSkills,
+        desc: window.siyuan.languages.agentWorkspaceSkillsTip,
+        label: window.siyuan.languages.manage,
+        icon: "iconSettings",
+        afterMount: root => {
+            root.querySelector("#aiWorkspaceSkills")?.addEventListener("click", () => openSkillManager(root));
+        },
+    });
     group.button({
         id: "aiUserSkills",
         title: window.siyuan.languages.agentUserSkills,

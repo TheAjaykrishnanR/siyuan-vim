@@ -36,6 +36,7 @@ import (
 	"github.com/lxzan/gws"
 	"github.com/samber/lo"
 	"github.com/siyuan-note/logging"
+	"github.com/siyuan-note/siyuan/kernel/apicontract"
 	"github.com/siyuan-note/siyuan/kernel/mcp/tools"
 	"github.com/siyuan-note/siyuan/kernel/model"
 	"github.com/siyuan-note/siyuan/kernel/util"
@@ -507,12 +508,12 @@ func (p *KernelPlugin) GetRpcMethodsInfo() (methods []*RpcMethodInfo) {
 
 // BroadcastNotification sends a JSON-RPC 2.0 notification to all inbound RPC WebSocket clients.
 func (p *KernelPlugin) BroadcastNotification(method string, params util.Optional[any]) {
-	notification := JsonRpcRequest{
-		JsonRpc: JsonRpcVersion,
-		Method:  method,
-		Params:  params,
+	notification, err := pluginRPCNotification(method, params)
+	if err != nil {
+		logging.LogWarnf("[plugin:%s] broadcast marshal: %s", p.Name, err)
+		return
 	}
-	data, err := json.Marshal(notification)
+	data, err := json.Marshal(apicontract.RPCNotificationMessage(notification))
 	if err != nil {
 		logging.LogWarnf("[plugin:%s] broadcast marshal: %s", p.Name, err)
 		return
@@ -1004,7 +1005,7 @@ func (p *KernelPlugin) handleWebSocketRequest(c *gin.Context, request *Request, 
 	upgrader := gws.NewUpgrader(h, &gws.ServerOption{
 		// 校验 Origin，防止跨站 WebSocket 劫持（CSWSH） https://github.com/siyuan-note/siyuan/security/advisories/GHSA-3cc2-h3v6-rqpq
 		Authorize: func(r *http.Request, _ gws.SessionStorage) bool {
-			return util.IsSessionOriginAllowed(r.Header.Get("Origin"), r.Host)
+			return util.IsSessionOriginAllowedRequest(r)
 		},
 	})
 

@@ -1,4 +1,5 @@
 import {BlockPanel} from "./Panel";
+import {isAbove} from "../util/zIndex";
 import {hasClosestByAttribute, hasClosestByClassName,} from "../protyle/util/hasClosest";
 import {fetchPost, fetchSyncPost} from "../util/fetch";
 import {hideTooltip, showTooltip} from "../dialog/tooltip";
@@ -417,7 +418,7 @@ const hidePopover = (event: MouseEvent & { path: HTMLElement[] }) => {
     if (avPanelElement) {
         // 浮窗上点击 av 操作，浮窗不能消失
         const blockPanel = window.siyuan.blockPanels.find((item) => {
-            if (item.element.style.zIndex < avPanelElement.style.zIndex) {
+            if (isAbove(avPanelElement, item.element)) {
                 return true;
             }
         });
@@ -429,7 +430,7 @@ const hidePopover = (event: MouseEvent & { path: HTMLElement[] }) => {
         const menuElement = hasClosestByClassName(target, "b3-menu");
         if (menuElement && menuElement.getAttribute("data-name") !== Constants.MENU_DOC_TREE_MORE) {
             const blockPanel = window.siyuan.blockPanels.find((item) => {
-                if (item.element.style.zIndex < menuElement.style.zIndex) {
+                if (isAbove(menuElement, item.element)) {
                     return true;
                 }
             });
@@ -575,7 +576,7 @@ export const showPopover = async (app: App, showRef = false) => {
         return;
     }
     let refDefs: IRefDefs[] = [];
-    let originalRefBlockIDs: IObject;
+    let originalRefBlockIDs: Record<string, string>;
     const notebookId = getPopoverNotebookId();
     const dataId = popoverTargetElement.getAttribute("data-id");
     if (dataId) {
@@ -585,6 +586,9 @@ export const showPopover = async (app: App, showRef = false) => {
                 id: dataId,
                 notebook: notebookId
             });
+            if (postResponse.code !== 0) {
+                return;
+            }
             refDefs = postResponse.data.refDefs;
             originalRefBlockIDs = postResponse.data.originalRefBlockIDs;
         } else {
@@ -601,6 +605,9 @@ export const showPopover = async (app: App, showRef = false) => {
             anchor: popoverTargetElement.textContent,
             notebook: notebookId
         });
+        if (postResponse.code !== 0) {
+            return;
+        }
         refDefs = postResponse.data.refDefs;
     } else if (popoverTargetElement.getAttribute("data-type")?.split(" ").includes("a")) {
         // 以思源协议开头的链接

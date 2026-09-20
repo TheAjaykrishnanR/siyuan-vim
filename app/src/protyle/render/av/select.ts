@@ -189,6 +189,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
             action: "updateAttrViewColOption",
             id: colId,
             avID: data.id,
+            blockID,
             data: {
                 newColor: color,
                 oldName: name,
@@ -203,6 +204,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
             action: "updateAttrViewColOption",
             id: colId,
             avID: data.id,
+            blockID,
             data: {
                 newColor: color,
                 oldName: inputElement.value,
@@ -283,11 +285,12 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
 </div>
 <div class="fn__none">
     <div class="fn__hr"></div>
-    <textarea rows="1" placeholder="${window.siyuan.languages.addDesc}" class="b3-text-field fn__block" type="text" data-value="${escapeAttr(desc)}">${desc}</textarea>
+    <textarea rows="1" placeholder="${window.siyuan.languages.addDesc}" class="b3-text-field fn__block" type="text" data-value="${escapeAttr(desc)}">${escapeHtml(desc)}</textarea>
 </div>
 <div class="fn__hr--small"></div>`,
         bind(element) {
             const inputElement = element.querySelector("input");
+            element.classList.add("b3-menu__custom");
             inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
                 if (event.isComposing) {
                     return;
@@ -336,6 +339,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                     action: "removeAttrViewColOption",
                     id: colId,
                     avID: data.id,
+                    blockID,
                     data: newName,
                 }, {
                     action: "doUpdateUpdated",
@@ -345,7 +349,8 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                     action: "updateAttrViewColOptions",
                     id: colId,
                     avID: data.id,
-                    data: colOptions
+                    blockID,
+                    data: colOptions.map(option => ({...option}))
                 }]);
                 colOptions.find((item, index) => {
                     if (item.name === newName) {
@@ -402,6 +407,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
         iconHTML: "",
         label: html,
         bind(element) {
+            element.classList.add("b3-menu__custom");
             element.addEventListener("click", (event) => {
                 const colorTarget = (event.target as HTMLElement).closest<HTMLElement>("button");
                 if (colorTarget?.dataset.type === AV_MANAGE_CUSTOM_COLORS_TYPE) {
@@ -422,6 +428,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                         action: "updateAttrViewColOption",
                         id: colId,
                         avID: data.id,
+                        blockID,
                         data: {
                             oldName: name,
                             newName: inputElement.value,
@@ -437,6 +444,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                         action: "updateAttrViewColOption",
                         id: colId,
                         avID: data.id,
+                        blockID,
                         data: {
                             oldName: inputElement.value,
                             newName: name,
@@ -761,7 +769,7 @@ export const getSelectHTML = (fields: IAVColumn[], cellElements: HTMLElement[], 
     ${selectedHTML}
     <input>
 </div>
-<div style="flex: 1;overflow: auto;">${filterSelectHTML("", colData.options, selected)}</div>
+<div class="av__select-list" style="flex: 1;overflow: auto;">${filterSelectHTML("", colData.options, selected)}</div>
 </div>`;
 };
 

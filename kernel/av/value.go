@@ -554,6 +554,10 @@ func ParseValueTextRich(rich *ValueTextRich) (tree *parse.Tree, err error) {
 }
 
 func parseValueTextRich(rich *ValueTextRich) (blockDOM string, tree *parse.Tree, err error) {
+	return parseValueTextRichWithImages(rich, false)
+}
+
+func parseValueTextRichWithImages(rich *ValueTextRich, images bool) (blockDOM string, tree *parse.Tree, err error) {
 	if nil == rich {
 		return
 	}
@@ -583,11 +587,15 @@ func parseValueTextRich(rich *ValueTextRich) (blockDOM string, tree *parse.Tree,
 		}
 		blockDOM = luteEngine.Tree2BlockDOM(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 	}
-	err = validateValueTextRichTree(tree)
+	err = validateValueTextRichTreeWithImages(tree, images)
 	return
 }
 
 func validateValueTextRichTree(tree *parse.Tree) (err error) {
+	return validateValueTextRichTreeWithImages(tree, false)
+}
+
+func validateValueTextRichTreeWithImages(tree *parse.Tree, images bool) (err error) {
 	if nil == tree || nil == tree.Root {
 		return fmt.Errorf("attribute view rich text tree is missing")
 	}
@@ -595,7 +603,7 @@ func validateValueTextRichTree(tree *parse.Tree) (err error) {
 		if !entering {
 			return ast.WalkContinue
 		}
-		if !isAllowedValueTextRichNode(node) {
+		if !isAllowedValueTextRichNode(node) && !(images && isAllowedTableCellRichImageNode(node)) {
 			err = fmt.Errorf("unsupported attribute view rich text node [%s]", node.Type.String())
 			return ast.WalkStop
 		}
@@ -2104,6 +2112,10 @@ func NormalizeValueTextRich(rich *ValueTextRich) (tree *parse.Tree, err error) {
 }
 
 func normalizeValueTextRichTreeSource(tree *parse.Tree) (content string, normalizedTree *parse.Tree, err error) {
+	return normalizeValueTextRichTreeSourceWithImages(tree, false)
+}
+
+func normalizeValueTextRichTreeSourceWithImages(tree *parse.Tree, images bool) (content string, normalizedTree *parse.Tree, err error) {
 	normalizedTree = tree
 	previous := ""
 	for iteration := 0; iteration < 4; iteration++ {
@@ -2120,7 +2132,7 @@ func normalizeValueTextRichTreeSource(tree *parse.Tree) (content string, normali
 		candidate := &ValueTextRich{
 			Spec: ValueTextRichSpec, Format: ValueTextRichFormatKramdown, Content: content,
 		}
-		if _, normalizedTree, err = parseValueTextRich(candidate); nil != err {
+		if _, normalizedTree, err = parseValueTextRichWithImages(candidate, images); nil != err {
 			return "", nil, err
 		}
 	}
@@ -2203,15 +2215,7 @@ func NewFormattedValueNumber(content float64, format NumberFormat) (ret *ValueNu
 		Content:          content,
 		IsNotEmpty:       true,
 		Format:           format,
-		FormattedContent: fmt.Sprintf("%f", content),
-	}
-
-	ret.FormattedContent = formatNumber(content, format)
-
-	switch format {
-	case NumberFormatNone:
-		s := fmt.Sprintf("%.5f", content)
-		ret.FormattedContent = strings.TrimRight(strings.TrimRight(s, "0"), ".")
+		FormattedContent: formatNumber(content, format),
 	}
 	return
 }
@@ -3162,7 +3166,7 @@ func (r *ValueRollup) calcContents(calc *RollupCalc, destKey *Key) {
 			}
 		}
 		if 0 < len(r.Contents) {
-			r.Contents = []*Value{{Type: KeyTypeNumber, Number: NewFormattedValueNumber(float64(countChecked*100/len(r.Contents)), NumberFormatNone)}}
+			r.Contents = []*Value{{Type: KeyTypeNumber, Number: newRollupCheckboxPercent(countChecked, len(r.Contents))}}
 		}
 	case CalcOperatorPercentUnchecked:
 		countUnchecked := 0
@@ -3174,9 +3178,17 @@ func (r *ValueRollup) calcContents(calc *RollupCalc, destKey *Key) {
 			}
 		}
 		if 0 < len(r.Contents) {
-			r.Contents = []*Value{{Type: KeyTypeNumber, Number: NewFormattedValueNumber(float64(countUnchecked*100/len(r.Contents)), NumberFormatNone)}}
+			r.Contents = []*Value{{Type: KeyTypeNumber, Number: newRollupCheckboxPercent(countUnchecked, len(r.Contents))}}
 		}
 	}
+}
+
+func newRollupCheckboxPercent(count, total int) *ValueNumber {
+	ratio := float64(count) / float64(total)
+	// 保留筛选、模板和列底部统计使用的百分数数值，仅将显示文本格式化为百分比。
+	number := NewFormattedValueNumber(ratio*100, NumberFormatNone)
+	number.FormattedContent = formatNumber(ratio, NumberFormatPercent)
+	return number
 }
 
 func GetAttributeViewDefaultValue(valueID, keyID, blockID string, typ KeyType, keyDateIsTime bool) (ret *Value) {

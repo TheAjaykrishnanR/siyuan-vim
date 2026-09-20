@@ -7,6 +7,7 @@ import {
 } from "./hasClosest";
 import * as dayjs from "dayjs";
 import {transaction, updateTransaction} from "../wysiwyg/transaction";
+import {copyTableCellContent} from "./tableCellRich";
 import {
     fixAdjacentTags,
     getContenteditableElement,
@@ -29,7 +30,8 @@ import {highlightRender} from "../render/highlightRender";
 import {scrollCenter} from "../../util/highlightById";
 import {updateAttrViewCellAnimation, updateAVName} from "../render/av/action";
 import {getDefaultDateFormat} from "../render/av/dateFormat";
-import {genCellValue, updateCellsValue} from "../render/av/cell";
+import {genCellValue, genCellValueByElement, updateCellsValue} from "../render/av/cell";
+import {getAVBindingOperations} from "../render/av/binding";
 import {input} from "../wysiwyg/input";
 import {updateListOrder} from "../wysiwyg/list";
 import {fetchPost, fetchSyncPost} from "../../util/fetch";
@@ -41,6 +43,7 @@ import {
     AV_PASTE_READONLY_TYPES,
     compactAVCellOperations,
     getAVPasteCellValue,
+    getAVPasteContentRowCount,
     getAVPasteValueForType,
     getAVPasteMatrixWidth,
     getUniqueAVPasteColumnName,
@@ -320,9 +323,12 @@ const pasteAVMatrix = async (options: {
         startItemID,
         count: Math.max(options.values.length, 1),
     });
-    const view = response.data?.view as IAVTable;
+    if (response.code !== 0) {
+        return;
+    }
+    const view: IAVTable = response.data?.view;
     const rows = view?.rows;
-    if (response.code !== 0 || !Array.isArray(rows) || rows.length === 0) {
+    if (!Array.isArray(rows) || rows.length === 0) {
         return;
     }
 
@@ -692,6 +698,9 @@ const processAV = (range: Range, html: string, protyle: IProtyle, blockElement: 
                 cellHTML.push(rowHTML);
             }
         });
+        const contentRowCount = getAVPasteContentRowCount(values);
+        values.length = contentRowCount;
+        cellHTML.length = contentRowCount;
         headerCandidate = isAVPasteHeaderCandidate(values, headerCandidate);
     }
     const avID = blockElement.dataset.avId;
@@ -730,19 +739,9 @@ const processAV = (range: Range, html: string, protyle: IProtyle, blockElement: 
             if (selectCellElement) {
                 const sourceId = contenteditableElement.firstElementChild.getAttribute("data-id");
                 const previousID = getFieldIdByCellElement(selectCellElement, blockElement.getAttribute("data-av-type") as TAVView);
-                transaction(protyle, [{
-                    action: "replaceAttrViewBlock",
-                    avID,
-                    previousID,
-                    nextID: sourceId,
-                    isDetached: false,
-                }], [{
-                    action: "replaceAttrViewBlock",
-                    avID,
-                    previousID: sourceId,
-                    nextID: previousID,
-                    isDetached: selectCellElement.dataset.detached === "true",
-                }]);
+                const operations = getAVBindingOperations(avID, previousID, sourceId, blockElement.dataset.nodeId,
+                    genCellValueByElement("block", selectCellElement), {protyleID: protyle.id});
+                transaction(protyle, operations.doOperations, operations.undoOperations);
                 updateAttrViewCellAnimation(selectCellElement, {
                     type: "block",
                     isDetached: false,
@@ -887,7 +886,7 @@ const processTable = (range: Range, html: string, protyle: IProtyle, blockElemen
     const oldHTML = blockElement.outerHTML;
     blockElement.setAttribute("updated", dayjs().format("YYYYMMDDHHmmss"));
     matchedCells.forEach((item, index) => {
-        item.target.innerHTML = item.source.innerHTML;
+        copyTableCellContent(item.target, item.source);
         if (index === matchedCells.length - 1) {
             setLastNodeRange(item.target, range, false);
         }
@@ -933,10 +932,14 @@ export const insertHTML = (html: string, protyle: IProtyle, isBlock = false,
             return;
         }
     }
-    const tablePasteTarget = getTablePasteTarget(range);
-    fixTableRange(range);
+    const tableElement = hasClosestByAttribute(range.startContainer, "data-type", "NodeTable");
+    const isEditorTable = tableElement && protyle.wysiwyg.element.contains(tableElement);
+    const tablePasteTarget = isEditorTable ? getTablePasteTarget(range) : undefined;
+    if (isEditorTable) {
+        fixTableRange(range);
+    }
     let unSpinHTML;
-    if (hasClosestByAttribute(range.startContainer, "data-type", "NodeTable") && !isBlock) {
+    if (isEditorTable && !isBlock) {
         if (hasClosestByTag(range.startContainer, "TABLE")) {
             unSpinHTML = protyle.lute.BlockDOM2InlineBlockDOM(html);
         } else {

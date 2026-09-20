@@ -63,7 +63,6 @@ type AppConf struct {
 	UILayout       *conf.UILayout       `json:"uiLayout"`       // 界面布局。不要直接使用，使用 GetUILayout() 和 SetUILayout() 方法
 	UserData       string               `json:"userData"`       // 社区用户信息，对 User 加密存储
 	User           *conf.User           `json:"-"`              // 社区用户内存结构，不持久化。不要直接使用，使用 GetUser() 和 SetUser() 方法
-	Account        *conf.Account        `json:"account"`        // 帐号配置
 	ReadOnly       bool                 `json:"readonly"`       // 是否是以只读模式运行
 	ServerAddrs    []string             `json:"serverAddrs"`    // 本地服务器地址列表
 	AccessAuthCode string               `json:"accessAuthCode"` // 锁屏密码
@@ -467,6 +466,9 @@ func InitConf() {
 	if nil == Conf.Editor.CheckBlockRef {
 		Conf.Editor.CheckBlockRef = defaultEditor.CheckBlockRef
 	}
+	if nil == Conf.Editor.HashTagSearch {
+		Conf.Editor.HashTagSearch = defaultEditor.HashTagSearch
+	}
 	Conf.Editor.AssetOpen = conf.NormalizeAssetOpen(Conf.Editor.AssetOpen)
 	Conf.Editor.NormalizeFontFamilies()
 	Conf.Appearance.NormalizeGlobalFontFamilies()
@@ -607,9 +609,6 @@ func InitConf() {
 	if "" != Conf.UserData {
 		Conf.SetUser(loadUserFromConf())
 	}
-	if nil == Conf.Account {
-		Conf.Account = conf.NewAccount()
-	}
 
 	if nil == Conf.Sync {
 		Conf.Sync = conf.NewSync()
@@ -703,6 +702,9 @@ func InitConf() {
 
 	if nil == Conf.Search {
 		Conf.Search = conf.NewSearch()
+	}
+	if nil == Conf.Search.CustomBlock {
+		Conf.Search.CustomBlock = new(true)
 	}
 	if 1 > Conf.Search.Limit {
 		Conf.Search.Limit = 64
@@ -1055,6 +1057,9 @@ func Close(force, setCurrentWorkspace bool, execInstallPkg int) (exitCode int, i
 	sql.FlushQueue()
 
 	util.IsExiting.Store(true)
+	// 等待正在执行的路径批次退出，未完成任务保留在配置目录供下次启动恢复。
+	hpathRefresh.Lock()
+	hpathRefresh.Unlock()
 	newVerInstallPkgPath := getNewVerInstallPkgPath()
 	if !skipNewVerInstallPkg() && "" != newVerInstallPkgPath {
 		if 2 == execInstallPkg || (force && 0 == execInstallPkg) { // 将新版本安装包交给桌面宿主执行
@@ -1335,6 +1340,7 @@ func InitBoxes() {
 		}
 	}
 
+	recoverDocHPaths()
 	logging.LogInfof("tree/block count [%d/%d]", treenode.CountTrees(), blockCount)
 }
 

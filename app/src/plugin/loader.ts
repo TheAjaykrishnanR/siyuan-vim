@@ -10,7 +10,7 @@ import {
     removeMobilePluginDock,
 } from "../mobile/dock/pluginDockState";
 /// #endif
-import {API} from "./API";
+import {getAPI} from "./API";
 import {getFrontend, isMobile, isWindow} from "../util/functions";
 import {Constants} from "../constants";
 import {beginPluginTeardown, destroyPlugin} from "./uninstall";
@@ -30,12 +30,10 @@ import {
 import {getHostCapabilities} from "../util/hostCapabilities";
 
 const requireFunc = (key: string) => {
-    const modules = {
-        siyuan: API
-    };
-    // @ts-ignore
-    return modules[key]
-        ?? window.require?.(key);
+    if (key === "siyuan") {
+        return getAPI();
+    }
+    return window.require?.(key);
 };
 if (window.require instanceof Function) {
     requireFunc.__proto__ = window.require;
@@ -125,7 +123,7 @@ const getLifecycleManager = (app: App) => {
 const createPluginDataLoader = () => {
     let promise: Promise<IPluginData[]>;
     return (name: string) => {
-        promise ??= fetchSyncPost("/api/petal/loadPetals", {frontend: getFrontend()}).then(response => response.data);
+        promise ??= fetchSyncPost("/api/petal/loadPetals", {frontend: getFrontend()}).then(response => response.code === 0 && Array.isArray(response.data) ? response.data : []);
         return promise.then(items => items.find(item => item.name === name));
     };
 };
@@ -143,7 +141,7 @@ export const loadPlugins = async (app: App, names?: string[], init = true) => {
     } else {
         const batch = manager.beginLoadBatch(!manager.isStarted());
         const response = await fetchSyncPost("/api/petal/loadPetals", {frontend: getFrontend()});
-        tasks = (response.data as IPluginData[]).map(item => manager.requestBatchLoad(item.name, item, batch));
+        tasks = (response.code === 0 && Array.isArray(response.data) ? response.data : []).map(item => manager.requestBatchLoad(item.name, item, batch));
         shouldStart = manager.isLatestLoadBatch(batch);
     }
     if (shouldStart) {

@@ -1,3 +1,5 @@
+import type {FileTreeGetDocRequestInput} from "../types/api";
+import {isPhablet} from "../protyle/util/compatibility";
 import {Tab} from "../layout/Tab";
 import {Editor} from "./index";
 import {Wnd} from "../layout/Wnd";
@@ -38,6 +40,7 @@ import {isBrowserRenderableImagePath} from "../util/imageURL";
 import {forEachPluginSubscriber} from "../plugin/EventBusCore";
 import {getHostCapabilities} from "../util/hostCapabilities";
 import {revealTabsForTarget} from "../protyle/render/tabsRender";
+import {isHiddenTabContent} from "../protyle/render/tabsVisibility";
 import {shouldCheckOtherWindows} from "./openFileWindow";
 
 const isSameCustomTab = (type: string, data: any, options: IOpenFileOptions) => {
@@ -81,6 +84,9 @@ export const openFileById = async (options: {
     }
     if (response.code === 3) {
         showMessage(response.msg);
+        return;
+    }
+    if (response.code !== 0) {
         return;
     }
     const zoomIn = options.zoomIn === true && options.id !== response.data.rootID;
@@ -395,7 +401,7 @@ const getUnInitTab = (options: IOpenFileOptions) => {
                 initObj.notebookId = options.notebookId;
                 initObj.mode = options.mode;
                 if (options.zoomIn) {
-                    initObj.action = [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS];
+                    initObj.action = [Constants.CB_GET_ALL, isPhablet() ? Constants.CB_GET_HL : Constants.CB_GET_FOCUS];
                 } else {
                     initObj.action = options.action;
                 }
@@ -436,7 +442,7 @@ const switchEditor = (editor: Editor, options: IOpenFileOptions, allModels: IMod
         revealTabsForTarget(nodeElement);
     }
     if ((!nodeElement || nodeElement?.clientHeight === 0) && options.id !== options.rootID) {
-        const getDocParam: IObject = {
+        const getDocParam: FileTreeGetDocRequestInput = {
             id: options.id,
             mode: (options.action && options.action.includes(Constants.CB_GET_CONTEXT)) ? 3 : 0,
             size: window.siyuan.config.editor.dynamicLoadBlocks,
@@ -481,6 +487,11 @@ const switchEditor = (editor: Editor, options: IOpenFileOptions, allModels: IMod
                 }
                 const userScrollAbort = new AbortController();
                 const observerLoad = new ResizeObserver(() => {
+                    // 用户已离开目标页签时停止补偿滚动，避免再次展开跳转目标。
+                    if (isHiddenTabContent(nodeElement)) {
+                        stopObserve();
+                        return;
+                    }
                     if (document.contains(nodeElement)) {
                         if (typeof scrollTop === "number") {
                             editor.editor.protyle.contentElement.scrollTop = scrollTop;
@@ -494,6 +505,10 @@ const switchEditor = (editor: Editor, options: IOpenFileOptions, allModels: IMod
                     observerLoad.disconnect();
                 };
                 const onUserScroll = () => stopObserve();
+                editor.editor.protyle.contentElement.addEventListener("pointerdown", onUserScroll, {
+                    capture: true,
+                    signal: userScrollAbort.signal
+                });
                 editor.editor.protyle.contentElement.addEventListener("wheel", onUserScroll, {
                     capture: true,
                     passive: true,
@@ -616,7 +631,7 @@ const newTab = (options: IOpenFileOptions) => {
                         blockId: options.id,
                         rootId: options.rootID,
                         notebookId: options.notebookId,
-                        action: [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS],
+                        action: [Constants.CB_GET_ALL, isPhablet() ? Constants.CB_GET_HL : Constants.CB_GET_FOCUS],
                         scrollPosition: options.scrollPosition,
                     });
                 } else {
@@ -740,7 +755,7 @@ export const updateOutline = (models: IModels, protyle: IProtyle, reload = false
                 item.isPreview = !protyle.preview.element.classList.contains("fn__none");
                 item.update(response, blockId, protyle?.notebookId || "");
                 if (protyle) {
-                    item.updateDocTitle(protyle.background.ial, response.data?.length || 0);
+                    item.updateDocTitle(protyle.background.ial, Array.isArray(response.data) ? response.data.length : 0);
                     if (getSelection().rangeCount > 0) {
                         const startContainer = getSelection().getRangeAt(0).startContainer;
                         if (protyle.wysiwyg.element.contains(startContainer)) {

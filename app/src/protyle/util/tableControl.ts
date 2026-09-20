@@ -1,9 +1,12 @@
 import {MenuItem} from "../../menus/Menu";
+import {clearTableCellContent, getTableCellRichPlainText, mergeTableCellContents} from "./tableCellRich";
+import {renderTableCellRichElements} from "../render/tableCellRich";
 import {updateTransaction} from "../wysiwyg/transaction";
 import {copyPlainText, encodeBase64, isMac, readClipboard} from "./compatibility";
 import {removeZWJ} from "./normalizeText";
 import {paste} from "./paste";
 import {focusByRange, getEditorRange} from "./selection";
+import {matchHotKey} from "./hotKey";
 import {
     buildTableGrid,
     deleteTableColumns,
@@ -101,7 +104,10 @@ interface ITableEdgeHover {
 
 const getCell = (target: EventTarget | Node) => {
     const element = target instanceof Element ? target : (target as Node)?.parentElement;
-    return element?.closest?.("th, td") as HTMLTableCellElement;
+    const cell = element?.closest?.("th, td") as HTMLTableCellElement;
+    const editor = element?.closest?.(".table__cell-editor");
+    return cell && (element.closest(".protyle-wysiwyg") === cell.closest(".protyle-wysiwyg") ||
+        editor?.parentElement === cell) ? cell : undefined;
 };
 
 const getTableNode = (cell: HTMLTableCellElement) => {
@@ -165,7 +171,8 @@ const replaceCellTag = (cell: HTMLTableCellElement, tag: "th" | "td") => {
     return newCell;
 };
 
-const getCellText = (cell: HTMLTableCellElement) => cell.innerText.replace(/\n+$/g, "");
+const getCellText = (cell: HTMLTableCellElement) => cell.hasAttribute("data-sy-table-cell-rich") ?
+    getTableCellRichPlainText(cell) : cell.innerText.replace(/\n+$/g, "");
 
 export const getCommonTableCellStyle = (cells: HTMLTableCellElement[], property: string) => {
     if (cells.length === 0) {
@@ -207,6 +214,7 @@ export const getTableCellBackgroundMenus = (cells: HTMLTableCellElement[],
         type: "empty",
         label: `<div class="fn__flex fn__flex-wrap" style="width: 238px">${colorHTML}</div>`,
         bind: element => {
+            element.classList.add("b3-menu__custom");
             element.addEventListener("click", event => {
                 const colorTarget = (event.target as Element).closest<HTMLElement>(".color__square");
                 if (!colorTarget || !element.contains(colorTarget)) {
@@ -521,6 +529,29 @@ export class TableControl {
             if (!this.selection || this.protyle.disabled) {
                 return;
             }
+            if (this.handleTableHotkey(event)) {
+                return;
+            }
+            const keymap = window.siyuan.config.keymap.editor.general;
+            const undo = matchHotKey(keymap.undo, event);
+            const redo = matchHotKey(keymap.redo, event);
+            if (!event.isComposing && (undo || redo)) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                // 单元格选择不持有文字选区，撤销前将焦点交回所属编辑器。
+                const range = document.createRange();
+                range.selectNodeContents(this.selection.activeCell);
+                range.collapse(true);
+                this.wysiwygElement.focus({preventScroll: true});
+                focusByRange(range);
+                this.clear();
+                if (undo) {
+                    this.protyle.undo.undo(this.protyle);
+                } else {
+                    this.protyle.undo.redo(this.protyle);
+                }
+                return;
+            }
             if (!event.isComposing && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey &&
                 (event.key === "Backspace" || event.key === "Delete")) {
                 event.preventDefault();
@@ -628,11 +659,77 @@ export class TableControl {
         }, {signal});
     }
 
+    private handleTableHotkey(event: KeyboardEvent) {
+        if (event.isComposing) {
+            return false;
+        }
+        const keymap = window.siyuan.config.keymap.editor.table;
+        const action = ["insertRowAbove", "insertRowBelow", "insertColumnLeft", "insertColumnRight",
+            "moveToUp", "moveToDown", "moveToLeft", "moveToRight", "delete-row", "delete-column"]
+            .find(key => matchHotKey(keymap[key], event));
+        if (!action) {
+            return false;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const selection = this.selection;
+        const grid = buildTableGrid(selection.table);
+        const mode = ["insertRowAbove", "insertRowBelow", "moveToUp", "moveToDown", "delete-row"].includes(action) ?
+            "row" : "column";
+        // 将单元格选区投影到目标行列，沿用表格操作的合并单元格边界检查。
+        const cells = new Set(this.getSelectedCells());
+        const indexes = new Set<number>();
+        grid.cellInfos.filter(info => cells.has(info.cell)).forEach(info => {
+            const start = mode === "row" ? info.row : info.col;
+            const span = mode === "row" ? info.rowspan : info.colspan;
+            for (let index = start; index < start + span; index++) {
+                indexes.add(index);
+            }
+        });
+        const sorted = Array.from(indexes).sort((a, b) => a - b);
+        if (sorted.length === 0) {
+            return true;
+        }
+        const first = sorted[0];
+        const last = sorted[sorted.length - 1];
+        if (action.startsWith("insert")) {
+            const index = action === "insertRowAbove" || action === "insertColumnLeft" ? first : last + 1;
+            if (this.canInsertAtBoundary(grid, mode, index)) {
+                if (mode === "row") {
+                    this.insertRowAt(selection.node, selection.table, index);
+                } else {
+                    this.insertColumnAt(selection.node, selection.table, index);
+                }
+            }
+        } else if (action === "delete-row" || action === "delete-column") {
+            if (mode === "row") {
+                deleteTableRows(this.protyle, selection.node, sorted);
+            } else {
+                deleteTableColumns(this.protyle, selection.node, sorted);
+            }
+            this.clear();
+        } else {
+            const target = action === "moveToUp" || action === "moveToLeft" ? first - 1 : last + 2;
+            const count = mode === "row" ? grid.rowCount : grid.columnCount;
+            if (target >= 0 && target <= count && !grid.cellInfos.some(info => info.rowspan > 1 || info.colspan > 1)) {
+                selection.mode = mode;
+                selection.indexes = indexes;
+                selection.anchor = first;
+                this.moveSelection(target);
+                this.updateSelectedCells();
+                this.scheduleRender();
+            }
+        }
+        return true;
+    }
+
     private handleTablePointerMove(event: PointerEvent, fromControl: boolean) {
         if (event.buttons !== 0) {
             return;
         }
-        const targetCell = getCell(event.target);
+        const eventCell = getCell(event.target);
+        // 内嵌编辑器只处理自身表格，避免将外层单元格识别为自己的内容。
+        const targetCell = eventCell && this.wysiwygElement.contains(eventCell) ? eventCell : undefined;
         const targetTable = targetCell?.closest("table") as HTMLTableElement;
         const targetViewportRect = targetTable ? this.getTableGridViewportRect(targetTable) : undefined;
         const edgeHover = !targetCell || (targetViewportRect &&
@@ -642,9 +739,10 @@ export class TableControl {
         const node = getTableNode(cell);
         if (cell && node && !this.protyle.disabled) {
             const nodeID = node.getAttribute("data-node-id");
-            if (nodeID && !this.protyle.gutter.element.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`)) {
+            const gutter = this.protyle.gutter;
+            if (nodeID && gutter && !gutter.element.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`)) {
                 // 初次移入时块标可能因编辑器仍在完成渲染而跳过，指针继续移动时补充渲染
-                this.protyle.gutter.render(this.protyle, node, cell);
+                gutter.render(this.protyle, node, cell);
             }
             const hoverType = edgeHover?.type || "cell";
             if (cell === this.hoverCell && hoverType === this.hoverType) {
@@ -902,7 +1000,7 @@ export class TableControl {
         return getRangeIndexes(start, start + span - 1).some(index => this.selection.indexes.has(index));
     }
 
-    private getSelectedCells() {
+    public getSelectedCells() {
         return this.selectedCells.filter(cell => cell.isConnected);
     }
 
@@ -1391,6 +1489,7 @@ export class TableControl {
         }
         const menu = window.siyuan.menus.menu;
         menu.remove();
+        menu.element.setAttribute("data-name", `table-${this.selection.mode}`);
         const merged = buildTableGrid(this.selection.table).cellInfos.some(info => info.rowspan > 1 || info.colspan > 1);
         const mergedSelection = this.selection.mode !== "cell" && merged;
         const rectangle = this.selection.mode !== "cell" || this.isRectangle();
@@ -1435,8 +1534,9 @@ export class TableControl {
                 click: () => this.paste(),
             }).element);
             menu.append(new MenuItem({
-                icon: "iconTrashcan",
+                icon: "iconClear",
                 label: window.siyuan.languages.clear,
+                warning: true,
                 click: () => this.clearCells(),
             }).element);
         }
@@ -1505,6 +1605,7 @@ export class TableControl {
                 menu.append(new MenuItem({
                     icon: "iconClear",
                     label: window.siyuan.languages.clear,
+                    warning: true,
                     click: () => this.clearCells(),
                 }).element);
                 menu.append(new MenuItem({
@@ -1866,7 +1967,7 @@ export class TableControl {
             return;
         }
         const oldHTML = this.selection.node.outerHTML;
-        this.getSelectedCells().forEach(cell => cell.innerHTML = "");
+        this.getSelectedCells().forEach(clearTableCellContent);
         updateTransaction(this.protyle, this.selection.node, oldHTML);
         this.scheduleRender();
     }
@@ -2003,15 +2104,14 @@ export class TableControl {
         const colEnd = Math.max(...infos.map(info => info.col + info.colspan - 1));
         const oldHTML = this.selection.node.outerHTML;
         const first = infos[0].cell;
-        const contents = infos.map(info => info.cell.innerHTML.trim().replace(/<br>$/, "")).filter(Boolean);
+        mergeTableCellContents(infos.map(info => info.cell));
         infos.slice(1).forEach(info => {
-            info.cell.innerHTML = "";
             info.cell.classList.add("fn__none");
         });
-        first.innerHTML = contents.join("<br>");
         first.rowSpan = rowEnd - rowStart + 1;
         first.colSpan = colEnd - colStart + 1;
         updateTransaction(this.protyle, this.selection.node, oldHTML);
+        renderTableCellRichElements(first);
         this.selection.cells = new Set([first]);
         this.selection.activeCell = first;
         this.hoverCell = first;
@@ -2019,8 +2119,8 @@ export class TableControl {
         this.scheduleRender();
     }
 
-    private splitCell(cell: HTMLTableCellElement) {
-        if (!this.selection) {
+    public splitCell(cell: HTMLTableCellElement) {
+        if (!this.wysiwygElement.contains(cell) || !this.selectCellRange(cell, cell)) {
             return;
         }
         const grid = buildTableGrid(this.selection.table);

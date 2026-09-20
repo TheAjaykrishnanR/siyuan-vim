@@ -1,3 +1,4 @@
+import {isAVRenderData} from "./renderData";
 import {transaction} from "../../wysiwyg/transaction";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {openMenuPanel} from "./openMenuPanel";
@@ -36,6 +37,7 @@ import {
     getAVBlockRefSubtype,
     getConvertedEmptyAVCellValue,
     hasAVRenderTemplateResult,
+    updateAVCachedCellValue,
 } from "./cellValue";
 import {setPosition} from "../../../util/setPosition";
 import {getAVSelectedCells, IAVSelectedCell, updateAVSelectedCellValue} from "./selectionState";
@@ -55,6 +57,7 @@ import {
     renderAVRichTextElements,
 } from "./richText";
 import {openAVRichTextEditor} from "./richTextEditor";
+import {getAVData} from "./virtualScroll";
 
 export {cellValueIsEmpty} from "./cellValue";
 
@@ -680,6 +683,9 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
                 id: blockElement.dataset.avId,
                 blockID: blockElement.dataset.nodeId,
             }, (response) => {
+                if (!isAVRenderData(response.data)) {
+                    return;
+                }
                 getFieldsByData(response.data).find((item: IAVColumn) => {
                     if (item.id === getColId(cellElements[0], viewType)) {
                         inputElement.value = item.template;
@@ -1034,6 +1040,9 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
         let column = source.selectedCell?.column || columns?.find(columnItem => columnItem.id === colId);
         if (type === "date" && !column) {
             const response = await fetchSyncPost("/api/av/getAttributeViewKeysByID", {avID, keyIDs: [colId]});
+            if (response.code !== 0) {
+                return;
+            }
             column = response.data?.[0];
         }
         let cellValue: IAVCellValue;
@@ -1068,6 +1077,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
             doOperations.push(createAVCellUpdateOperation({
                 valueID: cellId,
                 avID,
+                blockID: id,
                 keyID: colId,
                 rowID,
                 data: cellValue
@@ -1076,6 +1086,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
             undoOperations.push(createAVCellUpdateOperation({
                 valueID: cellId,
                 avID,
+                blockID: id,
                 keyID: colId,
                 rowID,
                 data: oldValue
@@ -1149,6 +1160,11 @@ export const updateAttrViewCellInOtherElements = (protyle: IProtyle, avID: strin
         updateCustomAttr(sourceElement);
     }
     protyle.wysiwyg.element.querySelectorAll<HTMLElement>(`.av[data-av-id="${avID}"]`).forEach(item => {
+        const data = getAVData(item);
+        if (data) {
+            updateAVCachedCellValue(data.view, rowID, colID, value);
+        }
+        updateAVSelectedCellValue(item, rowID, colID, value);
         item.querySelectorAll<HTMLElement>(
             `.av__row[data-id="${rowID}"] .av__cell[data-col-id="${colID}"], ` +
             `.av__gallery-item[data-id="${rowID}"] .av__cell[data-field-id="${colID}"]`
@@ -1195,7 +1211,7 @@ export const renderCellAttr = (cellElement: Element, value: IAVCellValue) => {
 
 export const renderCell = (cellValue: IAVCellValue, rowIndex = 0, showIcon = true, type: TAVView = "table",
                            selectOptions?: IAVColumn["options"], dateFormat: TAVDateFormat = "",
-                           renderTemplate?: string) => {
+                           renderTemplate?: string, showCopy = true) => {
     let text = "";
     if (hasAVRenderTemplateResult(cellValue, renderTemplate)) {
         const storedValue = cloneAVCellValueSnapshot(cellValue);
@@ -1283,7 +1299,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex = 0, showIcon = tru
     } else if (cellValue.type === "rollup") {
         let rollupType;
         cellValue?.rollup?.contents?.forEach((item) => {
-            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type) : renderRollup(item, showIcon);
+            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type, undefined, "", undefined, false) : renderRollup(item, showIcon);
             if (rollupText) {
                 text += rollupText + (item.type === "checkbox" ? "" : ", ");
             }
@@ -1313,10 +1329,12 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex = 0, showIcon = tru
         }
     }
 
-    if ((["text", "template", "url", "email", "phone", "date", "created", "updated"].includes(cellValue.type) && cellValue[cellValue.type as "url"]?.content) ||
+    if (showCopy && cellValue.type === "rollup" && text) {
+        text += `<button class="av__cell-action ariaLabel" type="button" data-position="4north" aria-label="${window.siyuan.languages.copy}" data-type="copy" data-rollup-value="${escapeAttr(encodeURIComponent(JSON.stringify(cellValue.rollup?.contents || [])))}"><svg><use xlink:href="#iconCopy"></use></svg></button>`;
+    } else if (showCopy && ((["text", "template", "url", "email", "phone", "date", "created", "updated"].includes(cellValue.type) && cellValue[cellValue.type as "url"]?.content) ||
         cellValue.type === "lineNumber" ||
         (cellValue.type === "number" && cellValue.number?.isNotEmpty) ||
-        (cellValue.type === "block" && cellValue.block?.content)) {
+        (cellValue.type === "block" && cellValue.block?.content))) {
         text += `<button class="av__cell-action ariaLabel" type="button" data-position="4north" aria-label="${window.siyuan.languages.copy}" data-type="copy"><svg><use xlink:href="#iconCopy"></use></svg></button>`;
     }
     return text;

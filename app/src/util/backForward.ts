@@ -1,3 +1,4 @@
+import type {FileTreeGetDocRequestInput} from "../types/api";
 import {hasClosestBlock, isInEmbedBlock} from "../protyle/util/hasClosest";
 import {getContenteditableElement} from "../protyle/wysiwyg/getBlock";
 import {focusByOffset, focusByRange, getSelectionOffset} from "../protyle/util/selection";
@@ -25,7 +26,7 @@ const focusStack = async (app: App, stack: IBackStack) => {
     let blockElement: HTMLElement;
     if (!document.contains(stack.protyle.element)) {
         const response = await fetchSyncPost("/api/block/checkBlockExist", {id: stack.protyle.block.rootID});
-        if (!response.data) {
+        if (response.code !== 0 || !response.data) {
             // 页签删除
             return false;
         }
@@ -40,13 +41,16 @@ const focusStack = async (app: App, stack: IBackStack) => {
             wnd = getWndByLayout(window.siyuan.layout.centerLayout);
         }
         if (wnd) {
-            const blockInfoParam: IObject = {id: stack.id};
+            const blockInfoParam: {id: string; notebook?: string} = {id: stack.id};
             if (isEncryptedBox(stack.protyle.notebookId)) {
                 blockInfoParam.notebook = stack.protyle.notebookId;
             }
             const info = await fetchSyncPost("/api/block/getBlockInfo", blockInfoParam);
             if (info.code === 3) {
                 showMessage(info.msg);
+                return;
+            }
+            if (info.code !== 0) {
                 return;
             }
             const tab = new Tab({
@@ -134,6 +138,7 @@ const focusStack = async (app: App, stack: IBackStack) => {
                 protyle: stack.protyle,
                 id: stack.zoomId || stack.protyle.block.rootID,
                 isPushBack: false,
+                suppressFocus: false,
                 callback: focusTitle,
             });
         } else {
@@ -166,7 +171,7 @@ const focusStack = async (app: App, stack: IBackStack) => {
     }
     if (stack.protyle.element.parentElement) {
         const response = await fetchSyncPost("/api/block/checkBlockExist", {id: stack.id});
-        if (!response.data) {
+        if (response.code !== 0 || !response.data) {
             // 块被删除
             if (getSelection().rangeCount > 0) {
                 focusByRange(getSelection().getRangeAt(0));
@@ -175,7 +180,7 @@ const focusStack = async (app: App, stack: IBackStack) => {
         }
         // 动态加载导致内容移除 https://github.com/siyuan-note/siyuan/issues/10692
         if (!blockElement && !stack.zoomId && !stack.protyle.scroll.element.classList.contains("fn__none")) {
-            const getDocParam: IObject = {
+            const getDocParam: FileTreeGetDocRequestInput = {
                 id: stack.id,
                 mode: 3,
                 size: window.siyuan.config.editor.dynamicLoadBlocks,
@@ -215,6 +220,7 @@ const focusStack = async (app: App, stack: IBackStack) => {
             protyle: stack.protyle,
             id: stack.zoomId || stack.protyle.block.rootID,
             isPushBack: false,
+            suppressFocus: false,
             callback: () => {
                 Array.from(stack.protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${stack.id}"]`)).find((item: HTMLElement) => {
                     if (!isInEmbedBlock(item)) {
@@ -293,6 +299,32 @@ export const goForward = async (app: App) => {
     if (forwardStack.length === 0) {
         document.querySelector("#barForward")?.classList.add("toolbar__item--disabled");
     }
+};
+
+export const pushBackByClick = (protyle: IProtyle, target: HTMLElement, point?: {x: number, y: number}) => {
+    const blockElement = hasClosestBlock(target);
+    if (!blockElement || !protyle.wysiwyg.element.contains(blockElement) || isInEmbedBlock(blockElement)) {
+        return;
+    }
+    const editElement = getContenteditableElement(blockElement);
+    if (!editElement) {
+        return;
+    }
+    const selection = editElement.ownerDocument.getSelection();
+    let range = selection?.rangeCount ? selection.getRangeAt(0) : undefined;
+    // 触摸结束时选区可能仍在旧位置，按触摸坐标记录文字偏移，且不改变浏览器选区。
+    if (point) {
+        const pointRange = editElement.ownerDocument.caretRangeFromPoint?.(point.x, point.y);
+        if (pointRange && editElement.contains(pointRange.startContainer) && editElement.contains(pointRange.endContainer)) {
+            range = pointRange;
+        }
+    }
+    if (!range || !editElement.contains(range.startContainer) || !editElement.contains(range.endContainer)) {
+        range = editElement.ownerDocument.createRange();
+        range.selectNodeContents(editElement);
+        range.collapse(true);
+    }
+    pushBack(protyle, range, blockElement);
 };
 
 export const pushBack = (protyle: IProtyle, range?: Range, blockElement?: Element) => {

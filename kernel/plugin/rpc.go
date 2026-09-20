@@ -23,11 +23,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lxzan/gws"
 	"github.com/siyuan-note/logging"
+	"github.com/siyuan-note/siyuan/kernel/apicontract"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
@@ -298,67 +300,55 @@ func HandleRpcWebSocket(c *gin.Context) {
 		c.String(http.StatusBadRequest, "This endpoint only accepts WebSocket connections")
 		return
 	}
+	p.serveRPCWebSocket(c.Writer, c.Request)
+}
+
+func (p *KernelPlugin) serveRPCWebSocket(writer http.ResponseWriter, request *http.Request) {
+	name := p.Name
+	if !strings.EqualFold(request.Header.Get("Upgrade"), "websocket") || !strings.Contains(strings.ToLower(request.Header.Get("Connection")), "upgrade") {
+		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(writer, "This endpoint only accepts WebSocket connections")
+		return
+	}
 
 	h := &WsEventHandler{p: p}
 
 	h.onMessage = func(socket *gws.Conn, message *gws.Message) {
 		defer message.Close()
 
-		results := parseRpcRequests(message.Bytes())
-		if results.GlobalError != nil {
-			if respBytes, marshalErr := json.Marshal(results.GlobalError); marshalErr == nil {
-				socket.WriteAsync(gws.OpcodeText, respBytes, func(err error) {
-					if err != nil {
-						logging.LogWarnf("[plugin:%s] RPC WebSocket response write failed: %s", name, err)
-					}
-				})
-			} else {
-				logging.LogErrorf("[plugin:%s] RPC WebSocket response marshal failed: %s", name, marshalErr)
-			}
+		request, err := apicontract.DecodePluginRPC(bytes.NewReader(message.Bytes()))
+		if err != nil {
+			logging.LogErrorf("[plugin:%s] RPC WebSocket request read failed: %s", name, err)
 			return
 		}
-
-		responses := p.dispatchRpcRequests(results.Requests)
-
-		var responseBytes []byte
-		var marshalErr error
-		var needToSend bool
-
-		if !results.Batch {
-			if len(responses) > 0 && responses[0] != nil {
-				if response := responses[0].JsonRpcResponse(); response != nil {
-					needToSend = true
-					responseBytes, marshalErr = json.Marshal(response)
-				}
-			}
-		} else {
-			filtered := filterRpcResponses(responses)
-			if len(filtered) > 0 {
-				needToSend = true
-				responseBytes, marshalErr = json.Marshal(filtered)
-			}
+		response, err := p.dispatchRPCContract(request)
+		if err != nil {
+			logging.LogErrorf("[plugin:%s] RPC response marshal failed: %s", name, err)
+			return
 		}
-
-		if needToSend {
-			if marshalErr != nil {
-				logging.LogErrorf("[plugin:%s] RPC response marshal failed: %s", name, marshalErr)
-				return
-			}
-			socket.WriteAsync(gws.OpcodeText, responseBytes, func(err error) {
-				if err != nil {
-					logging.LogWarnf("[plugin:%s] RPC WebSocket response write failed: %s", name, err)
-				}
-			})
+		if response == nil {
+			return
 		}
+		responseBytes, err := json.Marshal(apicontract.RPCResponseMessage(*response))
+		if err != nil {
+			logging.LogErrorf("[plugin:%s] RPC response marshal failed: %s", name, err)
+			return
+		}
+		socket.WriteAsync(gws.OpcodeText, responseBytes, func(err error) {
+			if err != nil {
+				logging.LogWarnf("[plugin:%s] RPC WebSocket response write failed: %s", name, err)
+			}
+		})
 	}
 
 	upgrader := gws.NewUpgrader(h, &gws.ServerOption{
 		// 校验 Origin，防止跨站 WebSocket 劫持（CSWSH） https://github.com/siyuan-note/siyuan/security/advisories/GHSA-3cc2-h3v6-rqpq
 		Authorize: func(r *http.Request, _ gws.SessionStorage) bool {
-			return util.IsSessionOriginAllowed(r.Header.Get("Origin"), r.Host)
+			return util.IsSessionOriginAllowedRequest(r)
 		},
 	})
-	socket, err := upgrader.Upgrade(c.Writer, c.Request)
+	socket, err := upgrader.Upgrade(writer, request)
 	if err != nil {
 		logging.LogErrorf("[plugin:%s] RPC WebSocket upgrade failed: %s", name, err)
 		return

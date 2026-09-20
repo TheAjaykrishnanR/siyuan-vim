@@ -1,3 +1,4 @@
+import type {BlockQueryRequestInput} from "../../types/api";
 import {Constants} from "../../constants";
 import {hideElements} from "../ui/hideElements";
 import {fetchPost} from "../../util/fetch";
@@ -28,17 +29,18 @@ import {
     queueHeadingNumberRefresh,
     renderHeadingNumbers
 } from "./headingNumber";
-import {updateDocumentBottomEof} from "./documentRange";
+import {containsCurrentSelection, updateDocumentBottomEof} from "./documentRange";
 import {disabledWYSIWYG} from "./disabledWYSIWYG";
 import {getEmbeddedDocInfoResponse} from "./docInfo";
 import {updateWidgetCacheVersion} from "./widgetCache";
 import {normalizeHTMLAssetIFrameSources} from "../../asset/html";
 import {getSavedTabFocusTarget, hasFocusOffsets} from "./focusRestore";
-import {isIPhone} from "./compatibility";
+import {isAndroid, isIPhone, isPhablet} from "./compatibility";
 import {forEachPluginSubscriber} from "../../plugin/EventBusCore";
 import {disposeCustomBlocksInElement, setCustomBlockRootReady} from "../../plugin/customBlockRender";
 import {invalidateTrackedRanges, invalidateTrackedRangesInElement} from "./trackedRange";
 import {areProtylePluginExtensionsEnabled} from "../runtimeCapabilities";
+import {applyFocusFold} from "./viewFold";
 /// #if MOBILE
 import {updateMobileTitleReadonly} from "./setEditMode";
 /// #endif
@@ -214,7 +216,7 @@ export const onGet = (options: {
         return;
     }
 
-    const docInfoParam: IObject = {
+    const docInfoParam: BlockQueryRequestInput = {
         id: options.protyle.block.rootID
     };
     if (isEncryptedBox(options.protyle.notebookId)) {
@@ -266,8 +268,11 @@ const setHTML = (options: {
             !protyle.scroll.shouldKeepLoadedContent() && protyle.contentElement.scrollHeight > REMOVED_OVER_HEIGHT) {
             let removeElement = protyle.wysiwyg.element.firstElementChild as HTMLElement;
             const removeElements = [];
-            while (protyle.wysiwyg.element.childElementCount > 2 && removeElements &&
+            while (protyle.wysiwyg.element.childElementCount - removeElements.length > 2 &&
             protyle.wysiwyg.element.lastElementChild !== removeElement) {
+                if (containsCurrentSelection(removeElement)) {
+                    break;
+                }
                 if (protyle.contentElement.scrollHeight - removeElement.offsetTop > REMOVED_OVER_HEIGHT) {
                     removeElements.push(removeElement);
                 } else {
@@ -275,15 +280,17 @@ const setHTML = (options: {
                 }
                 removeElement = removeElement.nextElementSibling as HTMLElement;
             }
-            const lastRemoveTop = removeElement.getBoundingClientRect().top;
-            removeElements.forEach(item => {
-                invalidateTrackedRangesInElement(protyle, item);
-                disposeCustomBlocksInElement(item);
-                item.remove();
-            });
-            protyle.contentElement.scrollTop = protyle.contentElement.scrollTop + (removeElement.getBoundingClientRect().top - lastRemoveTop) - 1;
-            protyle.scroll.lastScrollTop = protyle.contentElement.scrollTop;
-            hideElements(["toolbar"], protyle);
+            if (removeElements.length > 0) {
+                const lastRemoveTop = removeElement.getBoundingClientRect().top;
+                removeElements.forEach(item => {
+                    invalidateTrackedRangesInElement(protyle, item);
+                    disposeCustomBlocksInElement(item);
+                    item.remove();
+                });
+                protyle.contentElement.scrollTop = protyle.contentElement.scrollTop + (removeElement.getBoundingClientRect().top - lastRemoveTop) - 1;
+                protyle.scroll.lastScrollTop = protyle.contentElement.scrollTop;
+                hideElements(["toolbar"], protyle);
+            }
         }
         protyle.wysiwyg.element.insertAdjacentHTML("beforeend", options.content);
     } else if (options.action.includes(Constants.CB_GET_BEFORE)) {
@@ -300,6 +307,9 @@ const setHTML = (options: {
             let scrollHeight = protyle.contentElement.scrollHeight;
             let lastElement = protyle.wysiwyg.element.lastElementChild;
             while (childCount > 2 && scrollHeight > REMOVED_OVER_HEIGHT && lastElement.getBoundingClientRect().top > window.innerHeight) {
+                if (containsCurrentSelection(lastElement)) {
+                    break;
+                }
                 removeElements.push(lastElement);
                 lastElement = lastElement.previousElementSibling;
                 childCount--;
@@ -324,6 +334,7 @@ const setHTML = (options: {
         }
     }
 
+    applyFocusFold(protyle);
     if (options.eof) {
         const eofElement = options.action.includes(Constants.CB_GET_BEFORE) ?
             protyle.wysiwyg.element.firstElementChild : protyle.wysiwyg.element.lastElementChild;
@@ -532,7 +543,8 @@ export const enableProtyle = (protyle: IProtyle) => {
         updateMobileTitleReadonly(protyle);
         /// #endif
     }
-    protyle.wysiwyg.element.setAttribute("contenteditable", isIPhone() ? "false" : "true");
+    // 解除只读时保留 Android 和 iPhone 的正文编辑边界，结构容器保持不可编辑。
+    protyle.wysiwyg.element.setAttribute("contenteditable", (isIPhone() || isAndroid()) ? "false" : "true");
     protyle.wysiwyg.element.style.userSelect = "";
     // 用于区分移动端样式
     protyle.wysiwyg.element.setAttribute("data-readonly", "false");
@@ -626,6 +638,22 @@ const focusElementById = (protyle: IProtyle, action: string[], scrollAttr?: IScr
             /// #endif
         }, focusElement.getAttribute("data-type") === "NodeCodeBlock" ? Constants.TIMEOUT_TRANSITION : 0);
     }
+    /// #if !MOBILE
+    else if (isPhablet() && !action.includes(Constants.CB_GET_UNUNDO) &&
+        !action.includes(Constants.CB_GET_UNCHANGEID) &&
+        (action.includes(Constants.CB_GET_FOCUS) || action.includes(Constants.CB_GET_FOCUSFIRST) ||
+            action.includes(Constants.CB_GET_SCROLL) || action.includes(Constants.CB_GET_HL))) {
+        // 平板浏览时不聚焦编辑器，仍需记录导航位置，并避免读取其他文档的选区。
+        const editElement = focusElement.classList.contains("protyle-title__input") ?
+            focusElement : getContenteditableElement(focusElement);
+        if (editElement) {
+            const range = document.createRange();
+            range.selectNodeContents(editElement);
+            range.collapse(true);
+            pushBack(protyle, range, focusElement);
+        }
+    }
+    /// #endif
     if (hasScrollTop) {
         protyle.contentElement.scrollTop = scrollAttr.scrollTop;
     }

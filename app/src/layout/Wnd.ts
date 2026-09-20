@@ -48,7 +48,7 @@ import {newCenterEmptyTab, resizeTabs, setTabPosition} from "./tabUtil";
 import {setPosition} from "../util/setPosition";
 import {clearOBG} from "./dock/util";
 import {recordBeforeResizeTop} from "../protyle/util/resize";
-import {sanitizeClosedTabs, setStorageVal} from "../protyle/util/compatibility";
+import {isPhablet, sanitizeClosedTabs, setStorageVal} from "../protyle/util/compatibility";
 import {setTitle} from "../util/processTitle";
 import {dragOverScroll} from "../boot/globalEvent/dragover";
 import {
@@ -239,7 +239,18 @@ export class Wnd {
             this.headersElement.scrollLeft = this.headersElement.scrollLeft + event.deltaY;
         }, {passive: true});
 
+        let lastClickedTab: HTMLElement;
         this.headersElement.parentElement.addEventListener("click", (event) => {
+            const tabElement = (event.target as Element).closest<HTMLElement>('[data-type="tab-header"][data-id]');
+            const clickedTab = tabElement && this.headersElement.contains(tabElement) ? tabElement : undefined;
+            // 连续点击按页签配对，浏览器的点击次数可以超过两次。
+            if (event.button === 0 && event.detail > 1 && clickedTab && clickedTab === lastClickedTab &&
+                window.siyuan.config.fileTree.closeTabOnDoubleClick) {
+                lastClickedTab = undefined;
+                this.removeTab(clickedTab.getAttribute("data-id"));
+                return;
+            }
+            lastClickedTab = event.button === 0 ? clickedTab : undefined;
             let target = event.target as HTMLElement;
             while (target && !target.isEqualNode(this.headersElement)) {
                 if (target.classList.contains("block__icon") && target.getAttribute("data-type") === "new") {
@@ -266,9 +277,7 @@ export class Wnd {
             if (!tabElement || !this.headersElement.contains(tabElement)) {
                 return;
             }
-            if (window.siyuan.config.fileTree.closeTabOnDoubleClick) {
-                this.removeTab(tabElement.getAttribute("data-id"));
-            } else if (window.siyuan.config.fileTree.openFilesUseCurrentTab) {
+            if (!window.siyuan.config.fileTree.closeTabOnDoubleClick && window.siyuan.config.fileTree.openFilesUseCurrentTab) {
                 tabElement.classList.remove("item--unupdate");
             }
         });
@@ -420,7 +429,7 @@ export class Wnd {
                         openFileById({
                             app,
                             id: item,
-                            action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
+                            action: isPhablet() ? [Constants.CB_GET_SCROLL] : [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
                             forceCurrentWindow: true,
                         });
                     }
@@ -735,7 +744,7 @@ export class Wnd {
                     openFileById({
                         app: this.app,
                         id: keepCursorId,
-                        action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
+                        action: isPhablet() ? [Constants.CB_GET_SCROLL] : [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
                     });
                 }
                 currentTab.headElement.removeAttribute("keep-cursor");
@@ -744,7 +753,7 @@ export class Wnd {
             if (update) {
                 updatePanelByEditor({
                     protyle: currentTab.model.editor.protyle,
-                    focus: true,
+                    focus: !isPhablet(),
                     pushBackStack: pushBack,
                     reload: false,
                     resize,
@@ -895,6 +904,7 @@ export class Wnd {
         window.siyuan.menus.menu.popup({
             x: rect.left + rect.width,
             y: rect.top + rect.height,
+            h: rect.height,
             isLeft: true
         });
     }
@@ -950,13 +960,13 @@ export class Wnd {
             }
             window.siyuan.storage[Constants.LOCAL_CLOSED_TABS] =
                 sanitizeClosedTabs(window.siyuan.storage[Constants.LOCAL_CLOSED_TABS]);
-            if (window.siyuan.storage[Constants.LOCAL_CLOSED_TABS].length > Constants.SIZE_UNDO) {
-                window.siyuan.storage[Constants.LOCAL_CLOSED_TABS].pop();
-            }
             if (item.headElement && !isSensitiveTab(item)) {
                 const tabJSON = {};
                 layoutToJSON(item, tabJSON);
                 window.siyuan.storage[Constants.LOCAL_CLOSED_TABS].push(tabJSON);
+            }
+            while (window.siyuan.storage[Constants.LOCAL_CLOSED_TABS].length > Constants.SIZE_UNDO) {
+                window.siyuan.storage[Constants.LOCAL_CLOSED_TABS].shift();
             }
             setStorageVal(Constants.LOCAL_CLOSED_TABS, window.siyuan.storage[Constants.LOCAL_CLOSED_TABS]);
             if (item.model instanceof Custom && item.model.beforeDestroy) {

@@ -8,6 +8,7 @@ import {
     cellValueIsEmpty,
     genCellValueByElement,
     getCellText,
+    getCellValueText,
     getTypeByCellElement,
     popTextCell,
     renderCell,
@@ -764,6 +765,25 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             event.stopPropagation();
             return true;
         } else if (type === "copy") {
+            if (target.hasAttribute("data-rollup-value")) {
+                const values: IAVCellValue[] = JSON.parse(decodeURIComponent(target.dataset.rollupValue));
+                writeText(values.map(value => {
+                    if (value.type === "block") {
+                        return value.block?.content || window.siyuan.languages.untitled;
+                    }
+                    if (value.type === "checkbox") {
+                        return value.checkbox?.checked ? "true" : "false";
+                    }
+                    if (value.type === "mAsset") {
+                        return (value.mAsset || []).map(asset => asset.content).join(", ");
+                    }
+                    return getCellValueText(value);
+                }).join(", "));
+                showMessage(window.siyuan.languages.copied);
+                event.preventDefault();
+                event.stopPropagation();
+                return true;
+            }
             const cellElement = hasClosestByClassName(target, "av__cell") as HTMLElement;
             const source = getAVTextSource(genCellValueByElement("text", cellElement));
             if (source.kind === "rich") {
@@ -785,6 +805,14 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             event.preventDefault();
             event.stopPropagation();
             return true;
+        } else if (type === "av-search-close") {
+            const searchElement = blockElement.querySelector<HTMLElement>('[data-type="av-search"]');
+            searchElement.textContent = "";
+            searchElement.blur();
+            searchElement.dispatchEvent(new Event("input", {bubbles: true}));
+            event.preventDefault();
+            event.stopPropagation();
+            return true;
         } else if (type === "av-search-icon") {
             const searchElement = blockElement.querySelector('div[data-type="av-search"]') as HTMLInputElement;
             searchElement.style.width = "128px";
@@ -792,7 +820,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             searchElement.style.marginRight = "1em";
             const viewsElement = hasClosestByClassName(searchElement, "av__views");
             if (viewsElement) {
-                viewsElement.classList.add("av__views--show");
+                viewsElement.classList.add("av__views--show", "av__views--search");
             }
             if (window.JSAndroid && window.JSAndroid.showKeyboard || window.JSHarmony && window.JSHarmony.showKeyboard) {
                 callMobileAppShowKeyboard();

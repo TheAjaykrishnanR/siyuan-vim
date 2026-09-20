@@ -24,6 +24,7 @@ import (
 	"html"
 	"io"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,7 +75,7 @@ second paragraph
 - Modify: block.update replaces ONE block's content with new markdown — it does NOT create or append new blocks. To both modify and add, call block.update first, then block.append/prepend/insert as separate calls.
 - Organize: document.move (full document), document.rename (title), block.move (single content block), document.delete.
 - Inbox (cloud-synced clippings, messages, and audio/video/file attachments; requires subscription): inbox.list (paged, summaries only) → inbox.get (read full content to judge how to file it) → inbox.convert (move one or many into local documents under a notebook, auto-deleting the cloud originals on success). Failed conversions are left in the inbox for retry. If a request fails with an auth/subscription error, report it honestly — do not retry.
-- Attributes: attr.get/set on any block. Database/attribute views: database.create (database block with ordered fields), database.item_add (rows), database.key_add (columns), database.render (view). Create database blocks via database.create, never via the file tool or generic block insertion.
+- Attributes: attr.get/set on any block. Database/attribute views: database.create (database block with ordered fields), database.item_add (rows), database.key_add (columns), database.key_update (field configuration: name/type/icon/description, number/date format, display template, date defaults, select options, relation and rollup settings; inspect keys first, send exactly one config setting per call, and render to verify), database.key_set_template (existing template field formulas; use .action{add .Number 1} for a number field plus one, then render to verify; do not write computed template cells with item_update), database.render (view). Create database blocks via database.create, never via the file tool or generic block insertion.
 - Icons: attr.set only changes a document BLOCK's icon — it cannot set a NOTEBOOK's icon. For notebooks use notebook.set_icon (a specific emoji) or notebook.random_icon (random emoji, optionally scoped by id; omit id to randomize ALL notebooks).
 - Document images: image.list finds local images referenced by a document; call image.analyze on a returned asset path to attach it to the current model for understanding. image.generate creates a reusable image asset for insertion or other document operations.
 - HTML components: asset.create_html writes HTML content as an asset and inserts a sandboxed IFrame block in one operation. Prefer self-contained HTML; only use remote resources when the user requests them.
@@ -91,7 +92,7 @@ second paragraph
 
 ## Formatting
 - Inline formatting uses standard markdown: **bold**, *italic*, ~~strikethrough~~, ==mark==, and "code" (backticks).
-- In markdown written to SiYuan blocks, block references must include anchor text. Use ((<blockID> "<static anchor text>")) for fixed text, or ((<blockID> '<dynamic anchor text>')) for text that follows the target block's content. Never use ((<blockID>)) or [[<blockID>]]. These forms are for note content; in chat responses use [title](siyuan://blocks/<blockID>).
+- In markdown written to SiYuan blocks, block references must include anchor text. Use ((<blockID> "<static anchor text>")) for fixed text, which is required whenever the anchor text differs from the referenced block's content. Use ((<blockID> '<dynamic anchor text>')) for text that follows the target block's content, so only when the anchor text is the target block's own content. Never use ((<blockID>)) or [[<blockID>]]. These forms are for note content; in chat responses use [title](siyuan://blocks/<blockID>).
 - For text styling that markdown cannot express (color, background, font size), use SiYuan text marks.
   The syntax requires a leading data-type="text" attribute — WITHOUT it the HTML is escaped and shown as literal text:
   - Text color:      <span data-type="text" style="color: #ff0000;">red text</span>
@@ -163,6 +164,8 @@ const (
 	doomLoopWarnThreshold = 3
 	// doomLoopStopThreshold 是相同签名连续命中时终止 agent 的阈值。
 	doomLoopStopThreshold = 5
+	// fallbackQuestionTimeout 是确认超时时间非法（负数）时 question 工具的兜底等待时长。
+	fallbackQuestionTimeout = 5 * time.Minute
 )
 
 // toolSignatureKeys 列出各工具里真正"区分一次调用"的关键参数。
@@ -1417,7 +1420,7 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 						resultStr = toolInputErr.Error()
 						isErr = true
 					} else if tc.Function.Name == "question" {
-						resultStr = handleQuestion(ctx, args, roundID, ch, 5*time.Minute)
+						resultStr = handleQuestion(ctx, args, roundID, ch, resolveQuestionTimeout(confirmTimeout))
 					} else if registration.isBrowser() {
 						executed := handleBrowserCapability(ctx, tc, registration, args, ch,
 							resolveBrowserCapabilityTimeout(confirmTimeout))
@@ -1557,34 +1560,92 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 }
 
 func GenerateTitle(client *openai.Client, apiBaseURL, protocol, model, userMsg, language string) string {
+	const (
+		initialMaxCompletionTokens  = 50
+		fallbackMaxCompletionTokens = 512
+	)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	ctx = util.ContextWithOpenAIResponsesBaseURL(ctx, apiBaseURL)
-	resp, err := util.CreateOpenAICompletion(ctx, client, protocol, openai.ChatCompletionRequest{
+	request := openai.ChatCompletionRequest{
 		Model: model,
 		Messages: []openai.ChatCompletionMessage{
 			{Role: openai.ChatMessageRoleSystem, Content: "You are a title generator. Below is the first message of a conversation. Write a concise title (under 12 words) that summarizes the topic. Output ONLY the title, no other text. Reply in the same language as the user's message. If you cannot determine the language, reply in " + util.I18nTerm(language, "_label") + "."},
 			{Role: openai.ChatMessageRoleUser, Content: "Conversation starts with: " + userMsg},
 		},
-		MaxCompletionTokens: 50,
+		MaxCompletionTokens: initialMaxCompletionTokens,
 		Temperature:         1,
-	}, nil)
+		// 标题不需要模型推理，把有限的输出预算留给最终标题，避免思考模型耗尽预算后没有可见正文。
+		ReasoningEffort: "none",
+	}
+	resp, err := util.CreateOpenAICompletion(ctx, client, protocol, request, nil)
+	if isReasoningEffortUnsupportedError(err) || titleCompletionExhausted(resp, err) {
+		// 兼容不接受或忽略 reasoning_effort 的端点，并为无法关闭思考的模型预留推理预算。
+		request.ReasoningEffort = ""
+		request.MaxCompletionTokens = fallbackMaxCompletionTokens
+		resp, err = util.CreateOpenAICompletion(ctx, client, protocol, request, nil)
+	}
 	if err != nil || len(resp.Choices) == 0 {
-		runes := []rune(userMsg)
-		if len(runes) > 30 {
-			return string(runes[:30]) + "..."
-		}
-		return userMsg
+		return titleFallback(userMsg)
 	}
 	title := strings.TrimSpace(resp.Choices[0].Message.Content)
 	if title == "" {
-		runes := []rune(userMsg)
-		if len(runes) > 30 {
-			return string(runes[:30]) + "..."
-		}
-		return userMsg
+		return titleFallback(userMsg)
 	}
 	return title
+}
+
+func titleCompletionExhausted(resp openai.ChatCompletionResponse, err error) bool {
+	return err == nil && len(resp.Choices) > 0 && resp.Choices[0].FinishReason == openai.FinishReasonLength &&
+		strings.TrimSpace(resp.Choices[0].Message.Content) == ""
+}
+
+func isReasoningEffortUnsupportedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *openai.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.HTTPStatusCode != 0 && apiErr.HTTPStatusCode != http.StatusBadRequest &&
+		apiErr.HTTPStatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	param := ""
+	if apiErr.Param != nil {
+		param = strings.ToLower(strings.TrimSpace(*apiErr.Param))
+	}
+	if containsReasoningEffortParameter(param) {
+		return true
+	}
+	message := strings.ToLower(apiErr.Message)
+	if !containsReasoningEffortParameter(message) {
+		return false
+	}
+	for _, marker := range []string{"unsupported", "not support", "unknown", "unrecognized", "not allowed", "invalid"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsReasoningEffortParameter(value string) bool {
+	for _, name := range []string{"reasoning_effort", "reasoning.effort", "reasoning effort"} {
+		if strings.Contains(value, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func titleFallback(userMsg string) string {
+	runes := []rune(userMsg)
+	if len(runes) > 30 {
+		return string(runes[:30]) + "..."
+	}
+	return userMsg
 }
 
 // safeActions 按 action 字符串全局匹配，命中即免 UI 确认。
@@ -1764,7 +1825,7 @@ func handleQuestion(ctx context.Context, args map[string]any, roundID string, ch
 		} else {
 			return "Question cancelled."
 		}
-	case <-time.After(timeout):
+	case <-optionalAgentDeadline(timeout):
 		if acceptedAnswer, accepted := finishQuestionWait(questionID, ch2); accepted {
 			answer = acceptedAnswer
 		} else {
@@ -1830,7 +1891,16 @@ func optionalAgentDeadline(timeout time.Duration) <-chan time.Time {
 
 func resolveBrowserCapabilityTimeout(confirmTimeout time.Duration) time.Duration {
 	if confirmTimeout <= 0 {
-		return 120 * time.Second
+		return time.Duration(conf.DefaultAgentConfirmTimeout) * time.Second
+	}
+	return confirmTimeout
+}
+
+// resolveQuestionTimeout 解析 question 工具等待用户作答的时长：确认超时时间为 0 时一直等待，
+// 其余情况沿用确认超时时间（调用方已把负数兜底为默认值），因此默认配置下为 600 秒。
+func resolveQuestionTimeout(confirmTimeout time.Duration) time.Duration {
+	if confirmTimeout <= 0 {
+		return fallbackQuestionTimeout
 	}
 	return confirmTimeout
 }

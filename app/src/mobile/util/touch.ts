@@ -20,6 +20,7 @@ import {
 import {stripSemanticMarkersFromRangeText} from "../../protyle/util/inlineElementMarker";
 import {getTouchAxis, shouldStartLongPressMultiSelect} from "./touchGesture";
 import {getMobileBlockSelectionElement} from "./blockSelection";
+import {updateMultiSelectToolbar} from "./multiSelectToolbar";
 import {
     getOpeningSidebar,
     getOpenSidebarReleaseAction,
@@ -213,8 +214,8 @@ export const handleTouchEnd = (event: TouchEvent) => {
                     blockParentElement.classList.remove("protyle-wysiwyg--select");
                 }
                 blockElement.classList.toggle("protyle-wysiwyg--select");
-                editor.protyle.toolbar.subElement.querySelector(".multiSelectCount").textContent =
-                    editor.protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select").length.toString();
+                updateMultiSelectToolbar(editor.protyle.toolbar.subElement,
+                    editor.protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select").length);
                 event.stopImmediatePropagation();
                 event.preventDefault();
             }
@@ -354,6 +355,7 @@ export const handleTouchStart = (event: TouchEvent) => {
     if ((otherTouchElement && otherTouchElement.parentElement.classList.contains("b3-chips__doctag")) ||
         target.closest(".protyle-gutters") ||
         target.closest(".protyle-action") ||
+        target.closest(".protyle-action__drag") ||
         target.closest(".av__gallery") ||
         (target.tagName === "IMG" && target.style.cursor === "move" && target.parentElement.classList.contains("protyle-background__img"))) {
         clientX = null;
@@ -524,6 +526,13 @@ export const handleTouchMove = (event: TouchEvent) => {
         }
         if (hasClosestByAttribute(target, "id", "menu", true)) {
             return;
+        }
+        if (hasClosestByClassName(target, "agent-chat__messages", true)) {
+            // 消息内容可沿手势方向横向滚动时，本次手势持续交给内容，抵达边缘后可再次滑动返回。
+            if (scrollBlock || isHorizontalScrollable(target, xDiff)) {
+                scrollBlock = true;
+                return;
+            }
         }
         if (sideMaskElement.classList.contains("fn__none") || getTargetSidebar(target)) {
             let scrollElement = hasClosestByAttribute(target, "data-type", "NodeCodeBlock");

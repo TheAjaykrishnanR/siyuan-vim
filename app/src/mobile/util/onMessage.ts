@@ -1,6 +1,9 @@
 import {openMobileFileById} from "../editor";
+import {MOBILE_BARS_CONFIG_KEY} from "./mobileBarsConfig";
+import {showMobileBars} from "./mobileBars";
 import {
     forceQuit,
+    processBacklinkIndexCommit,
     processSync,
     progressLoading,
     setDefRefCount,
@@ -24,6 +27,8 @@ import {applyCloudUserState} from "../../config/tabs/accountUi";
 import {isInMobileApp} from "../../protyle/util/compatibility";
 import {handleMobileKernelExit} from "./kernelExit";
 import {sanitizeKernelHTML} from "../../util/hostCapabilities";
+import {applyEntryVisibility} from "../../config/entryVisibility/runtime";
+import {removeMobileBacklinkContent} from "./backlinkPanels";
 
 let statusTimeout: number;
 const statusElement = document.querySelector("#status") as HTMLElement;
@@ -35,6 +40,12 @@ const dispatchMobileSidePanelConfigChange = () => {
 export const onMessage = (app: App, data: IWebSocketData) => {
     if (data) {
         switch (data.cmd) {
+            case "databaseIndexCommit":
+                processBacklinkIndexCommit(data.data);
+                break;
+            case "setEntryVisibility":
+                applyEntryVisibility(data.data);
+                break;
             case "logoutAuth":
                 redirectToCheckAuth();
                 break;
@@ -101,6 +112,7 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 break;
             case "closeBox":
             case "removeBox": {
+                removeMobileBacklinkContent({notebookId: data.data.box});
                 window.siyuan.mobile.tabs?.removeNotebook(data.data.box);
                 break;
             }
@@ -108,6 +120,7 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 void activateOnboarding(app, data.data);
                 break;
             case "removeDoc":
+                removeMobileBacklinkContent({rootIDs: data.data.ids});
                 window.siyuan.mobile.tabs?.removeRoots(data.data.ids);
                 if (window.siyuan.config.onboarding?.newUser && !window.siyuan.config.onboarding.dismissed &&
                     data.data.ids.includes(window.siyuan.config.onboarding.documentID)) {
@@ -116,6 +129,9 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 break;
             case "setLocalStorageVal":
                 window.siyuan.storage[data.data.key] = data.data.val;
+                if (data.data.key === MOBILE_BARS_CONFIG_KEY) {
+                    showMobileBars();
+                }
                 if (data.data.key === Constants.LOCAL_MOBILE_BOTTOM_BAR) {
                     renderMobileBottomBar();
                 }
@@ -127,6 +143,9 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 Object.keys(data.data.keyVals).forEach((k) => {
                     window.siyuan.storage[k] = data.data.keyVals[k];
                 });
+                if (Object.prototype.hasOwnProperty.call(data.data.keyVals, MOBILE_BARS_CONFIG_KEY)) {
+                    showMobileBars();
+                }
                 if (Object.prototype.hasOwnProperty.call(data.data.keyVals, Constants.LOCAL_MOBILE_BOTTOM_BAR)) {
                     renderMobileBottomBar();
                 }
@@ -136,6 +155,9 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 break;
             case "removeLocalStorageVal":
                 delete window.siyuan.storage[data.data.key];
+                if (data.data.key === MOBILE_BARS_CONFIG_KEY) {
+                    showMobileBars();
+                }
                 if (data.data.key === Constants.LOCAL_MOBILE_BOTTOM_BAR) {
                     renderMobileBottomBar();
                 }
@@ -147,6 +169,9 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 data.data.keys.forEach((k: string) => {
                     delete window.siyuan.storage[k];
                 });
+                if (data.data.keys.includes(MOBILE_BARS_CONFIG_KEY)) {
+                    showMobileBars();
+                }
                 if (data.data.keys.includes(Constants.LOCAL_MOBILE_BOTTOM_BAR)) {
                     renderMobileBottomBar();
                 }

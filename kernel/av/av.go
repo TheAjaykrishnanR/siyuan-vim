@@ -689,7 +689,7 @@ func GetAttributeViewContent(avID string) (content string) {
 		return
 	}
 
-	attrView, err := ParseAttributeView(avID)
+	attrView, err := parseAttributeView(avID, false)
 	if err != nil {
 		logging.LogErrorf("parse attribute view [%s] failed: %s", avID, err)
 		return
@@ -701,7 +701,7 @@ func GetAttributeViewContent(avID string) (content string) {
 }
 
 func GetAttributeViewContentByPath(avJSONPath string) (content string) {
-	attrView, err := ParseAttributeViewByPath(avJSONPath)
+	attrView, err := parseAttributeViewByPathInBoxWithOptions(avJSONPath, avBoxIDFromPath(avJSONPath), false)
 	if err != nil {
 		logging.LogErrorf("parse attribute view [%s] failed: %s", avJSONPath, err)
 		return
@@ -746,6 +746,10 @@ func IsAttributeViewExist(avID string) bool {
 }
 
 func ParseAttributeView(avID string) (ret *AttributeView, err error) {
+	return parseAttributeView(avID, true)
+}
+
+func parseAttributeView(avID string, resolveColors bool) (ret *AttributeView, err error) {
 	if !ast.IsNodeIDPattern(avID) {
 		err = ErrInvalidAttributeViewID
 		return
@@ -756,15 +760,24 @@ func ParseAttributeView(avID string) (ret *AttributeView, err error) {
 	if avJSONPath == "" {
 		// 文件不存在，可能是首次创建，按全局路径返回（由调用方处理）
 		avJSONPath = GetAttributeViewDataPath(avID)
-		return parseAttributeViewByPathInBox(avJSONPath, "")
+		return parseAttributeViewByPathInBoxWithOptions(avJSONPath, "", resolveColors)
 	}
 	if boxID != "" {
 		SetAVBoxID(avID, boxID)
 	}
-	return parseAttributeViewByPathInBox(avJSONPath, boxID)
+	return parseAttributeViewByPathInBoxWithOptions(avJSONPath, boxID, resolveColors)
 }
 
 func ParseAttributeViewInBox(avID, boxID string) (ret *AttributeView, err error) {
+	return parseAttributeViewInBox(avID, boxID, true)
+}
+
+// ParseAttributeViewForIndexInBox 读取索引所需的数据并保留解密认证，不解析显示配色，避免等待同步自身结束。
+func ParseAttributeViewForIndexInBox(avID, boxID string) (ret *AttributeView, err error) {
+	return parseAttributeViewInBox(avID, boxID, false)
+}
+
+func parseAttributeViewInBox(avID, boxID string, resolveColors bool) (ret *AttributeView, err error) {
 	if !ast.IsNodeIDPattern(avID) {
 		err = ErrInvalidAttributeViewID
 		return
@@ -784,7 +797,7 @@ func ParseAttributeViewInBox(avID, boxID string) (ret *AttributeView, err error)
 			SetAVBoxID(avID, boxID)
 		}
 	}
-	return parseAttributeViewByPathInBox(avJSONPath, avBoxID)
+	return parseAttributeViewByPathInBoxWithOptions(avJSONPath, avBoxID, resolveColors)
 }
 
 func ParseAttributeViewByPath(avJSONPath string) (ret *AttributeView, err error) {
@@ -849,6 +862,18 @@ func parseAttributeViewByPathInBoxWithOptions(avJSONPath, boxID string, resolveC
 		dataVersion = cache.SetAVDataWithVersionInBox(avID, boxID, data)
 	}
 
+	ret, err = ParseAttributeViewData(avID, data)
+	if nil == err {
+		if resolveColors {
+			ret.ResolveDirectColors()
+			cache.SetAVSearchDataInBox(avID, boxID, dataVersion, newAttributeViewSearchInfo(ret))
+		}
+	}
+	return
+}
+
+// ParseAttributeViewData 解析已经完成解密认证的数据库数据，复用现有格式兼容与规范化处理。
+func ParseAttributeViewData(avID string, data []byte) (ret *AttributeView, err error) {
 	ret = &AttributeView{RenderedViewables: map[string]Viewable{}}
 	if err = json.Unmarshal(data, ret); err != nil {
 		if strings.Contains(err.Error(), ".relation.contents of type av.Value") {
@@ -912,16 +937,22 @@ func parseAttributeViewByPathInBoxWithOptions(avJSONPath, boxID string, resolveC
 	if nil == err {
 		err = ret.NormalizeRichText()
 	}
-	if nil == err {
-		if resolveColors {
-			ret.ResolveDirectColors()
-			cache.SetAVSearchDataInBox(avID, boxID, dataVersion, newAttributeViewSearchInfo(ret))
-		}
-	}
 	return
 }
 
 func SaveAttributeView(av *AttributeView) (err error) {
+	return saveAttributeView(av, nil)
+}
+
+// SaveAttributeViewIfUnchanged 仅在全局数据库仍与扫描源一致时原子保存。
+func SaveAttributeViewIfUnchanged(av *AttributeView, original []byte) error {
+	if original == nil {
+		return errors.New("attribute view source is required")
+	}
+	return saveAttributeView(av, original)
+}
+
+func saveAttributeView(av *AttributeView, original []byte) (err error) {
 	if !ast.IsNodeIDPattern(av.ID) {
 		err = ErrInvalidAttributeViewID
 		logging.LogErrorf("save attribute view failed: %s", err)
@@ -1004,6 +1035,19 @@ func SaveAttributeView(av *AttributeView) (err error) {
 		// 文件不存在（首次创建），使用全局路径，boxID 为空（普通 box）
 		// 加密笔记本的首次创建由 handler 层通过 SetAVBoxID 预设路径
 		avJSONPath = GetAttributeViewDataPath(av.ID)
+	}
+	if original != nil {
+		if avBoxID != "" {
+			return errors.New("conditional replacement of encrypted attribute views is not supported")
+		}
+		if err = util.WriteFileIfUnchanged(avJSONPath, original, data); err != nil {
+			return err
+		}
+		cacheAttributeViewData(av, avBoxID, data)
+		if RichTextSpec <= av.Spec {
+			NotifyAttributeViewSaved(av.ID, avBoxID)
+		}
+		return nil
 	}
 	if cachedData, version, ok := cache.GetAVDataWithVersionInBox(av.ID, avBoxID); ok {
 		if len(cachedData) == len(data) && bytes.Equal(cachedData, data) {
