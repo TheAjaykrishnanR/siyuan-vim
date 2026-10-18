@@ -26,14 +26,15 @@ type AVPrimaryValuesData struct {
 	Total    int          `json:"total"`
 }
 type AVRelationCandidatesData struct {
-	Name         string                        `json:"name"`
-	BlockIDs     []string                      `json:"blockIDs"`
-	CustomColors []*AVAttributeViewCustomColor `json:"customColors"`
-	NotebookID   string                        `json:"notebookID"`
-	Columns      []*AVTableColumn              `json:"columns"`
-	SelectedRows []*AVTableRow                 `json:"selectedRows"`
-	Rows         []*AVTableRow                 `json:"rows"`
-	Total        int                           `json:"total"`
+	NewItemPreview *AVRelationItemPreview        `json:"newItemPreview,omitempty"`
+	Name           string                        `json:"name"`
+	BlockIDs       []string                      `json:"blockIDs"`
+	CustomColors   []*AVAttributeViewCustomColor `json:"customColors"`
+	NotebookID     string                        `json:"notebookID"`
+	Columns        []*AVTableColumn              `json:"columns"`
+	SelectedRows   []*AVTableRow                 `json:"selectedRows"`
+	Rows           []*AVTableRow                 `json:"rows"`
+	Total          int                           `json:"total"`
 }
 type AVFilterSortData struct {
 	Filters []*AVViewFilter `json:"filters"`
@@ -61,7 +62,7 @@ type AVArchiveRenderData struct {
 	CustomColors           []*AVAttributeViewCustomColor `json:"customColors"`
 	ColorOrder             []string                      `json:"colorOrder"`
 	UsedCustomColorIndexes []int                         `json:"usedCustomColorIndexes"`
-	ViewType               string                        `json:"viewType" api:"enum=table|gallery|kanban"`
+	ViewType               string                        `json:"viewType" api:"enum=table|list|gallery|kanban|calendar"`
 	ViewID                 string                        `json:"viewID"`
 	Views                  []*AVViewData                 `json:"views"`
 	View                   AVViewInstance                `json:"view"`

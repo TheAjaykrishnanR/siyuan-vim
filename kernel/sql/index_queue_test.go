@@ -17,8 +17,11 @@
 package sql
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/88250/lute"
@@ -44,8 +47,8 @@ func TestIndexQueueRenameRecovery(t *testing.T) {
 	}
 	for _, action := range []string{"rename", "rename_doc"} {
 		entry := dbOpToIndexEntry(&dbQueueOperation{action: action, indexTree: tree})
-		op := indexEntryToOp(*entry, lute.New(), "test rename recovery")
-		if op == nil || op.action != action || op.indexTree.HPath != "/Latest" {
+		op, err := indexEntryToOp(*entry, lute.New(), "test rename recovery")
+		if err != nil || op == nil || op.action != action || op.indexTree.HPath != "/Latest" {
 			t.Fatalf("rename queue format did not recover: %s, %#v", action, op)
 		}
 	}
@@ -118,6 +121,86 @@ func TestRecoverIndexQueueAfterRestart(t *testing.T) {
 	recoverIndexQueue()
 	if ops, _ = getOperations(); 0 != len(ops) {
 		t.Fatalf("unexpected repeated recovered operations: %#v", ops)
+	}
+}
+
+func TestRecoverIndexQueueLoadsTreesOnlyWhenExecuted(t *testing.T) {
+	prepareIndexQueueTest(t)
+	var data bytes.Buffer
+	for range 4380 {
+		entry := indexEntry{Action: "index", ID: "20260922000000-index01", Box: "20260922000000-index02", Path: "/20260922000000-index01.sy"}
+		if err := json.NewEncoder(&data).Encode(entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(util.QueueDir, "index.queue"), data.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+	initIndexQueue()
+	recoverIndexQueue()
+	if len(operationQueue) != 4380 {
+		t.Fatalf("recovery lost descriptors before their documents could be read: %d", len(operationQueue))
+	}
+	for _, op := range operationQueue {
+		if op.recoveryEntry == nil || op.indexTree != nil || op.upsertTree != nil {
+			t.Fatal("recovery retained a document tree")
+		}
+	}
+
+	// 新编辑保留在恢复任务之后，不能覆盖恢复操作或解引用尚未加载的文档树。
+	tree := &parse.Tree{ID: "20260922000000-index01", Box: "20260922000000-index02", Path: "/20260922000000-index01.sy"}
+	IndexTreeQueue(tree)
+	IndexTreeQueue(tree)
+	if len(operationQueue) != 4381 || operationQueue[4380].indexTree != tree {
+		t.Fatal("live indexing was coalesced into a recovery descriptor")
+	}
+}
+
+func TestEmbedContentQueueRecoveryDescriptors(t *testing.T) {
+	prepareIndexQueueTest(t)
+	block := &Block{ID: "20261008000001-embed01", Box: "20261008000000-embed01", Content: "private derived content"}
+	UpdateBlockContentQueue(block)
+	entries := loadIndexQueue()
+	if len(entries) != 1 || entries[0].Action != "update_block_content" || entries[0].ID != block.ID || entries[0].Box != block.Box {
+		t.Fatalf("missing embed recovery descriptor: %#v", entries)
+	}
+	data, err := os.ReadFile(filepath.Join(util.QueueDir, "index.queue"))
+	if err != nil || bytes.Contains(data, []byte(block.Content)) {
+		t.Fatalf("derived content leaked to global recovery queue: %s, %v", data, err)
+	}
+	operationQueue = nil
+	recoverIndexQueue()
+	UpdateBlockContentQueue(block)
+	latest := *block
+	latest.Content = "new result"
+	UpdateBlockContentQueue(&latest)
+	other := *block
+	other.Box = "20261008000000-embed02"
+	UpdateBlockContentQueue(&other)
+	if len(operationQueue) != 3 || operationQueue[0].recoveryEntry == nil || operationQueue[1].block.Content != latest.Content || operationQueue[2].block.Box != other.Box {
+		t.Fatal("live embed update overwrote recovery or crossed notebook boundaries")
+	}
+}
+
+func TestClearIndexQueuePreservesRawTail(t *testing.T) {
+	prepareIndexQueueTest(t)
+	appendOperation(&dbQueueOperation{action: "delete_box", box: "committed"})
+	_, snapshot := getOperations()
+	queuePath := filepath.Join(util.QueueDir, "index.queue")
+	tail := []byte(`{"action":"future_action","extra":"` + strings.Repeat("x", 70000) + `"}` + "\n")
+	f, err := os.OpenFile(queuePath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.Write(tail); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	indexQueueSize.Add(int64(len(tail)))
+	clearIndexQueue(snapshot)
+	got, err := os.ReadFile(queuePath)
+	if err != nil || !bytes.Equal(got, tail) || indexQueueSize.Load() != int64(len(tail)) {
+		t.Fatalf("checkpoint changed pending bytes: %v", err)
 	}
 }
 

@@ -49,6 +49,7 @@ func TestTransactionFiniteActionSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fixture := range []struct{ action, data string }{
+		{"setAttrViewColAttributePanelVisibility", `"hide-empty"`},
 		{"update", `"<div>content</div>"`},
 		{"append", `"<div>content</div>"`},
 		{"move", `"<div>content</div>"`},
@@ -57,6 +58,8 @@ func TestTransactionFiniteActionSchemas(t *testing.T) {
 		{"sortAttrViewView", `"unRefresh"`},
 		{"updateAttrViewCell", `{"text":null}`},
 		{"setAttrViewFilters", `[{"column":"key","value":{"text":{"content":"x"}}}]`},
+		{"setAttrViewConditionalColors", `[{"id":"rule","filter":{"column":"key","operator":"Is not empty"},"target":"item","color":null,"matchOption":false}]`},
+		{"setAttrViewConditionalColors", `[]`},
 		{"sortAttrViewRow", `null`},
 		{"plugin-custom", `{"extension":[true,1,null]}`},
 	} {

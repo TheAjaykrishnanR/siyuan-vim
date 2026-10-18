@@ -31,7 +31,6 @@ import (
 	"github.com/88250/go-humanize"
 	"github.com/88250/gulu"
 	"github.com/88250/lute/ast"
-	"github.com/88250/lute/editor"
 	"github.com/88250/lute/html"
 	"github.com/88250/lute/parse"
 	"github.com/panjf2000/ants/v2"
@@ -49,6 +48,9 @@ import (
 
 // databaseIndexDataLock 用于避免索引任务读取正在被替换或删除的笔记本目录。
 var databaseIndexDataLock sync.Mutex
+
+const indexBatchDocuments = 32
+const indexBatchBytes int64 = 8 * 1024 * 1024
 
 func UpsertIndexes(paths []string) {
 	var syFiles []string
@@ -205,7 +207,10 @@ func indexBox(boxID string) {
 		}
 
 		lock.Lock()
-		avNodes = append(avNodes, tree.Root.ChildrenByType(ast.NodeAttributeView)...)
+		for _, node := range tree.Root.ChildrenByType(ast.NodeAttributeView) {
+			// 关联镜像只需要节点标识，避免父节点和兄弟节点引用把整篇文档保留到重建结束。
+			avNodes = append(avNodes, &ast.Node{Type: ast.NodeAttributeView, ID: node.ID, AttributeViewID: node.AttributeViewID})
+		}
 		lock.Unlock()
 
 		cache.PutDocIALInBox(file.path, tree.Box, docIAL)
@@ -216,7 +221,20 @@ func indexBox(boxID string) {
 			util.PushStatusBar(fmt.Sprintf(Conf.Language(88), i, (len(files))-i))
 		}
 	})
+	defer p.Release()
+	var batchDocuments int
+	var batchBytes int64
+	flushBatch := func() {
+		waitGroup.Wait()
+		sql.FlushQueue()
+		batchDocuments, batchBytes = 0, 0
+		debug.FreeOSMemory()
+	}
 	for _, file := range files {
+		if util.IsExiting.Load() {
+			waitGroup.Wait()
+			return
+		}
 		if file.isdir || !strings.HasSuffix(file.name, ".sy") {
 			continue
 		}
@@ -225,16 +243,22 @@ func indexBox(boxID string) {
 			// 不以块 ID 命名的 .sy 文件不应该被加载到思源中 https://github.com/siyuan-note/siyuan/issues/16089
 			continue
 		}
+		// 同时限制文档数量和源文件体积；单篇大文档独立处理，避免与其他文档叠加峰值。
+		if batchDocuments > 0 && (batchDocuments >= indexBatchDocuments || batchBytes+file.size > indexBatchBytes) {
+			flushBatch()
+		}
 
 		waitGroup.Add(1)
 		invokeErr := p.Invoke(file)
 		if nil != invokeErr {
+			waitGroup.Done()
 			logging.LogErrorf("invoke [%s] failed: %s", file.path, invokeErr)
 			continue
 		}
+		batchDocuments++
+		batchBytes += file.size
 	}
-	waitGroup.Wait()
-	p.Release()
+	flushBatch()
 
 	// 关联数据库和块
 	av.BatchUpsertBlockRel(avNodes)
@@ -368,44 +392,11 @@ func autoIndexEmbedBlock() {
 		embedBlocks = append(embedBlocks, sql.QueryEmptyContentEmbedBlocksInBox(boxID)...)
 	}
 	for i, embedBlock := range embedBlocks {
-		markdown := strings.TrimSpace(embedBlock.Markdown)
-		markdown = strings.TrimPrefix(markdown, "{{")
-		stmt := strings.TrimSuffix(markdown, "}}")
-
-		// 嵌入块的 Markdown 内容需要反转义
-		stmt = html.UnescapeString(stmt)
-		stmt = strings.ReplaceAll(stmt, editor.IALValEscNewLine, "\n")
-
-		// 需要移除首尾的空白字符以判断是否具有 //!js 标记
-		stmt = strings.TrimSpace(stmt)
-		if "" == stmt {
+		content, supported := sql.CalculateEmbedBlockContent(embedBlock)
+		if !supported {
 			continue
 		}
-		if strings.HasPrefix(stmt, "//!js") {
-			// https://github.com/siyuan-note/siyuan/issues/9648
-			// js 嵌入块不支持自动索引，由前端主动调用 /api/search/updateEmbedBlock 接口更新内容 https://github.com/siyuan-note/siyuan/issues/9736
-			continue
-		}
-
-		// 嵌入块脚本来自文档内容，属于不可信输入：执行前必须校验为单条只读查询，
-		// 不能用「是否包含 select 子串」代替，注释或子查询即可绕过
-		if err := sql.CheckReadonlyBlockQueryStatement(stmt, embedBlock.Box); nil != err {
-			logging.LogWarnf("skip non-readonly embed block [%s] script: %s", embedBlock.ID, err)
-			continue
-		}
-
-		var queryResultBlocks []*sql.Block
-		if IsEncryptedBox(embedBlock.Box) {
-			queryResultBlocks = sql.SelectBlocksRawStmtNoParseInBox(stmt, 102400, embedBlock.Box)
-		} else {
-			queryResultBlocks = sql.SelectBlocksRawStmtNoParse(stmt, 102400)
-		}
-		for _, block := range queryResultBlocks {
-			embedBlock.Content += block.Content
-		}
-		if "" == embedBlock.Content {
-			embedBlock.Content = "no query result"
-		}
+		embedBlock.Content = content
 		sql.UpdateBlockContentQueue(embedBlock)
 
 		if 63 <= i { // 一次任务中最多处理 64 个嵌入块，防止卡顿
@@ -424,13 +415,17 @@ func updateEmbedBlockContent(embedBlockID string, queryResultBlocks []*EmbedBloc
 		return
 	}
 
-	embedBlock.Content = "" // 嵌入块每查询一次多一个结果 https://github.com/siyuan-note/siyuan/issues/7196
+	content := "" // 嵌入块每查询一次多一个结果 https://github.com/siyuan-note/siyuan/issues/7196
 	for _, block := range queryResultBlocks {
-		embedBlock.Content += block.Block.Markdown
+		content += block.Block.Markdown
 	}
-	if "" == embedBlock.Content {
-		embedBlock.Content = "no query result"
+	if "" == content {
+		content = "no query result"
 	}
+	if embedBlock.Content == content {
+		return
+	}
+	embedBlock.Content = content
 	sql.UpdateBlockContentQueue(embedBlock)
 }
 
@@ -529,13 +524,16 @@ func subscribeSQLEvents() {
 		util.ContextPushMsg(context, msg)
 	})
 
+	// 持久化索引队列负责崩溃恢复，状态事件只更新供查询使用的运行时标志。
 	eventbus.Subscribe(eventbus.EvtSQLIndexChanged, func() {
+		Conf.m.Lock()
 		Conf.DataIndexState = 1
-		Conf.Save()
+		Conf.m.Unlock()
 	})
 
 	eventbus.Subscribe(eventbus.EvtSQLIndexFlushed, func() {
+		Conf.m.Lock()
 		Conf.DataIndexState = 0
-		Conf.Save()
+		Conf.m.Unlock()
 	})
 }

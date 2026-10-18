@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -88,20 +89,26 @@ func IsOpenAIResponsesProtocol(protocol string) bool {
 	return strings.EqualFold(strings.TrimSpace(protocol), OpenAIProtocolResponses)
 }
 
-// OpenAICompletionStream 将 Chat Completions 与 Responses 的流式输出统一为 Chat 增量，
+// OpenAICompletionStream 将各生成协议的流式输出统一为 Chat 增量，
 // 让现有上层渲染、重试和工具执行逻辑保持一致。
 type OpenAICompletionStream struct {
+	anthropic         *anthropicStream
 	chat              *openai.ChatCompletionStream
 	responses         *openai.ResponseStream
 	pending           []openai.ChatCompletionStreamResponse
 	responseOutput    []json.RawMessage
+	completedOutput   map[int]json.RawMessage
 	responseContent   strings.Builder
 	responseToolCalls map[int]openai.ToolCall
 	responsesDone     bool
+	chatGPT           bool
 }
 
-func CreateOpenAICompletionStream(ctx context.Context, client *openai.Client, protocol string,
+func CreateOpenAICompletionStream(ctx context.Context, client *AIClient, protocol string,
 	request openai.ChatCompletionRequest, responseInput []any) (*OpenAICompletionStream, error) {
+	if IsAnthropicMessagesProtocol(protocol) {
+		return createAnthropicStream(ctx, client, request)
+	}
 	if !IsOpenAIResponsesProtocol(protocol) {
 		stream, err := client.CreateChatCompletionStream(ctx, request)
 		if err != nil {
@@ -110,32 +117,105 @@ func CreateOpenAICompletionStream(ctx context.Context, client *openai.Client, pr
 		return &OpenAICompletionStream{chat: stream}, nil
 	}
 
-	stream, err := client.CreateResponseStream(ctx, responseRequestFromChat(ctx, request, responseInput))
-	if err != nil {
-		return nil, err
+	responseRequest := responseRequestFromChat(ctx, request, responseInput)
+	var stream *openai.ResponseStream
+	for {
+		var err error
+		stream, err = client.CreateResponseStream(ctx, responseRequest)
+		if omitUnsupportedResponseSamplingParameter(&responseRequest, err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		break
 	}
 	return &OpenAICompletionStream{
+		chatGPT:           client.ChatGPT,
 		responses:         stream,
 		responseToolCalls: map[int]openai.ToolCall{},
+		completedOutput:   map[int]json.RawMessage{},
 	}, nil
 }
 
-func CreateOpenAICompletion(ctx context.Context, client *openai.Client, protocol string,
+func CreateOpenAICompletion(ctx context.Context, client *AIClient, protocol string,
 	request openai.ChatCompletionRequest, responseInput []any) (openai.ChatCompletionResponse, error) {
+	if client.ChatGPT {
+		stream, err := CreateOpenAICompletionStream(ctx, client, protocol, request, responseInput)
+		if err != nil {
+			return openai.ChatCompletionResponse{}, err
+		}
+		defer stream.Close()
+		var completed openai.ChatCompletionResponse
+		var text strings.Builder
+		for {
+			chunk, recvErr := stream.Recv()
+			if errors.Is(recvErr, io.EOF) {
+				break
+			}
+			if recvErr != nil {
+				return completed, recvErr
+			}
+			completed.ID, completed.Model = chunk.ID, chunk.Model
+			if chunk.Usage != nil {
+				completed.Usage = *chunk.Usage
+			}
+			for _, choice := range chunk.Choices {
+				text.WriteString(choice.Delta.Content)
+			}
+		}
+		completed.Choices = []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Role: "assistant", Content: text.String()}, FinishReason: openai.FinishReasonStop}}
+		return completed, nil
+	}
+	if IsAnthropicMessagesProtocol(protocol) {
+		return createAnthropicCompletion(ctx, client, request)
+	}
 	if !IsOpenAIResponsesProtocol(protocol) {
 		return client.CreateChatCompletion(ctx, request)
 	}
-	response, err := client.CreateResponse(ctx, responseRequestFromChat(ctx, request, responseInput))
-	if err != nil {
-		return openai.ChatCompletionResponse{}, err
+	responseRequest := responseRequestFromChat(ctx, request, responseInput)
+	var response openai.CreateResponseResponse
+	for {
+		var err error
+		response, err = client.CreateResponse(ctx, responseRequest)
+		if omitUnsupportedResponseSamplingParameter(&responseRequest, err) {
+			continue
+		}
+		if err != nil {
+			return openai.ChatCompletionResponse{}, err
+		}
+		break
 	}
-	if err = responseResultError(response); err != nil {
+	if err := responseResultError(response); err != nil {
 		return openai.ChatCompletionResponse{}, err
 	}
 	return responseToChatCompletion(response), nil
 }
 
-func CompactOpenAIResponse(ctx context.Context, client *openai.Client, request openai.ChatCompletionRequest,
+// 仅对请求建立前明确拒绝的可选采样参数降级，保留推理强度及其他请求语义。
+// 每个字段最多移除一次；其他错误和已建立的响应流不重试。
+func omitUnsupportedResponseSamplingParameter(request *openai.CreateResponseRequest, err error) bool {
+	var apiErr *openai.APIError
+	if !errors.As(err, &apiErr) || apiErr.HTTPStatusCode != http.StatusBadRequest ||
+		apiErr.Code != "unsupported_parameter" || apiErr.Param == nil {
+		return false
+	}
+	switch *apiErr.Param {
+	case "temperature":
+		if request.Temperature != nil {
+			request.Temperature = nil
+			return true
+		}
+	case "top_p":
+		if request.TopP != nil {
+			request.TopP = nil
+			return true
+		}
+	}
+	return false
+}
+
+func CompactOpenAIResponse(ctx context.Context, client *AIClient, request openai.ChatCompletionRequest,
 	responseInput []any) ([]json.RawMessage, *openai.ResponseUsage, error) {
 	responseRequest := openai.CompactResponseRequest{
 		Model:        request.Model,
@@ -439,6 +519,9 @@ func responseUsageToChat(usage *openai.ResponseUsage) openai.Usage {
 }
 
 func (stream *OpenAICompletionStream) Recv() (openai.ChatCompletionStreamResponse, error) {
+	if stream.anthropic != nil {
+		return stream.anthropic.recv()
+	}
 	if stream.chat != nil {
 		return stream.chat.Recv()
 	}
@@ -522,11 +605,37 @@ func (stream *OpenAICompletionStream) Recv() (openai.ChatCompletionStreamRespons
 				}}},
 			}}
 			return response, nil
+		case openai.ResponseStreamEventOutputItemDone:
+			if !stream.chatGPT {
+				break
+			}
+			var completed struct {
+				Item json.RawMessage `json:"item"`
+			}
+			if err = json.Unmarshal(event.Raw, &completed); err != nil || len(completed.Item) == 0 || string(completed.Item) == "null" {
+				return openai.ChatCompletionStreamResponse{}, errors.New("completed response output item is missing")
+			}
+			stream.completedOutput[event.OutputIndex] = completed.Item
 		case openai.ResponseStreamEventCompleted, openai.ResponseStreamEventIncomplete:
 			if event.Response == nil {
 				return openai.ChatCompletionStreamResponse{}, errors.New("response stream terminal event is missing response")
 			}
-			if err = stream.queueResponseTerminal(*event.Response); err != nil {
+			if stream.chatGPT && (event.Type != openai.ResponseStreamEventCompleted || event.Response.Status != openai.ResponseStatusCompleted) {
+				return openai.ChatCompletionStreamResponse{}, errors.New("ChatGPT response did not complete")
+			}
+			terminal := *event.Response
+			// 套餐流的结束事件可能省略输出，按输出索引恢复已完成项，保留工具命名空间及加密推理字段。
+			if stream.chatGPT && len(terminal.Output) == 0 && len(stream.completedOutput) > 0 {
+				terminal.Output = make([]any, len(stream.completedOutput))
+				for index := range terminal.Output {
+					item, ok := stream.completedOutput[index]
+					if !ok {
+						return openai.ChatCompletionStreamResponse{}, errors.New("completed response output items are missing")
+					}
+					terminal.Output[index] = item
+				}
+			}
+			if err = stream.queueResponseTerminal(terminal); err != nil {
 				return openai.ChatCompletionStreamResponse{}, err
 			}
 			stream.responsesDone = true
@@ -712,10 +821,20 @@ func (stream *OpenAICompletionStream) ResponseOutput() []json.RawMessage {
 }
 
 func (stream *OpenAICompletionStream) Close() {
+	if stream.anthropic != nil {
+		stream.anthropic.body.Close()
+	}
 	if stream.chat != nil {
 		stream.chat.Close()
 	}
 	if stream.responses != nil {
 		stream.responses.Close()
 	}
+}
+
+func (stream *OpenAICompletionStream) NativeContent() *AIMessageContent {
+	if stream.anthropic == nil {
+		return nil
+	}
+	return CloneAIMessageContent(stream.anthropic.content)
 }

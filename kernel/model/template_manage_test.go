@@ -74,6 +74,33 @@ func TestTemplateFileManagement(t *testing.T) {
 	}
 }
 
+func TestTemplateSourceDocumentID(t *testing.T) {
+	id := "20260921000000-abcdefg"
+	attrs := `{: id="` + id + `" title="Source" type="doc"}`
+	for _, test := range []struct {
+		name, content, want string
+	}{
+		{"exported", "Body\n\n" + attrs, id},
+		{"crlf", "Body\r\n\r\n" + attrs + "\r\n", id},
+		{"attribute order", `Body` + "\n\n" + `{: type="doc" title="Source" id="` + id + `"}`, id},
+		{"plain", "Body", ""},
+		{"block", "Body\n{: id=\"" + id + "\"}", ""},
+		{"code", "```markdown\n" + attrs + "\n```", ""},
+		{"indented code", "    " + attrs, ""},
+		{"standalone attributes", "```" + templateDocumentAttributeMarker + "\n" + attrs + "\n```", ""},
+		{"dynamic identity", "Body\n\n{: id=\".action{.id}\" type=\"doc\"}", ""},
+		{"invalid identity", "Body\n\n{: id=\"invalid\" type=\"doc\"}", ""},
+		{"unexecuted action", ".action{fail \"must not execute\"}\n\n" + attrs, id},
+		{"example and source", "```markdown\n{: id=\"20260921000000-example\" type=\"doc\"}\n```\n\n" + attrs, id},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := templateSourceDocumentID(test.content); got != test.want {
+				t.Fatalf("source document = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestTemplateDeletePreservesLegacyTrash(t *testing.T) {
 	previous := util.DataDir
 	util.DataDir = t.TempDir()
@@ -186,8 +213,8 @@ func TestPreviewTemplateUnsavedSource(t *testing.T) {
 
 func TestExportTemplateDocumentAttributesAndDirectory(t *testing.T) {
 	fixture := setupFileOperationTest(t)
-	Conf.Editor = conf.NewEditor()
-	Conf.Export = conf.NewExport()
+	Conf.Editor.Store(conf.NewEditor())
+	Conf.Export.Store(conf.NewExport())
 	tree, err := LoadTreeByBlockID(fixture.sourceID)
 	if err != nil {
 		t.Fatal(err)
@@ -244,8 +271,8 @@ func TestExportTemplateDocumentAttributesAndDirectory(t *testing.T) {
 
 func TestDocSaveAsTemplateInfoAndRememberedAttrs(t *testing.T) {
 	fixture := setupFileOperationTest(t)
-	Conf.Editor = conf.NewEditor()
-	Conf.Export = conf.NewExport()
+	Conf.Editor.Store(conf.NewEditor())
+	Conf.Export.Store(conf.NewExport())
 
 	info, err := GetDocSaveAsTemplateInfo(fixture.sourceID)
 	if nil != err {
@@ -382,7 +409,7 @@ func TestTemplatePackageIdentity(t *testing.T) {
 	previous, previousConf := util.DataDir, Conf
 	util.DataDir = t.TempDir()
 	Conf = NewAppConf()
-	Conf.Search = conf.NewSearch()
+	Conf.Search.Store(conf.NewSearch())
 	t.Cleanup(func() { util.DataDir, Conf = previous, previousConf })
 	root, err := openTemplateRoot()
 	if err != nil {
@@ -435,7 +462,11 @@ func TestExportTemplateDocumentAttributeScope(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := setupFileOperationTest(t)
-			Conf.Editor, Conf.Export = conf.NewEditor(), conf.NewExport()
+			{
+				confSectionValue0, confSectionValue1 := conf.NewEditor(), conf.NewExport()
+				Conf.Editor.Store(confSectionValue0)
+				Conf.Export.Store(confSectionValue1)
+			}
 			tree, err := LoadTreeByBlockID(fixture.sourceID)
 			if err != nil {
 				t.Fatal(err)
@@ -475,7 +506,11 @@ func TestExportTemplateDocumentAttributeScope(t *testing.T) {
 
 func TestTemplateDocumentAttributeFormats(t *testing.T) {
 	setupFileOperationTest(t)
-	Conf.Editor, Conf.Export = conf.NewEditor(), conf.NewExport()
+	{
+		confSectionValue0, confSectionValue1 := conf.NewEditor(), conf.NewExport()
+		Conf.Editor.Store(confSectionValue0)
+		Conf.Export.Store(confSectionValue1)
+	}
 	legacy, err := parseTemplateKTree([]byte(`Body
 
 {: id="20260718000001-abcdefg" icon="legacy" type="doc"}`))

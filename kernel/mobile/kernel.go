@@ -271,6 +271,21 @@ func StartKernelFast(container, appDir, workspaceBaseDir, localIPs string) {
 	go server.Serve(true, model.Conf.CookieKey)
 }
 
+func finishMobileStartup(container string, bootSync, finishLocalBoot, waitForUI func()) {
+	if util.ContainerIOS != container {
+		bootSync()
+		finishLocalBoot()
+		return
+	}
+
+	finishLocalBoot()
+	go func() {
+		// 等待前端连接后再同步，确保同步状态能送达已打开的本地界面。
+		waitForUI()
+		bootSync()
+	}()
+}
+
 func StartKernel(container, appDir, workspaceBaseDir, timezoneID, localIPs, lang, osVer string) {
 	model.InitJwtKey()
 	SetTimezone(container, appDir, timezoneID)
@@ -286,23 +301,24 @@ func StartKernel(container, appDir, workspaceBaseDir, timezoneID, localIPs, lang
 		sql.InitDatabase(false)
 		sql.InitHistoryDatabase(false)
 		sql.InitAssetContentDatabase(false)
-		sql.SetCaseSensitive(model.Conf.Search.CaseSensitive)
-		sql.SetIndexAssetPath(model.Conf.Search.IndexAssetPath)
+		// 数据库打开后重新应用搜索配置，使 PRAGMA case_sensitive_like 对新连接生效
+		model.ApplySearchRuntime()
 
-		model.BootSyncData()
-		model.CleanupEmptyPluginStorageDirs()
-		model.InitBoxes()
-		model.LoadFlashcards()
-		util.LoadAssetsTexts()
+		finishMobileStartup(util.Container, model.BootSyncData, func() {
+			model.CleanupEmptyPluginStorageDirs()
+			model.InitBoxes()
+			model.LoadFlashcards()
+			util.LoadAssetsTexts()
 
-		util.SetBooted()
-		util.PushClearAllMsg()
+			util.SetBooted()
+			util.PushClearAllMsg()
 
-		job.StartCron()
-		go model.AutoGenerateFileHistory()
-		go cache.LoadAssets()
-		go plugin.InitManager()
-		go model.StartEmbeddingIndexer()
+			job.StartCron()
+			go model.AutoGenerateFileHistory()
+			go cache.LoadAssets()
+			go plugin.InitManager()
+			go model.StartEmbeddingIndexer()
+		}, util.WaitForUILoaded)
 	}()
 }
 

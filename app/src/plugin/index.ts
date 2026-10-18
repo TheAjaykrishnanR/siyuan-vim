@@ -40,6 +40,7 @@ import {
 import {isBuiltinToolbarItemName} from "../protyle/toolbar/defaults";
 import {getLegacyPluginTopBarEntryKey, getPluginTopBarEntryKey} from "./topBarKey";
 import {applyTopBarEntryVisibility} from "../config/entryVisibility/runtime";
+import {getSettingsWindowHost, isSettingsWindow} from "../config/setting/windowContext";
 
 export type TPluginDataChangeReason = "sync" | "overwrite";
 
@@ -63,6 +64,10 @@ export class Plugin {
     public i18n: Record<string, import("../types/api").JSONValue>;
     public eventBus: EventBus;
     public kernel: Kernel;
+    /**
+     * 当前插件实例的存储数据会话缓存，以传入的 storageName 为键，也是 loadData 读取失败时的回退值。
+     * 直接修改此对象不会写入磁盘；其他前端实例删除文件不会自动清除此实例中对应的缓存。
+     */
     public data: any = {};
     public displayName: string;
     public readonly name: string;
@@ -125,6 +130,7 @@ export class Plugin {
             writable: false,
         });
 
+        if (isSettingsWindow()) return;
         resolvePluginToolbar(this, []).forEach(toolbarItem => {
             if (typeof toolbarItem === "string" || Constants.INLINE_TYPE.concat("|").includes(toolbarItem.name)) {
                 return;
@@ -167,7 +173,7 @@ export class Plugin {
     }
 
     public addToolbarItem(item: IMenuItem) {
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return;
         }
         if (typeof item?.name !== "string" || !item.name.trim() || item.name !== item.name.trim() ||
@@ -192,7 +198,7 @@ export class Plugin {
     }
 
     public addCommand(command: ICommand) {
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return;
         }
         if (typeof command.hotkey !== "string") {
@@ -242,7 +248,7 @@ export class Plugin {
         contextMenu?: (menu: subMenu) => void,
         callback?: (evt: MouseEvent) => void
     }) {
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return;
         }
         if (options.element && (isMobile() || isWindow())) {
@@ -374,7 +380,7 @@ export class Plugin {
         title: string,
         callback: (event: MouseEvent, protyle: IProtyle) => void,
     }) {
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return options.id;
         }
         options.icon = options.icon.trim();
@@ -397,7 +403,7 @@ export class Plugin {
         element: HTMLElement,
         position?: "right" | "left",
     }) {
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return options.element;
         }
         /// #if !MOBILE
@@ -417,6 +423,10 @@ export class Plugin {
 
     public openSetting() {
         if (isPluginDisposed(this) || !this.setting) {
+            return;
+        }
+        if (isSettingsWindow()) {
+            void getSettingsWindowHost()?.openPluginSetting(this.name).catch(error => console.error(error));
             return;
         }
         this.setting.open(this.displayName || this.name);
@@ -443,6 +453,17 @@ export class Plugin {
         }
     }
 
+    /**
+     * 读取 /data/storage/petal/ 插件私有目录中的文件，成功回调会更新 data[storageName]。
+     * 缓存值为 undefined 时先初始化为 ""；文件不存在（HTTP 202）或触发请求失败回调时，
+     * Promise 会兑现为当前缓存值，而非拒绝，因此可能返回其他窗口删除文件前的旧内容。
+     * 如需避免旧缓存回退，应在调用前执行 delete this.data[storageName]；
+     * 此时读取失败会返回 ""，仍无法区分文件缺失、读取失败与空文件，也不能据此确认磁盘状态。
+     * 负数错误码被请求层拦截等未触发回调的情况会使 Promise 持续等待，需要调用方自行设置超时。
+     * 只读或发布会话不会在此方法中直接拒绝，但私有文件读取仍受内核权限限制；公开快照应使用 loadPublishData。
+     * @returns 文件内容（解析后的 JSON 值或文本），或读取失败时的缓存值，不是统一的内核响应封装。
+     * @throws 调用时插件实例已销毁则拒绝 Promise，值为 {code: 410, msg, data: null}。
+     */
     public loadData(storageName: string): Promise<any> {
         if (isPluginDisposed(this)) {
             return Promise.reject({code: 410, msg: "Plugin lifecycle has ended", data: null});
@@ -462,6 +483,15 @@ export class Plugin {
         });
     }
 
+    /**
+     * 写入 /data/storage/petal/ 插件私有目录中的文件；对象会序列化为 JSON，其他值作为文件内容写入。
+     * 写入回调会将传入值存入 data[storageName] 并兑现 Promise；回调本身不检查响应 code。
+     * 未设置请求失败回调，网络异常或内核负数错误码（如 -1、-3）可能使 Promise 持续等待；
+     * 调用方需要自行设置超时，不能仅依赖捕获拒绝来处理写入失败。
+     * @returns 内核响应 {code, msg, data}，调用方仍需检查 code，不能将兑现视为写入成功。
+     * @throws 调用时插件实例已销毁为 410，只读或发布会话为 403，序列化或创建文件失败为 400；
+     * 拒绝值均为 {code, msg, data: null}，生命周期检查优先于只读或发布会话检查。
+     */
     public saveData(storageName: string, data: any): Promise<any | IWebSocketData> {
         if (isPluginDisposed(this)) {
             return Promise.reject({code: 410, msg: "Plugin lifecycle has ended", data: null});
@@ -506,6 +536,15 @@ export class Plugin {
         });
     }
 
+    /**
+     * 删除 /data/storage/petal/ 插件私有目录中的文件。
+     * 删除回调会清除当前实例的 data[storageName] 并兑现 Promise；回调本身不检查响应 code。
+     * 不会直接清除其他前端实例的缓存，这些实例再次 loadData 时可能回退到旧内容。
+     * 未设置请求失败回调，网络异常或内核负数错误码可能使 Promise 持续等待，调用方需要自行设置超时。
+     * @returns 内核响应 {code, msg, data}，调用方仍需检查 code，不能将兑现视为删除成功。
+     * @throws 调用时插件实例已销毁为 410，只读或发布会话为 403，拒绝值为 {code, msg, data: null}；
+     * 生命周期检查优先于只读或发布会话检查。
+     */
     public removeData(storageName: string): Promise<IWebSocketData> {
         if (isPluginDisposed(this)) {
             return Promise.reject({code: 410, msg: "Plugin lifecycle has ended", data: null} as IWebSocketData);
@@ -555,7 +594,7 @@ export class Plugin {
         update?: (this: Custom) => void,
         init: (this: Custom, custom: Custom) => void
     }) {
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return;
         }
         /// #if !MOBILE
@@ -622,7 +661,7 @@ export class Plugin {
             throw new Error("Agent capability name and description are required");
         }
         const id = "plugin/frontend/" + encodeURIComponent(this.name) + "/" + encodeURIComponent(name);
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return id;
         }
         if (!this.agentCapabilities.some((capability) => capability.id === id)) {
@@ -654,7 +693,7 @@ export class Plugin {
         update?: (this: Custom | MobileCustom) => void,
         init: (this: Custom | MobileCustom, custom: Custom | MobileCustom) => void
     }) {
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return;
         }
         const id = options.id || options.type;
@@ -725,7 +764,7 @@ export class Plugin {
         originalRefBlockIDs?: Record<string, string>,
         isBacklink: boolean,
     }) => {
-        if (isPluginDisposed(this)) {
+        if (isPluginDisposed(this) || isSettingsWindow()) {
             return;
         }
         window.siyuan.blockPanels.push(new BlockPanel({

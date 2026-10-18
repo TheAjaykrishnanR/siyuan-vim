@@ -1,3 +1,7 @@
+import {switchWorkspace} from "../config/util/resourceConfig";
+import {toggleMenu} from "./menuToggle";
+import {getLayoutSubMenu} from "./layouts";
+import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {MenuItem} from "./Menu";
 /// #if !BROWSER
 import {ipcRenderer} from "electron";
@@ -20,7 +24,7 @@ import {openCard} from "../card/openCard";
 import {openSetting} from "../config";
 import {getAllDocks, getAllModels} from "../layout/getAll";
 import {getDockHotkey} from "../layout/dock/hotkey";
-import {exportLayout, getAllLayout} from "../layout/util";
+import {exportLayout} from "../layout/util";
 import {getDockByType} from "../layout/tabUtil";
 import {exitSiYuan, lockScreen} from "../dialog/processSystem";
 import {showMessage} from "../dialog/message";
@@ -30,103 +34,15 @@ import {escapeAttr, escapeHtml} from "../util/escape";
 import {viewCards} from "../card/viewCards";
 import {Dialog} from "../dialog";
 import {openInputDialog} from "../dialog/inputDialog";
-import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {confirmDialog} from "../dialog/confirmDialog";
 import type {App} from "../index";
 import {isBrowser} from "../util/functions";
 import {openRecentDocs} from "../business/openRecentDocs";
-import * as dayjs from "dayjs";
-import {upDownHint} from "../util/upDownHint";
 import {openDataMigration} from "./dataMigration";
 import {openLink} from "../editor/openLink";
 import {adjustEditorFontSize} from "../util/editorFontSize";
 import {getHostCapabilities} from "../util/hostCapabilities";
 import {openTemplateManager} from "../template/manager";
-
-const editLayout = (layoutName?: string) => {
-    const dialog = openInputDialog({
-        positionId: Constants.DIALOG_SAVEWORKSPACE,
-        title: layoutName ? window.siyuan.languages.edit : window.siyuan.languages.save,
-        value: layoutName || "",
-        placeholder: window.siyuan.languages.memo,
-        width: "520px",
-        confirmText: window.siyuan.languages[layoutName ? "updateLayout" : "confirm"],
-        actions: layoutName ? [{
-            text: window.siyuan.languages.delete,
-            danger: true,
-            position: "beforeCancel",
-            onClick: (value, dialog) => {
-                window.siyuan.storage[Constants.LOCAL_LAYOUTS].find((layoutItem: ISaveLayout, index: number) => {
-                    if (layoutItem.name === layoutName) {
-                        window.siyuan.storage[Constants.LOCAL_LAYOUTS].splice(index, 1);
-                        setStorageVal(Constants.LOCAL_LAYOUTS, window.siyuan.storage[Constants.LOCAL_LAYOUTS]);
-                        return true;
-                    }
-                });
-                dialog.destroy();
-            },
-        }, {
-            text: window.siyuan.languages.rename,
-            onClick: (value, dialog) => {
-                if (!value) {
-                    showMessage(window.siyuan.languages["_kernel"]["142"]);
-                    return;
-                }
-                dialog.destroy();
-                window.siyuan.storage[Constants.LOCAL_LAYOUTS].find((layoutItem: ISaveLayout) => {
-                    if (layoutItem.name === layoutName) {
-                        layoutItem.name = value;
-                        layoutItem.time = Date.now();
-                        setStorageVal(Constants.LOCAL_LAYOUTS, window.siyuan.storage[Constants.LOCAL_LAYOUTS]);
-                        return true;
-                    }
-                });
-            },
-        }] : [],
-        onConfirm: (value, dialog) => {
-            if (!value) {
-                showMessage(window.siyuan.languages["_kernel"]["142"]);
-                return;
-            }
-            dialog.destroy();
-            if (layoutName) {
-                window.siyuan.storage[Constants.LOCAL_LAYOUTS].find((layoutItem: ISaveLayout) => {
-                    if (layoutItem.name === layoutName) {
-                        layoutItem.name = value;
-                        layoutItem.time = Date.now();
-                        layoutItem.layout = getAllLayout();
-                        layoutItem.filesPaths = window.siyuan.storage[Constants.LOCAL_FILESPATHS];
-                        setStorageVal(Constants.LOCAL_LAYOUTS, window.siyuan.storage[Constants.LOCAL_LAYOUTS]);
-                        return true;
-                    }
-                });
-                return;
-            }
-            const hadName = window.siyuan.storage[Constants.LOCAL_LAYOUTS].find((item: ISaveLayout) => {
-                if (item.name === value) {
-                    confirmDialog(window.siyuan.languages.save, window.siyuan.languages.exportTplTip, () => {
-                        item.layout = getAllLayout();
-                        item.time = Date.now();
-                        item.filesPaths = window.siyuan.storage[Constants.LOCAL_FILESPATHS];
-                        setStorageVal(Constants.LOCAL_LAYOUTS, window.siyuan.storage[Constants.LOCAL_LAYOUTS]);
-                    });
-                    return true;
-                }
-            });
-            if (hadName) {
-                return;
-            }
-            window.siyuan.storage[Constants.LOCAL_LAYOUTS].push({
-                name: value,
-                time: Date.now(),
-                layout: getAllLayout(),
-                filesPaths: window.siyuan.storage[Constants.LOCAL_FILESPATHS]
-            });
-            setStorageVal(Constants.LOCAL_LAYOUTS, window.siyuan.storage[Constants.LOCAL_LAYOUTS]);
-        },
-    });
-    dialog.element.setAttribute("data-key", Constants.DIALOG_SAVEWORKSPACE);
-};
 
 const getApplicationZoomSubMenu = () => {
     const zoom = window.siyuan.storage[Constants.LOCAL_ZOOM];
@@ -221,497 +137,412 @@ const getZoomSubMenu = () => {
     return submenu;
 };
 
-export const workspaceMenu = async (app: App, rect: DOMRect) => {
-    if (!window.siyuan.menus.menu.element.classList.contains("fn__none") &&
+export const workspaceMenu = async (app: App, rect: DOMRect, openOnly = false, target?: Element) => {
+    if (openOnly && !window.siyuan.menus.menu.element.classList.contains("fn__none") &&
         window.siyuan.menus.menu.element.getAttribute("data-name") === Constants.MENU_BAR_WORKSPACE) {
-        window.siyuan.menus.menu.remove();
         return;
     }
-    let remoteConnections: string[] = [];
-    /// #if !BROWSER
-    remoteConnections = await ipcRenderer.invoke(Constants.SIYUAN_GET, {cmd: "remoteConnections"});
-    const manageConnections = (origin?: string) => openRemoteConnection(origin);
-    /// #endif
-    const renderMenu = (workspaces: IWorkspace[]) => {
-        window.siyuan.menus.menu.remove();
-        window.siyuan.menus.menu.element.setAttribute("data-name", Constants.MENU_BAR_WORKSPACE);
-        if (!window.siyuan.config.readonly) {
-            window.siyuan.menus.menu.append(new MenuItem({
-                id: "config",
-                label: window.siyuan.languages.config,
-                icon: "iconSettings",
-                accelerator: window.siyuan.config.keymap.general.config.custom,
-                click: () => {
-                    openSetting(app);
-                }
-            }).element);
-        }
-        const dockMenu: IMenu[] = [];
-        getAllDocks().forEach(item => {
-            dockMenu.push({
-                id: item.type,
-                icon: item.icon,
-                accelerator: getDockHotkey(item),
-                label: item.title,
-                click() {
-                    getDockByType(item.type).toggleModel(item.type);
-                }
-            });
-        });
-        if (!window.siyuan.config.readonly) {
-            dockMenu.push({id: "separator_1", type: "separator"});
-            dockMenu.push(togglePinDock("switchLeftDock", window.siyuan.layout.leftDock, "iconPanelLeft", "iconPanelLeftDashed"));
-            dockMenu.push(togglePinDock("switchRightDock", window.siyuan.layout.rightDock, "iconPanelRight", "iconPanelRightDashed"));
-            dockMenu.push(togglePinDock("switchBottomDock", window.siyuan.layout.bottomDock, "iconPanelBottom", "iconPanelBottomDashed"));
-        }
-        window.siyuan.menus.menu.append(new MenuItem({
-            id: "panels",
-            label: window.siyuan.languages.panels,
-            icon: "iconDock",
-            type: "submenu",
-            submenu: dockMenu
-        }).element);
-        if ((!window.siyuan.config.readonly && getHostCapabilities().workspaces) || !isBrowser()) {
-            let workspaceSubMenu: IMenu[];
+    await toggleMenu({
+        target: target,
+        toggle: !openOnly && Boolean(target),
+        build: async (_menu, session) => {
+            let remoteConnections: string[] = [];
             /// #if !BROWSER
-            workspaceSubMenu = getHostCapabilities().workspaces ? [{
-                id: "newOrOpenBy",
-                label: getHostCapabilities().workspaces
-                    ? `${window.siyuan.languages.new} / ${window.siyuan.languages.openBy}` : window.siyuan.languages.openBy,
-                iconHTML: "",
-                click: async () => {
-                    const localPath = await ipcRenderer.invoke(Constants.SIYUAN_GET, {
-                        cmd: "showOpenDialog",
-                        defaultPath: window.siyuan.config.system.homeDir,
-                        properties: ["openDirectory", "createDirectory"],
-                    });
-                    if (localPath.filePaths.length === 0) {
-                        return;
-                    }
-                    fetchPost("/api/system/checkWorkspaceDir", {path: localPath.filePaths[0]}, (response) => {
-                        if (response.data.isWorkspace) {
-                            openWorkspace(localPath.filePaths[0]);
-                        } else {
-                            confirmDialog("🏗️ " + window.siyuan.languages.createWorkspace, window.siyuan.languages.createWorkspaceTip + `<br><br><code class="fn__code">${escapeHtml(localPath.filePaths[0])}</code>`, () => {
-                                openWorkspace(localPath.filePaths[0]);
-                            });
-                        }
-                    });
-                }
-            }] : [];
-            workspaceSubMenu.push({
-                id: "connectRemoteKernel",
-                label: window.siyuan.languages.connectRemoteKernel,
-                icon: "iconCloud",
-                click: () => manageConnections(),
-            });
-            if (workspaces.length + remoteConnections.length > 0) {
-                workspaceSubMenu.push({id: "separator_1", type: "separator"});
+            remoteConnections = await ipcRenderer.invoke(Constants.SIYUAN_GET, {cmd: "remoteConnections"});
+            if (!session.isCurrent()) {
+                return;
             }
-            workspaces.forEach((item: IWorkspace) => {
-                workspaceSubMenu.push(workspaceItem(item) as IMenu);
-            });
-            remoteConnections.forEach(origin => workspaceSubMenu.push({
-                label: escapeHtml(window.siyuan.languages.remoteConnection + " · " + origin),
-                icon: "iconCloud",
-                click: () => manageConnections(origin),
-            }));
-            /// #else
-            workspaceSubMenu = [{
-                id: "new",
-                label: window.siyuan.languages.new,
-                iconHTML: "",
-                click() {
-                    const createWorkspaceDialog = openInputDialog({
-                        title: window.siyuan.languages.new,
-                        value: "",
-                        onConfirm: (value, dialog) => {
-                            fetchPost("/api/system/createWorkspaceDir", {
-                                path: pathPosix().join(pathPosix().dirname(window.siyuan.config.system.workspaceDir), value)
-                            }, () => {
-                                dialog.destroy();
-                            });
-                        },
-                    });
-                    createWorkspaceDialog.element.setAttribute("data-key", Constants.DIALOG_CREATEWORKSPACE);
-                }
-            }, {
-                id: "openBy",
-                label: `${window.siyuan.languages.openBy}...`,
-                iconHTML: "",
-                click() {
-                    fetchPost("/api/system/getMobileWorkspaces", {}, (response) => {
-                        let selectHTML = "";
-                        response.data.forEach((item: string, index: number) => {
-                            selectHTML += `<option value="${escapeAttr(escapeHtml(item))}"${index === 0 ? ' selected="selected"' : ""}>${escapeHtml(pathPosix().basename(item))}</option>`;
-                        });
-                        const openWorkspaceDialog = new Dialog({
-                            title: window.siyuan.languages.openBy,
-                            content: `<div class="b3-dialog__content">
-    <select class="b3-text-field fn__block">${selectHTML}</select>
-</div>
-<div class="b3-dialog__action">
-    <button class="b3-button b3-button--cancel">${window.siyuan.languages.cancel}</button><div class="fn__space"></div>
-    <button class="b3-button b3-button--text">${window.siyuan.languages.confirm}</button>
-</div>`,
-                            width: "520px",
-                        });
-                        openWorkspaceDialog.element.setAttribute("data-key", Constants.DIALOG_OPENWORKSPACE);
-                        const btnsElement = openWorkspaceDialog.element.querySelectorAll(".b3-button");
-                        btnsElement[0].addEventListener("click", () => {
-                            openWorkspaceDialog.destroy();
-                        });
-                        btnsElement[1].addEventListener("click", () => {
-                            const openPath = openWorkspaceDialog.element.querySelector("select").value;
-                            if (openPath === window.siyuan.config.system.workspaceDir) {
-                                openWorkspaceDialog.destroy();
-                                return;
-                            }
-                            confirmDialog(window.siyuan.languages.confirm, `${escapeHtml(pathPosix().basename(window.siyuan.config.system.workspaceDir))} -> ${escapeHtml(pathPosix().basename(openPath))}?`, () => {
-                                fetchPost("/api/system/setWorkspaceDir", {
-                                    path: openPath
-                                }, () => {
-                                    exitSiYuan(false);
-                                });
-                            });
-                        });
-                    });
-                }
-            }];
-            workspaceSubMenu.push({id: "separator_1", type: "separator"});
-            workspaces.forEach((item: IWorkspace) => {
-                workspaceSubMenu.push({
-                    iconHTML: "",
-                    action: "iconCloseRound",
-                    current: window.siyuan.config.system.workspaceDir === item.path,
-                    label: pathPosix().basename(item.path),
-                    bind(menuElement) {
-                        menuElement.addEventListener("click", (event) => {
-                            if (hasClosestByClassName(event.target as Element, "b3-menu__action")) {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                if (item.path === window.siyuan.config.system.workspaceDir) {
-                                    fetchPost("/api/system/removeWorkspaceDir", {path: item.path});
-                                    return;
-                                }
-                                confirmDialog(window.siyuan.languages.deleteOpConfirm, window.siyuan.languages.removeWorkspacePhysically.replace("${x}", () => escapeHtml(item.path)), () => {
-                                    fetchPost("/api/system/removeWorkspaceDirPhysically", {path: item.path});
-                                }, () => {
-                                    fetchPost("/api/system/removeWorkspaceDir", {path: item.path});
-                                }, true);
-                                return;
-                            }
-                            confirmDialog(window.siyuan.languages.confirm, `${escapeHtml(pathPosix().basename(window.siyuan.config.system.workspaceDir))} -> ${escapeHtml(pathPosix().basename(item.path))}?`, () => {
-                                fetchPost("/api/system/setWorkspaceDir", {
-                                    path: item.path
-                                }, () => {
-                                    exitSiYuan(false);
-                                });
-                            });
-                        });
-                    }
-                });
-            });
+            const manageConnections = (origin?: string) => openRemoteConnection(origin);
             /// #endif
-            if (!isBrowser() || isInMobileApp()) {
+            const renderMenu = (workspaces: IWorkspace[]) => {
+                if (!session.isCurrent()) {
+                    return;
+                }
+
+                window.siyuan.menus.menu.remove();
+                window.siyuan.menus.menu.element.setAttribute("data-name", Constants.MENU_BAR_WORKSPACE);
+                if (!window.siyuan.config.readonly) {
+                    window.siyuan.menus.menu.append(new MenuItem({
+                        id: "config",
+                        label: window.siyuan.languages.config,
+                        icon: "iconSettings",
+                        accelerator: window.siyuan.config.keymap.general.config.custom,
+                        click: () => {
+                            openSetting(app);
+                        }
+                    }).element);
+                }
+                const dockMenu: IMenu[] = [];
+                getAllDocks().forEach(item => {
+                    dockMenu.push({
+                        id: item.type,
+                        icon: item.icon,
+                        accelerator: getDockHotkey(item),
+                        label: item.title,
+                        click() {
+                            getDockByType(item.type).toggleModel(item.type);
+                        }
+                    });
+                });
+                if (!window.siyuan.config.readonly) {
+                    dockMenu.push({id: "separator_1", type: "separator"});
+                    dockMenu.push(togglePinDock("switchLeftDock", window.siyuan.layout.leftDock, "iconPanelLeft", "iconPanelLeftDashed"));
+                    dockMenu.push(togglePinDock("switchRightDock", window.siyuan.layout.rightDock, "iconPanelRight", "iconPanelRightDashed"));
+                    dockMenu.push(togglePinDock("switchBottomDock", window.siyuan.layout.bottomDock, "iconPanelBottom", "iconPanelBottomDashed"));
+                }
                 window.siyuan.menus.menu.append(new MenuItem({
-                    id: "workspaceList",
-                    label: window.siyuan.languages.workspaceList,
-                    icon: "iconWorkspace",
+                    id: "panels",
+                    label: window.siyuan.languages.panels,
+                    icon: "iconDock",
                     type: "submenu",
-                    submenu: workspaceSubMenu,
+                    submenu: dockMenu
                 }).element);
-            }
-        }
-        const layoutSubMenu: IMenu[] = [{
-            id: "save",
-            iconHTML: "",
-            label: window.siyuan.languages.save,
-            click() {
-                editLayout();
-            }
-        }];
-        if (window.siyuan.storage[Constants.LOCAL_LAYOUTS].length > 0) {
-            layoutSubMenu.push({id: "separator_1", type: "separator"});
-            layoutSubMenu.push({
-                iconHTML: "",
-                type: "empty",
-                label: `<input class="b3-text-field fn__block" style="margin: 4px 0" placeholder="${window.siyuan.languages.searchPlaceholder}">
-<div class="b3-list b3-list--background" style="width: 220px"></div>`,
-                bind(menuElement) {
-                    const genListHTML = (isInit = false) => {
-                        let html = "";
-                        window.siyuan.storage[Constants.LOCAL_LAYOUTS].sort((a: ISaveLayout, b: ISaveLayout) => {
-                            return a.name.localeCompare(b.name, undefined, {numeric: true});
-                        }).forEach((item: ISaveLayout) => {
-                            if (inputElement.value === "" || item.name.toLowerCase().indexOf(inputElement.value.toLowerCase()) > -1) {
-                                html += `<div data-name="${item.name}" class="b3-list-item b3-list-item--narrow b3-list-item--hide-action${!isInit && !html ? " b3-list-item--focus" : ""} ariaLabel" data-position="8east" aria-label="${escapeAttr(item.name)}" >
-    <div class="b3-list-item__text">${item.name}</div>
-    <span class="b3-list-item__meta">${item.time ? dayjs(item.time).format("YYYY-MM-DD HH:mm") : ""}</span>
-    <span class="b3-list-item__action">
-        <svg><use xlink:href="#iconEdit"></use></svg>
-    </span>
-</div>`;
+                if ((!window.siyuan.config.readonly && getHostCapabilities().workspaces) || !isBrowser()) {
+                    let workspaceSubMenu: IMenu[];
+                    /// #if !BROWSER
+                    workspaceSubMenu = getHostCapabilities().workspaces ? [{
+                        id: "newOrOpenBy",
+                        label: getHostCapabilities().workspaces
+                            ? `${window.siyuan.languages.new} / ${window.siyuan.languages.openBy}` : window.siyuan.languages.openBy,
+                        iconHTML: "",
+                        click: async () => {
+                            const localPath = await ipcRenderer.invoke(Constants.SIYUAN_GET, {
+                                cmd: "showOpenDialog",
+                                defaultPath: window.siyuan.config.system.homeDir,
+                                properties: ["openDirectory", "createDirectory"],
+                            });
+                            if (localPath.filePaths.length === 0) {
+                                return;
                             }
-                        });
-                        return html;
-                    };
-                    const inputElement = menuElement.querySelector(".b3-text-field") as HTMLInputElement;
-                    const listElement = menuElement.querySelector(".b3-list");
-                    inputElement.addEventListener("focus", () => {
-                        if (!menuElement.querySelector(".b3-list-item--focus")) {
-                            menuElement.querySelector(".b3-list-item")?.classList.add("b3-list-item--focus");
-                        }
-                    });
-                    inputElement.addEventListener("blur", () => {
-                        menuElement.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
-                    });
-                    inputElement.addEventListener("keydown", (event) => {
-                        event.stopPropagation();
-                        if (event.isComposing) {
-                            return;
-                        }
-                        upDownHint(listElement, event);
-                        if (event.key === "Escape" || (event.key === "ArrowLeft" && inputElement.value === "")) {
-                            window.siyuan.menus.menu.remove(true);
-                        } else if (event.key === "Enter") {
-                            const currentElement = listElement.querySelector(".b3-list-item--focus");
-                            if (currentElement) {
-                                listElement.dispatchEvent(new CustomEvent("click", {detail: currentElement.getAttribute("data-name")}));
-                            }
-                        }
-                    });
-                    inputElement.addEventListener("compositionend", () => {
-                        listElement.innerHTML = genListHTML();
-                    });
-                    inputElement.addEventListener("input", (event: InputEvent) => {
-                        if (event.isComposing) {
-                            return;
-                        }
-                        event.stopPropagation();
-                        listElement.innerHTML = genListHTML();
-                    });
-                    listElement.addEventListener("click", (event: MouseEvent) => {
-                        if (window.siyuan.config.readonly) {
-                            return;
-                        }
-                        const actionElement = hasClosestByClassName(event.target as Element, "b3-list-item__action");
-                        if (actionElement) {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            editLayout(actionElement.parentElement.dataset.name);
-                            window.siyuan.menus.menu.remove();
-                            return;
-                        }
-                        const liElement = hasClosestByClassName(event.target as Element, "b3-list-item");
-                        if (liElement || event.detail) {
-                            const itemData: ISaveLayout = window.siyuan.storage[Constants.LOCAL_LAYOUTS].find((item: ISaveLayout) => {
-                                if (typeof event.detail === "string") {
-                                    return item.name === event.detail;
-                                } else if (liElement) {
-                                    return item.name === liElement.dataset.name;
+                            fetchPost("/api/system/checkWorkspaceDir", {path: localPath.filePaths[0]}, (response) => {
+                                if (response.data.isWorkspace) {
+                                    openWorkspace(localPath.filePaths[0]);
+                                } else {
+                                    confirmDialog("🏗️ " + window.siyuan.languages.createWorkspace, window.siyuan.languages.createWorkspaceTip + `<br><br><code class="fn__code">${escapeHtml(localPath.filePaths[0])}</code>`, () => {
+                                        openWorkspace(localPath.filePaths[0]);
+                                    });
                                 }
                             });
-                            if (itemData) {
-                                fetchPost("/api/system/setUILayout", {layout: itemData.layout}, () => {
-                                    if (itemData.filesPaths) {
-                                        window.siyuan.storage[Constants.LOCAL_FILESPATHS] = itemData.filesPaths;
-                                        setStorageVal(Constants.LOCAL_FILESPATHS, itemData.filesPaths, () => {
-                                            window.location.reload();
-                                        });
-                                    } else {
-                                        window.location.reload();
+                        }
+                    }] : [];
+                    workspaceSubMenu.push({
+                        id: "connectRemoteKernel",
+                        label: window.siyuan.languages.connectRemoteKernel,
+                        icon: "iconCloud",
+                        click: () => manageConnections(),
+                    });
+                    if (workspaces.length + remoteConnections.length > 0) {
+                        workspaceSubMenu.push({id: "separator_1", type: "separator"});
+                    }
+                    workspaces.forEach((item: IWorkspace) => {
+                        workspaceSubMenu.push(workspaceItem(item) as IMenu);
+                    });
+                    remoteConnections.forEach(origin => workspaceSubMenu.push({
+                        label: escapeHtml(window.siyuan.languages.remoteConnection + " · " + origin),
+                        icon: "iconCloud",
+                        click: () => manageConnections(origin),
+                    }));
+                    /// #else
+                    workspaceSubMenu = [{
+                        id: "new",
+                        label: window.siyuan.languages.new,
+                        iconHTML: "",
+                        click() {
+                            const createWorkspaceDialog = openInputDialog({
+                                title: window.siyuan.languages.new,
+                                value: "",
+                                onConfirm: (value, dialog) => {
+                                    fetchPost("/api/system/createWorkspaceDir", {
+                                        path: pathPosix().join(pathPosix().dirname(window.siyuan.config.system.workspaceDir), value)
+                                    }, () => {
+                                        dialog.destroy();
+                                    });
+                                },
+                            });
+                            createWorkspaceDialog.element.setAttribute("data-key", Constants.DIALOG_CREATEWORKSPACE);
+                        }
+                    }, {
+                        id: "openBy",
+                        label: `${window.siyuan.languages.openBy}...`,
+                        iconHTML: "",
+                        click() {
+                            fetchPost("/api/system/getMobileWorkspaces", {}, (response) => {
+                                let selectHTML = "";
+                                response.data.forEach((item: string, index: number) => {
+                                    selectHTML += `<option value="${escapeAttr(escapeHtml(item))}"${index === 0 ? ' selected="selected"' : ""}>${escapeHtml(pathPosix().basename(item))}</option>`;
+                                });
+                                const openWorkspaceDialog = new Dialog({
+                                    title: window.siyuan.languages.openBy,
+                                    content: `<div class="b3-dialog__content">
+            <select class="b3-text-field fn__block">${selectHTML}</select>
+        </div>
+        <div class="b3-dialog__action">
+            <button class="b3-button b3-button--cancel">${window.siyuan.languages.cancel}</button><div class="fn__space"></div>
+            <button class="b3-button b3-button--text">${window.siyuan.languages.confirm}</button>
+        </div>`,
+                                    width: "520px",
+                                });
+                                openWorkspaceDialog.element.setAttribute("data-key", Constants.DIALOG_OPENWORKSPACE);
+                                const btnsElement = openWorkspaceDialog.element.querySelectorAll(".b3-button");
+                                btnsElement[0].addEventListener("click", () => {
+                                    openWorkspaceDialog.destroy();
+                                });
+                                btnsElement[1].addEventListener("click", () => {
+                                    const openPath = openWorkspaceDialog.element.querySelector("select").value;
+                                    if (openPath === window.siyuan.config.system.workspaceDir) {
+                                        openWorkspaceDialog.destroy();
+                                        return;
+                                    }
+                                    confirmDialog(window.siyuan.languages.confirm, `${escapeHtml(pathPosix().basename(window.siyuan.config.system.workspaceDir))} -> ${escapeHtml(pathPosix().basename(openPath))}?`, () => {
+                                        switchWorkspace(openPath);
+                                    });
+                                });
+                            });
+                        }
+                    }];
+                    workspaceSubMenu.push({id: "separator_1", type: "separator"});
+                    workspaces.forEach((item: IWorkspace) => {
+                        workspaceSubMenu.push({
+                            iconHTML: "",
+                            action: "iconCloseRound",
+                            current: window.siyuan.config.system.workspaceDir === item.path,
+                            label: pathPosix().basename(item.path),
+                            bind(menuElement) {
+                                menuElement.addEventListener("click", (event) => {
+                                    if (hasClosestByClassName(event.target as Element, "b3-menu__action")) {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        if (item.path === window.siyuan.config.system.workspaceDir) {
+                                            fetchPost("/api/system/removeWorkspaceDir", {path: item.path});
+                                            return;
+                                        }
+                                        confirmDialog(window.siyuan.languages.deleteOpConfirm, window.siyuan.languages.removeWorkspacePhysically.replace("${x}", () => escapeHtml(item.path)), () => {
+                                            fetchPost("/api/system/removeWorkspaceDirPhysically", {path: item.path});
+                                        }, () => {
+                                            fetchPost("/api/system/removeWorkspaceDir", {path: item.path});
+                                        }, true);
+                                        return;
+                                    }
+                                    confirmDialog(window.siyuan.languages.confirm, `${escapeHtml(pathPosix().basename(window.siyuan.config.system.workspaceDir))} -> ${escapeHtml(pathPosix().basename(item.path))}?`, () => {
+                                        switchWorkspace(item.path);
+                                    });
+                                });
+                            }
+                        });
+                    });
+                    /// #endif
+                    if (!isBrowser() || isInMobileApp()) {
+                        window.siyuan.menus.menu.append(new MenuItem({
+                            id: "workspaceList",
+                            label: window.siyuan.languages.workspaceList,
+                            icon: "iconWorkspace",
+                            type: "submenu",
+                            submenu: workspaceSubMenu,
+                        }).element);
+                    }
+                }
+                const layoutSubMenu = getLayoutSubMenu();
+                if (!window.siyuan.config.readonly) {
+                    window.siyuan.menus.menu.append(new MenuItem({
+                        id: "layout",
+                        label: window.siyuan.languages.layout,
+                        icon: "iconLayout",
+                        type: "submenu",
+                        submenu: layoutSubMenu
+                    }).element);
+                }
+                window.siyuan.menus.menu.append(new MenuItem({
+                    id: "zoomControls",
+                    label: window.siyuan.languages.zoom,
+                    icon: "iconZoomIn",
+                    type: "submenu",
+                    submenu: getZoomSubMenu(),
+                }).element);
+                window.siyuan.menus.menu.append(new MenuItem({id: "separator_1", type: "separator"}).element);
+                if (!window.siyuan.config.readonly) {
+                    if (getOpenNotebookCount() < 2) {
+                        window.siyuan.menus.menu.append(new MenuItem({
+                            id: "dailyNote",
+                            label: window.siyuan.languages.dailyNote,
+                            icon: "iconCalendar",
+                            accelerator: window.siyuan.config.keymap.general.dailyNote.custom,
+                            click: () => {
+                                newDailyNote(app);
+                            }
+                        }).element);
+                    } else {
+                        const submenu: IMenu[] = [];
+                        window.siyuan.notebooks.forEach(item => {
+                            if (!item.closed) {
+                                submenu.push({
+                                    label: escapeHtml(item.name),
+                                    iconHTML: getFileTreeIconHTML(item.icon, "notebook", "b3-menu__icon", true),
+                                    accelerator: window.siyuan.storage[Constants.LOCAL_DAILYNOTEID] === item.id ? window.siyuan.config.keymap.general.dailyNote.custom : "",
+                                    click: () => {
+                                        fetchNewDailyNote(app, item.id);
+                                        window.siyuan.storage[Constants.LOCAL_DAILYNOTEID] = item.id;
+                                        setStorageVal(Constants.LOCAL_DAILYNOTEID, window.siyuan.storage[Constants.LOCAL_DAILYNOTEID]);
                                     }
                                 });
                             }
-                            event.preventDefault();
-                            event.stopPropagation();
-                        }
-                    });
-                    listElement.innerHTML = genListHTML(true);
-                }
-            });
-        }
-        if (!window.siyuan.config.readonly) {
-            window.siyuan.menus.menu.append(new MenuItem({
-                id: "layout",
-                label: window.siyuan.languages.layout,
-                icon: "iconLayout",
-                type: "submenu",
-                submenu: layoutSubMenu
-            }).element);
-        }
-        window.siyuan.menus.menu.append(new MenuItem({
-            id: "zoomControls",
-            label: window.siyuan.languages.zoom,
-            icon: "iconZoomIn",
-            type: "submenu",
-            submenu: getZoomSubMenu(),
-        }).element);
-        window.siyuan.menus.menu.append(new MenuItem({id: "separator_1", type: "separator"}).element);
-        if (!window.siyuan.config.readonly) {
-            if (getOpenNotebookCount() < 2) {
-                window.siyuan.menus.menu.append(new MenuItem({
-                    id: "dailyNote",
-                    label: window.siyuan.languages.dailyNote,
-                    icon: "iconCalendar",
-                    accelerator: window.siyuan.config.keymap.general.dailyNote.custom,
-                    click: () => {
-                        newDailyNote(app);
-                    }
-                }).element);
-            } else {
-                const submenu: IMenu[] = [];
-                window.siyuan.notebooks.forEach(item => {
-                    if (!item.closed) {
-                        submenu.push({
-                            label: escapeHtml(item.name),
-                            iconHTML: getFileTreeIconHTML(item.icon, "notebook", "b3-menu__icon", true),
-                            accelerator: window.siyuan.storage[Constants.LOCAL_DAILYNOTEID] === item.id ? window.siyuan.config.keymap.general.dailyNote.custom : "",
-                            click: () => {
-                                fetchNewDailyNote(app, item.id);
-                                window.siyuan.storage[Constants.LOCAL_DAILYNOTEID] = item.id;
-                                setStorageVal(Constants.LOCAL_DAILYNOTEID, window.siyuan.storage[Constants.LOCAL_DAILYNOTEID]);
-                            }
                         });
+                        window.siyuan.menus.menu.append(new MenuItem({
+                            id: "dailyNote",
+                            label: window.siyuan.languages.dailyNote,
+                            icon: "iconCalendar",
+                            type: "submenu",
+                            submenu
+                        }).element);
                     }
-                });
-                window.siyuan.menus.menu.append(new MenuItem({
-                    id: "dailyNote",
-                    label: window.siyuan.languages.dailyNote,
-                    icon: "iconCalendar",
-                    type: "submenu",
-                    submenu
-                }).element);
-            }
-            if (!window.siyuan.config.readonly) {
-                window.siyuan.menus.menu.append(new MenuItem({
-                    id: "riffCard",
-                    label: window.siyuan.languages.riffCard,
-                    type: "submenu",
-                    icon: "iconRiffCard",
-                    submenu: [{
-                        id: "spaceRepetition",
-                        iconHTML: "",
-                        label: window.siyuan.languages.spaceRepetition,
-                        accelerator: window.siyuan.config.keymap.general.riffCard.custom,
+                    if (!window.siyuan.config.readonly) {
+                        window.siyuan.menus.menu.append(new MenuItem({
+                            id: "riffCard",
+                            label: window.siyuan.languages.riffCard,
+                            type: "submenu",
+                            icon: "iconRiffCard",
+                            submenu: [{
+                                id: "spaceRepetition",
+                                iconHTML: "",
+                                label: window.siyuan.languages.spaceRepetition,
+                                accelerator: window.siyuan.config.keymap.general.riffCard.custom,
+                                click: () => {
+                                    openCard(app);
+                                }
+                            }, {
+                                id: "manage",
+                                iconHTML: "",
+                                label: window.siyuan.languages.manage,
+                                click: () => {
+                                    viewCards(app, "", window.siyuan.languages.all, "");
+                                }
+                            }],
+                        }).element);
+                    }
+                    window.siyuan.menus.menu.append(new MenuItem({
+                        id: "recentDocs",
+                        label: window.siyuan.languages.recentDocs,
+                        icon: "iconRecentDocs",
+                        accelerator: window.siyuan.config.keymap.general.recentDocs.custom,
                         click: () => {
-                            openCard(app);
+                            openRecentDocs();
                         }
-                    }, {
-                        id: "manage",
-                        iconHTML: "",
-                        label: window.siyuan.languages.manage,
+                    }).element);
+                    window.siyuan.menus.menu.append(new MenuItem({
+                        id: "dataHistory",
+                        label: window.siyuan.languages.dataHistory,
+                        icon: "iconHistory",
+                        accelerator: window.siyuan.config.keymap.general.dataHistory.custom,
                         click: () => {
-                            viewCards(app, "", window.siyuan.languages.all, "");
+                            openHistory(app);
                         }
-                    }],
-                }).element);
-            }
-            window.siyuan.menus.menu.append(new MenuItem({
-                id: "recentDocs",
-                label: window.siyuan.languages.recentDocs,
-                icon: "iconRecentDocs",
-                accelerator: window.siyuan.config.keymap.general.recentDocs.custom,
-                click: () => {
-                    openRecentDocs();
+                    }).element);
+                    if (!window.siyuan.config.readonly && getHostCapabilities().documentImportExport) {
+                        window.siyuan.menus.menu.append(new MenuItem({
+                            id: "dataMigration",
+                            label: window.siyuan.languages.dataMigration,
+                            icon: "iconDatabaseBackup",
+                            click: () => {
+                                openDataMigration();
+                            }
+                        }).element);
+                    }
+                    if (getHostCapabilities().importExport) {
+                        window.siyuan.menus.menu.append(new MenuItem({
+                            id: "templateManager",
+                            label: window.siyuan.languages.templateManager,
+                            icon: "iconMarkdown",
+                            click: () => {
+                                const editor = getAllModels().editor.find(item =>
+                                    item.parent.headElement.classList.contains("item--focus"));
+                                openTemplateManager(editor?.editor.protyle.block.rootID || "");
+                            }
+                        }).element);
+                    }
+                    window.siyuan.menus.menu.append(new MenuItem({
+                        id: "lockScreen",
+                        label: window.siyuan.languages.lockScreen,
+                        icon: "iconLock",
+                        accelerator: window.siyuan.config.keymap.general.lockScreen.custom,
+                        click: () => {
+                            lockScreen();
+                        }
+                    }).element);
+                    window.siyuan.menus.menu.append(new MenuItem({id: "separator_2", type: "separator"}).element);
                 }
-            }).element);
-            window.siyuan.menus.menu.append(new MenuItem({
-                id: "dataHistory",
-                label: window.siyuan.languages.dataHistory,
-                icon: "iconHistory",
-                accelerator: window.siyuan.config.keymap.general.dataHistory.custom,
-                click: () => {
-                    openHistory(app);
-                }
-            }).element);
-            if (!window.siyuan.config.readonly && getHostCapabilities().importExport) {
                 window.siyuan.menus.menu.append(new MenuItem({
-                    id: "dataMigration",
-                    label: window.siyuan.languages.dataMigration,
-                    icon: "iconDatabaseBackup",
+                    id: "userGuide",
+                    label: window.siyuan.languages.userGuide,
+                    icon: "iconHelp",
+                    ignore: window.siyuan.config.readonly,
                     click: () => {
-                        openDataMigration();
+                        mountHelp();
                     }
                 }).element);
-            }
-            if (getHostCapabilities().importExport) {
                 window.siyuan.menus.menu.append(new MenuItem({
-                    id: "templateManager",
-                    label: window.siyuan.languages.templateManager,
-                    icon: "iconMarkdown",
+                    id: "feedback",
+                    label: window.siyuan.languages.feedback,
+                    icon: "iconFeedback",
                     click: () => {
-                        const editor = getAllModels().editor.find(item =>
-                            item.parent.headElement.classList.contains("item--focus"));
-                        openTemplateManager(editor?.editor.protyle.block.rootID || "");
+                        if ("zh-CN" === window.siyuan.config.lang) {
+                            openLink(app, "https://ld246.com/article/1649901726096");
+                        } else {
+                            openLink(app, "https://liuyun.io/article/1686530886208");
+                        }
                     }
                 }).element);
-            }
-            window.siyuan.menus.menu.append(new MenuItem({
-                id: "lockScreen",
-                label: window.siyuan.languages.lockScreen,
-                icon: "iconLock",
-                accelerator: window.siyuan.config.keymap.general.lockScreen.custom,
-                click: () => {
-                    lockScreen();
+                /// #if !BROWSER
+                window.siyuan.menus.menu.append(new MenuItem({
+                    id: "debug",
+                    label: window.siyuan.languages.debug,
+                    icon: "iconBug",
+                    click: () => {
+                        ipcRenderer.send(Constants.SIYUAN_CMD, "toggleDevTools");
+                    }
+                }).element);
+                /// #endif
+                if (isIPad() || isInAndroid() || isInHarmony() || !isBrowser()) {
+                    window.siyuan.menus.menu.append(new MenuItem({id: "separator_3", type: "separator"}).element);
+                    window.siyuan.menus.menu.append(new MenuItem({
+                        id: "safeQuit",
+                        label: window.siyuan.languages.safeQuit,
+                        icon: "iconQuit",
+                        warning: true,
+                        click: () => {
+                            exportLayout({
+                                errorExit: true,
+                                cb: exitSiYuan,
+                            });
+                        }
+                    }).element);
                 }
-            }).element);
-            window.siyuan.menus.menu.append(new MenuItem({id: "separator_2", type: "separator"}).element);
-        }
-        window.siyuan.menus.menu.append(new MenuItem({
-            id: "userGuide",
-            label: window.siyuan.languages.userGuide,
-            icon: "iconHelp",
-            ignore: window.siyuan.config.readonly,
-            click: () => {
-                mountHelp();
-            }
-        }).element);
-        window.siyuan.menus.menu.append(new MenuItem({
-            id: "feedback",
-            label: window.siyuan.languages.feedback,
-            icon: "iconFeedback",
-            click: () => {
-                if ("zh-CN" === window.siyuan.config.lang) {
-                    openLink(app, "https://ld246.com/article/1649901726096");
-                } else {
-                    openLink(app, "https://liuyun.io/article/1686530886208");
+                session.show(() => window.siyuan.menus.menu.popup({x: rect.left, y: rect.bottom, h: rect.height}));
+                if (openOnly) {
+                    const menu = window.siyuan.menus.menu;
+                    const activeElement = document.activeElement;
+                    const currentElement = Array.from(menu.element.lastElementChild.children).find(item =>
+                        item.classList.contains("b3-menu__item") &&
+                        !item.classList.contains("b3-menu__item--readonly") &&
+                        !item.hasAttribute("disabled") && item.getBoundingClientRect().height > 0) as HTMLElement;
+                    currentElement?.classList.add("b3-menu__item--current");
+                    currentElement?.focus({preventScroll: true});
+                    currentElement?.scrollIntoView({block: "nearest"});
+                    // 仅在焦点仍位于菜单内时恢复，避免菜单动作打开新界面后抢回原焦点。
+                    menu.removeCB = () => {
+                        if (activeElement instanceof HTMLElement && activeElement.isConnected &&
+                            menu.element.contains(document.activeElement)) {
+                            activeElement.focus({preventScroll: true});
+                        }
+                    };
                 }
+            };
+            if (getHostCapabilities().workspaces) {
+                fetchPost("/api/system/getWorkspaces", {}, (response) => renderMenu(response.data));
+            } else {
+                renderMenu([]);
             }
-        }).element);
-        /// #if !BROWSER
-        window.siyuan.menus.menu.append(new MenuItem({
-            id: "debug",
-            label: window.siyuan.languages.debug,
-            icon: "iconBug",
-            click: () => {
-                ipcRenderer.send(Constants.SIYUAN_CMD, "toggleDevTools");
-            }
-        }).element);
-        /// #endif
-        if (isIPad() || isInAndroid() || isInHarmony() || !isBrowser()) {
-            window.siyuan.menus.menu.append(new MenuItem({id: "separator_3", type: "separator"}).element);
-            window.siyuan.menus.menu.append(new MenuItem({
-                id: "safeQuit",
-                label: window.siyuan.languages.safeQuit,
-                icon: "iconQuit",
-                warning: true,
-                click: () => {
-                    exportLayout({
-                        errorExit: true,
-                        cb: exitSiYuan,
-                    });
-                }
-            }).element);
-        }
-        window.siyuan.menus.menu.popup({x: rect.left, y: rect.bottom, h: rect.height});
-    };
-    if (getHostCapabilities().workspaces) {
-        fetchPost("/api/system/getWorkspaces", {}, (response) => renderMenu(response.data));
-    } else {
-        renderMenu([]);
-    }
+
+        },
+    });
 };
 
 const openWorkspace = (workspace: string) => {
@@ -722,9 +553,7 @@ const openWorkspace = (workspace: string) => {
     if (workspace === window.siyuan.config.system.workspaceDir) {
         return;
     }
-    fetchPost("/api/system/setWorkspaceDir", {
-        path: workspace
-    }, () => {
+    switchWorkspace(workspace, () => {
         ipcRenderer.send(Constants.SIYUAN_OPEN_WORKSPACE, {
             workspace,
             lang: window.siyuan.config.appearance.lang

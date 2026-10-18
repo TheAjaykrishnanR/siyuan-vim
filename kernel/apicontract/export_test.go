@@ -42,6 +42,19 @@ func TestExportOptionsAdmissionOrder(t *testing.T) {
 	}
 }
 
+func TestExportMarkdownTaskMarkerOption(t *testing.T) {
+	for _, extra := range []string{"", `,"preserveTaskMarkers":null`, `,"preserveTaskMarkers":false`, `,"preserveTaskMarkers":true`} {
+		request, err := ExportMdContent.Decode(strings.NewReader(`{"id":"id"` + extra + `}`))
+		if err != nil || request.Validate() != nil || request.PreserveTaskMarkers != strings.Contains(extra, "true") {
+			t.Fatalf("unexpected task marker option: %+v %v", request, err)
+		}
+	}
+	request, err := ExportMdContent.Decode(strings.NewReader(`{"id":"id","preserveTaskMarkers":"true"}`))
+	if err != nil || request.Validate() == nil {
+		t.Fatalf("task marker option validation must remain deferred: %+v %v", request, err)
+	}
+}
+
 func TestExportNotebookFiltering(t *testing.T) {
 	for _, body := range []string{`{}`, `{"notebooks":null}`, `{"notebooks":true}`, `{"notebooks":{}}`} {
 		request, err := ExportNotebooksSY.Decode(strings.NewReader(body))
@@ -86,5 +99,17 @@ func TestExportResourcesOptionalPaths(t *testing.T) {
 	}
 	if _, err := ExportData.Decode(strings.NewReader("ignored body")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExportPreviewJSEmbedCompatibility(t *testing.T) {
+	for _, extra := range []string{"", `,"keepJSEmbed":null`, `,"keepJSEmbed":false`, `,"keepJSEmbed":true`} {
+		request, err := ExportPreviewHTML.Decode(strings.NewReader(`{"id":"id"` + extra + `}`))
+		if err != nil || request.KeepJSEmbed != strings.Contains(extra, "true") {
+			t.Fatalf("unexpected JavaScript embed option: %+v %v", request, err)
+		}
+	}
+	if _, err := ExportPreviewHTML.Decode(strings.NewReader(`{"id":"id","keepJSEmbed":"true"}`)); err == nil {
+		t.Fatal("invalid JavaScript embed option accepted")
 	}
 }

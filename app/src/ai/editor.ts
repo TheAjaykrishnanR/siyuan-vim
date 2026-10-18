@@ -2,23 +2,22 @@ import {fetchAIEditorSSE, IAIEditorMessage, TAIEditorSSEEvent} from "./editorSSE
 import {genUUID} from "../util/genID";
 import {
     focusByOffset,
-    getBlockRanges,
-    getSelectionOffset,
-    setLastNodeRange
+    getBlockRanges
 } from "../protyle/util/selection";
+import {getSelectionOffset, setLastNodeRange} from "../protyle/util/selectionOffsets";
 import {getContenteditableElement} from "../protyle/wysiwyg/getBlock";
 import {hasClosestByAttribute, hasClosestByTag, isInEmbedBlock} from "../protyle/util/hasClosest";
 import {insertHTML} from "../protyle/util/insertHTML";
 import {blockRender} from "../protyle/render/blockRender";
 import {processRender} from "../protyle/util/processCode";
 import {highlightRender} from "../protyle/render/highlightRender";
-import {copyPlainText} from "../protyle/util/compatibility";
+import {copyPlainText, isDisabledFeature} from "../protyle/util/compatibility";
 import {showMessage} from "../dialog/message";
 import {confirmDialog} from "../dialog/confirmDialog";
 import {escapeAriaLabel, escapeHtml} from "../util/escape";
 import {isMobile} from "../util/functions";
 import {Constants} from "../constants";
-import {bindThinkingCardToggle} from "./thinkingCard";
+import {bindThinkingCardToggle, updateThinkingBody} from "./thinkingCard";
 import {BLOCK_SELECTION_MODE_CLASS} from "../protyle/wysiwyg/blockSelection";
 import {normalizeHTMLAssetIFrameBlockDOM} from "../asset/html";
 
@@ -161,7 +160,7 @@ const isMarkdownInlineElement = (element: Element) => {
 };
 
 const sourcePartMarkdown = (protyle: IProtyle, range: Range, editableElement: Element) => {
-    const text = range.toString().replace(new RegExp(Constants.ZWSP, "g"), "");
+    const text = range.toString().replaceAll(Constants.ZWSP, "");
     let fragment: Node = range.cloneContents();
     let ancestor = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE ?
         range.commonAncestorContainer as Element : range.commonAncestorContainer.parentElement;
@@ -373,10 +372,11 @@ const renderTaskPreview = (task: IAIEditorTask, rich = false) => {
 };
 
 const renderTaskReasoning = (task: IAIEditorTask) => {
-    task.thinkingReasoningElement.textContent = task.reasoningContent;
+    updateThinkingBody(task.thinkingBody, () => {
+        task.thinkingReasoningElement.textContent = task.reasoningContent;
+    });
     task.thinkingLatestElement.textContent = task.reasoningContent.replace(/\s+/g, " ").trim();
     task.thinkingLatestElement.scrollLeft = task.thinkingLatestElement.scrollWidth;
-    task.thinkingBody.scrollTop = task.thinkingBody.scrollHeight;
 };
 
 const updateTaskThinkingText = (task: IAIEditorTask) => {
@@ -557,6 +557,7 @@ const startTaskStream = (task: IAIEditorTask) => {
             return;
         }
         task.status = "error";
+        finishTaskReasoning(task);
         task.notice = error instanceof Error ? error.message : String(error);
         task.stopButton.classList.add("fn__none");
         task.actionsElement.classList.remove("fn__none");
@@ -714,6 +715,9 @@ const createTask = (protyle: IProtyle, source: IAIEditorSource) => {
 };
 
 const beginTask = (protyle: IProtyle, source: IAIEditorSource) => {
+    if (isDisabledFeature("ai")) {
+        return;
+    }
     const state = getState(protyle);
     const start = () => {
         if (state.task) {

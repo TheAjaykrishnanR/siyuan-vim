@@ -1,8 +1,38 @@
+// 转义 HTML 文本和双引号属性值，保持 Lute.EscapeHTMLStr 的字符替换规则。
+export const escapeHtmlTextAndAttr = (html: unknown) => {
+    return String(html).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+};
+
 export const escapeHtml = (html: string) => {
     if (!html) {
         return html;
     }
     return html.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+};
+
+// 将纯文本中的 Markdown 标记转义，保留编辑器重新解析时的字面内容。
+export const escapeMarkdownPlainText = (text: string) => {
+    return text.replace(/\\/g, "\\\\")
+        .replace(/\*/g, "\\*")
+        .replace(/_/g, "\\_")
+        .replace(/\[/g, "\\[")
+        .replace(/]/g, "\\]")
+        .replace(/!/g, "\\!")
+        .replace(/`/g, "\\`")
+        .replace(/</g, "\\<")
+        .replace(/>/g, "\\>")
+        .replace(/&/g, "\\&")
+        .replace(/~/g, "\\~")
+        .replace(/\{/g, "\\{")
+        .replace(/}/g, "\\}")
+        .replace(/\(/g, "\\(")
+        .replace(/\)/g, "\\)")
+        .replace(/=/g, "\\=")
+        .replace(/#/g, "\\#")
+        .replace(/\$/g, "\\$")
+        .replace(/\^/g, "\\^")
+        .replace(/\|/g, "\\|")
+        .replace(/\./g, "\\.");
 };
 
 export const stripSearchMark = (html: string) => {

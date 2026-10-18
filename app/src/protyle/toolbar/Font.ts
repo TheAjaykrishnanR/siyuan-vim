@@ -1,6 +1,6 @@
 import {setStorageVal, updateHotkeyTip} from "../util/compatibility";
 import {ToolbarItem} from "./ToolbarItem";
-import {focusByRange} from "../util/selection";
+import {focusByRange} from "../util/selectionOffsets";
 import {Constants} from "../../constants";
 import {hasClosestBlock, hasClosestByAttribute} from "../util/hasClosest";
 import {updateBatchTransaction} from "../wysiwyg/transaction";
@@ -83,9 +83,12 @@ export class Font extends ToolbarItem {
 
     constructor(protyle: IProtyle, menuItem: IMenuItem) {
         super(protyle, menuItem);
-        this.element.addEventListener("click", () => {
+        this.element.addEventListener("click", (event) => {
             if (protyle.toolbar.subElement.dataset.subElementSource === SELECTION_TOOLBAR_SUB_ELEMENT_SOURCE &&
                 !protyle.toolbar.subElement.classList.contains("fn__none")) {
+                if (event instanceof CustomEvent && event.detail?.openOnly) {
+                    return;
+                }
                 protyle.toolbar.subElement.classList.add("fn__none");
                 closeSubElement(protyle.toolbar);
                 focusByRange(protyle.toolbar.range);
@@ -184,7 +187,7 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[],
                 }
                 const preview = getBuiltinInlineStylePreview(key as TBuiltinInlineStyleID);
                 return "<button class=\"color__square ariaLabel\" data-position=\"3south\" data-type=\"style1\" " +
-                    `aria-label="${builtinStyleLabels[key as TBuiltinInlineStyleID]}" style="color:${preview.color};` +
+                    `data-builtin-style-id="${key}" aria-label="${builtinStyleLabels[key as TBuiltinInlineStyleID]}" style="color:${preview.color};` +
                     `background-color:${preview.backgroundColor};">A</button>`;
             }
             const style = getInlineStyleByID(key, data);
@@ -256,7 +259,7 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[],
                         backgroundColor: lastFontStatus[1],
                         color: lastFontStatus[2],
                     };
-                    lastColorHTML += `<button class="color__square ariaLabel" data-position="3south" aria-label="${customLabel || (builtinStyleID ? builtinStyleLabels[builtinStyleID] : window.siyuan.languages.color + (lastFontStatus[1] ? "" : " " + window.siyuan.languages.default))}" ${lastFontStatus[1] ? `style="background-color:${preview.backgroundColor};color:${preview.color}"` : ""} data-type="${lastFontStatus[0]}">A</button>`;
+                    lastColorHTML += `<button class="color__square ariaLabel" data-position="3south" aria-label="${customLabel || (builtinStyleID ? builtinStyleLabels[builtinStyleID] : window.siyuan.languages.color + (lastFontStatus[1] ? "" : " " + window.siyuan.languages.default))}" ${lastFontStatus[1] ? `style="background-color:${preview.backgroundColor};color:${preview.color}"` : ""} data-builtin-style-id="${builtinStyleID || ""}" data-type="${lastFontStatus[0]}">A</button>`;
                     break;
                 }
                 case "clear":
@@ -394,7 +397,9 @@ ${showInlineDirection ? `<div class="fn__hr"></div>
                     protyle.toolbar.element.classList.add("fn__none");
                     openInlineStyleDialog(target.dataset.inlineStyleType as TInlineStyleType);
                 } else if (dataType === "style1") {
-                    applyFontStyle(dataType, encodeStyle1(target.style.backgroundColor, target.style.color));
+                    const builtinID = target.dataset.builtinStyleId as TBuiltinInlineStyleID;
+                    applyFontStyle(dataType, builtinID ? getBuiltinInlineStyleApplication(builtinID).color :
+                        encodeStyle1(target.style.backgroundColor, target.style.color));
                     closeSelectionToolbarAppearance();
                 } else if (dataType === "fontSize") {
                     applyFontStyle(dataType, target.getAttribute("data-value"));

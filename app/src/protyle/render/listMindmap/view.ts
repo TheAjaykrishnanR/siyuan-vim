@@ -1,0 +1,3231 @@
+import {
+    layoutListMindmap,
+    ListMindmapLayoutNode,
+    ListMindmapModel,
+    ListMindmapNodeStyle,
+    ListMindmapPosition,
+    ListMindmapRelation,
+    readListMindmap,
+} from "./model";
+import {routeMindmapRelation, routeManualMindmapRelation, adjustMindmapRoute,
+    MindmapRoutePoint, MindmapManualRoute, MindmapRelationAnchor,
+    projectMindmapRelationAnchor, getMindmapRelationAnchorPoint} from "./routing";
+import {mathRender} from "../mathRender";
+import {getAVRichTextSafeURL} from "../av/richTextValue";
+import {Constants} from "../../../constants";
+import {findMindmapDrop} from "./drop";
+import {destroyTabsRender, tabsRender} from "../tabsRender";
+import {getListMindmapFoldStates, getListMindmapSiblingFoldStates} from "./fold";
+import type {ListMindmapFoldTarget} from "./fold";
+import {clampMindmapPanOffset} from "./pan";
+import {getListMindmapSummaryParentID, getListMindmapSummaryRange, getListMindmapSummarySelection, getListMindmapSummarySnapshot,
+    layoutListMindmapSummaries} from "./summary";
+import type {ListMindmapSummary, ListMindmapSummaryPosition, ListMindmapSummaryRange} from "./summary";
+
+export interface ListMindmapViewOptions {
+    host: HTMLElement;
+    model: ListMindmapModel;
+    readOnly?: boolean;
+    onLockChange?: (locked: boolean) => Promise<boolean>;
+    printLayout?: boolean;
+    labels?: Record<string, string>;
+    cdn?: string;
+    onOpenLink?: (href: string, event: MouseEvent) => void;
+    colors?: () => {label: string, value: string}[];
+    nodeColors?: () => {
+        label: string, color: string, backgroundColor: string,
+        preview?: {color: string, backgroundColor: string},
+    }[];
+    onManageNodeColors?: () => void;
+    onManageLineColors?: () => void;
+    onFullscreen?: (enter: boolean, button: HTMLButtonElement) => void;
+    onInteractionStart?: (event: PointerEvent) => () => void;
+    onEdit?: (id: string, contentHost: HTMLElement, replaceFirstParagraph?: string) => void;
+    onPasteImages?: (id: string, files: File[]) => void;
+    isAddSiblingShortcut?: (event: KeyboardEvent) => boolean;
+    isAddChildShortcut?: (event: KeyboardEvent) => boolean;
+    onRootTitleChange?: (title: string) => void;
+    finishEdit?: () => boolean | void | Promise<boolean | void>;
+    onMove?: (id: string, targetId: string, placement: "before" | "child" | "after") => void;
+    onAdd?: (id: string, kind: "child" | "sibling") => void;
+    onDelete?: (id: string) => boolean | void | Promise<boolean | void>;
+    onFold?: (id: string) => void;
+    onFoldSiblings?: (id: string) => Promise<boolean>;
+    onFoldLevel?: (level: ListMindmapFoldTarget) => Promise<boolean>;
+    onExpandLevelMenu?: (anchor: HTMLElement, select: (level: ListMindmapFoldTarget) => void) => void;
+    onTaskToggle?: (id: string, cycle?: boolean) => void;
+    onTaskMenu?: (id: string, anchor: HTMLElement) => void;
+    onTabTaskToggle?: (id: string, itemId: string) => void;
+    onTabTaskMenu?: (id: string, itemId: string, anchor: HTMLElement) => void;
+    isTaskCycle?: (event: KeyboardEvent) => boolean;
+    isTaskCompletionToggle?: (event: KeyboardEvent) => boolean;
+    onUndo?: () => void;
+    onRedo?: () => void;
+    onNodeStyle?: (id: string, patch: Partial<ListMindmapNodeStyle>) => void;
+    onRelationAdd?: (from: string, to: string) => void;
+    onRelationChange?: (id: string, patch: Partial<ListMindmapRelation>, expected?: string) => void;
+    onRelationDelete?: (id: string) => void;
+    onSummaryAdd?: (from: string, to: string) => Promise<string | undefined>;
+    onSummaryBatchAdd?: (ranges: ListMindmapSummaryRange[], expected: string) => Promise<string[] | undefined>;
+    onSummaryChange?: (id: string, patch: Pick<Partial<ListMindmapSummary>, "label" | "color">, expected?: string) => void;
+    onSummaryDelete?: (id: string) => void;
+    onExit: () => void;
+}
+
+interface PointerState {
+    pointerId: number;
+    rightButton?: boolean;
+    id?: string;
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+    moved: boolean;
+    summary?: boolean;
+    targetId?: string;
+    placement?: "before" | "child" | "after";
+    relation?: {
+        id: string;
+        segment: number;
+        points: MindmapRoutePoint[];
+        original: string;
+        offset: number;
+        valid: boolean;
+        handle: MindmapRoutePoint;
+        endpoint?: "from" | "to";
+        targetId?: string;
+        route?: MindmapManualRoute;
+        anchor?: MindmapRelationAnchor;
+        routeFallback?: boolean;
+    };
+}
+
+const createElement = <T extends keyof HTMLElementTagNameMap>(tag: T, className: string) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    return element;
+};
+
+export class ListMindmapView {
+    private suppressPanContextMenu = false;
+    private readonly options: ListMindmapViewOptions;
+    private model: ListMindmapModel;
+    private readonly viewport: HTMLDivElement;
+    private readonly world: HTMLDivElement;
+    private readonly canvas: HTMLCanvasElement;
+    private readonly toolbar: HTMLDivElement;
+    private readonly inspector: HTMLDivElement;
+    private readonly zoomLabel: HTMLSpanElement;
+    private readonly zoomSlider = createElement("input", "b3-slider");
+    private readonly nodeElements = new Map<string, HTMLDivElement>();
+    private readonly nestedViews = new Map<string, ListMindmapView[]>();
+    private readonly previewID = `mindmap-view-${Lute.NewNodeID()}-`;
+    private readonly relationElements = new Map<string, HTMLButtonElement>();
+    private readonly summaryElements = new Map<string, HTMLDivElement>();
+    private summaryPositions = new Map<string, ListMindmapSummaryPosition>();
+    private readonly summaryStatus = createElement("div", "mindmap-view__route-status");
+    private selectedSummary?: string;
+    private summaryFrom?: string;
+    private summarySelecting = false;
+    private summarySnapshot?: string;
+    private summarySelected = new Set<string>();
+    private summaryRanges: ListMindmapSummaryRange[] = [];
+    private readonly summaryControls = createElement("div", "mindmap-view__inspector mindmap-view__summary-controls");
+    private readonly summaryCount = createElement("span", "");
+    private readonly summaryConfirm = createElement("button", "b3-button b3-button--text");
+    private readonly summaryBox = createElement("div", "mindmap-view__selection-box");
+    private finishSummaryEdit?: (save: boolean) => void;
+    private editingSummary?: string;
+    private readonly buttons = new Map<string, HTMLButtonElement>();
+    private readonly folded = new Map<string, boolean>();
+    private levelSelect?: HTMLSelectElement;
+    private readonly tooltip = createElement("div", "tooltip mindmap-view__tooltip");
+    private tooltipButton?: HTMLButtonElement;
+    private readonly colorProbe = createElement("span", "mindmap-view__color-probe");
+    private positions = new Map<string, ListMindmapPosition>();
+    private edges: {from: string, to: string}[] = [];
+    private bounds = {width: 1, height: 1};
+    private selectedId?: string;
+    private selectedRelation?: string;
+    private selectedEdge?: string;
+    private hoveredLine?: string;
+    private finishRelationEdit?: (save: boolean) => void;
+    private linePaths: {id: string, relation: boolean, summary?: boolean, path: Path2D, arrows?: MindmapRoutePoint[]}[] = [];
+    private relationRoutes = new Map<string, MindmapRoutePoint[]>();
+    private anchorFallbackRoutes = new Set<string>();
+    private readonly routeHandles = new Map<string, HTMLButtonElement>();
+    private readonly routeStatus = createElement("div", "mindmap-view__route-status");
+    private readonly fallbackRoutes = new Set<string>();
+    private routeDragFrame = 0;
+    private relationFrom?: string;
+    private relationPreview?: {x: number, y: number, targetId?: string};
+    private editingId?: string;
+    private pointer?: PointerState;
+    private pointerCapture?: HTMLElement;
+    private pinching = false;
+    private pinch?: {distance: number, scale: number};
+    private pendingPointerId?: number;
+    private endInteraction?: () => void;
+    private linkTimer = 0;
+    private suppressLinkClick = false;
+    private ghost?: HTMLDivElement;
+    private scale = 1;
+    private panning = false;
+    private locked = false;
+    private persistedLocked = false;
+    private offsetX = 0;
+    private offsetY = 0;
+    private foldAnchor?: {id: string, collapsed: boolean};
+    private frame = 0;
+    private initialFit = true;
+    private destroyed = false;
+    private readonly resizeObserver: ResizeObserver;
+    private fullscreenMarker?: Comment;
+    private readonly disposers: (() => void)[] = [];
+    private printTransform?: {scale: number, offsetX: number, offsetY: number};
+
+    constructor(options: ListMindmapViewOptions) {
+        this.options = options;
+        this.model = options.model;
+        this.locked = this.persistedLocked = !!options.model.metadata.viewLocked;
+        this.selectedId = options.model.root.id;
+        options.host.classList.add("mindmap-view");
+        options.host.contentEditable = "false";
+        options.host.setAttribute("role", "group");
+        options.host.setAttribute("aria-label", this.label("mindmap"));
+        options.host.tabIndex = 0;
+        this.toolbar = createElement("div", "mindmap-view__toolbar block__icons");
+        this.toolbar.setAttribute("role", "toolbar");
+        this.toolbar.setAttribute("data-prevent-swipe", "true");
+        this.viewport = createElement("div", "mindmap-view__viewport");
+        this.viewport.setAttribute("data-prevent-swipe", "true");
+        this.canvas = createElement("canvas", "mindmap-view__canvas");
+        this.canvas.setAttribute("aria-hidden", "true");
+        this.world = createElement("div", "mindmap-view__world");
+        this.inspector = createElement("div", "mindmap-view__inspector");
+        this.inspector.setAttribute("data-prevent-swipe", "true");
+        this.inspector.hidden = true;
+        this.zoomLabel = createElement("span", "mindmap-view__zoom");
+        this.viewport.append(this.canvas, this.world);
+        this.tooltip.hidden = true;
+        this.tooltip.setAttribute("role", "tooltip");
+        this.colorProbe.setAttribute("aria-hidden", "true");
+        this.routeStatus.hidden = true;
+        this.routeStatus.setAttribute("role", "status");
+        options.host.append(this.toolbar, this.viewport, this.inspector, this.tooltip, this.colorProbe, this.routeStatus);
+        this.summaryStatus.hidden = true;
+        this.summaryStatus.setAttribute("role", "status");
+        this.summaryStatus.textContent = this.label("listMindmapSummarySelect");
+        options.host.append(this.summaryStatus);
+        this.summaryControls.hidden = true;
+        this.summaryCount.setAttribute("role", "status");
+        this.summaryConfirm.type = "button";
+        this.summaryConfirm.textContent = this.label("confirm");
+        this.summaryConfirm.addEventListener("click", () => void this.confirmSummarySelection());
+        const cancelSummary = createElement("button", "b3-button b3-button--cancel");
+        cancelSummary.type = "button";
+        cancelSummary.textContent = this.label("cancel");
+        cancelSummary.addEventListener("click", () => {
+            this.cancelSummarySelection();
+            this.updateSelection();
+        });
+        const summaryActions = createElement("div", "mindmap-view__summary-actions");
+        summaryActions.append(cancelSummary, this.summaryConfirm);
+        this.summaryControls.append(this.summaryCount, summaryActions);
+        options.host.append(this.summaryControls);
+        this.summaryBox.hidden = true;
+        this.viewport.append(this.summaryBox);
+        this.createToolbar();
+        this.listen(document, "pointerdown", this.dismissControls, {capture: true});
+        this.listen(options.host, "pointerover", this.showButtonTooltip);
+        this.listen(options.host, "focusin", this.showButtonTooltip);
+        ["pointerout", "focusout"].forEach(type => this.listen(options.host, type, this.hideButtonTooltip));
+        this.listen(options.host, "wheel", () => this.tooltip.hidden = true);
+        const themeObserver = new MutationObserver(() => this.refreshLayout());
+        themeObserver.observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme-mode", "style"]});
+        themeObserver.observe(document.head, {childList: true, subtree: true, characterData: true, attributes: true});
+        this.disposers.push(() => themeObserver.disconnect());
+        this.listen(document.head, "load", () => this.refreshLayout(), {capture: true});
+        this.listen(this.viewport, "pointerdown", this.pointerDown);
+        this.listen(this.viewport, "pointermove", this.pointerMove);
+        this.listen(this.viewport, "pointerleave", () => this.setHoveredLine());
+        this.listen(this.viewport, "pointerup", this.pointerUp);
+        this.listen(this.viewport, "touchstart", this.pinchStart, {passive: false});
+        this.listen(this.viewport, "touchmove", this.pinchMove, {passive: false});
+        this.listen(this.viewport, "touchend", this.pinchEnd, {passive: false});
+        this.listen(this.viewport, "touchcancel", this.pinchEnd, {passive: false});
+        this.listen(window, "blur", () => {
+            this.pinching = false;
+            this.pinch = undefined;
+        });
+        this.listen(this.viewport, "contextmenu", (event: MouseEvent) => {
+            if (this.suppressPanContextMenu) {
+                event.preventDefault();
+            }
+        });
+        this.listen(this.viewport, "pointercancel", this.cancelPointer);
+        this.listen(this.viewport, "lostpointercapture", this.cancelPointer);
+        this.listen(window, "pointerup", (event: PointerEvent) => {
+            if (this.pendingPointerId === event.pointerId && !this.pointer) {
+                this.cancelPointer();
+            }
+        }, {capture: true});
+        this.listen(window, "pointercancel", (event: PointerEvent) => {
+            if (this.pendingPointerId === event.pointerId) {
+                this.cancelPointer();
+            }
+        }, {capture: true});
+        this.listen(window, "blur", this.cancelPointer);
+        this.listen(this.viewport, "dblclick", this.doubleClick);
+        this.listen(this.viewport, "click", this.contentClick);
+        this.listen(this.viewport, "wheel", this.wheel, {passive: false});
+        this.listen(this.viewport, "dragstart", (event: Event) => event.preventDefault());
+        this.listen(options.host, "keydown", this.keyDown);
+        this.listen(options.host, "paste", this.pasteImages);
+        // 脑图内部先处理交互，再阻止外层文档将节点操作识别为列表块编辑。
+        ["pointerdown", "pointerup", "pointermove", "pointercancel", "mousedown", "mouseup", "mousemove", "click",
+            "dblclick", "contextmenu", "dragstart", "dragover", "drop", "beforeinput", "input", "compositionstart",
+            "compositionupdate", "compositionend", "copy", "cut", "paste", "focusin", "focusout", "keydown", "keyup",
+            "wheel"].forEach(type => this.listen(options.host, type, event => {
+                if (type === "click" && !event.defaultPrevented && !this.options.onOpenLink &&
+                    (event.target as Element).closest(".mindmap-view__content a[href]")) {
+                    return;
+                }
+                event.stopPropagation();
+            }));
+        this.listen(window, "beforeprint", () => {
+            if (this.pointer?.relation) {
+                this.cancelPointer();
+            }
+            this.printTransform ||= {scale: this.scale, offsetX: this.offsetX, offsetY: this.offsetY};
+            this.fitPrint();
+        });
+        this.listen(window, "afterprint", () => {
+            if (this.printTransform) {
+                Object.assign(this, this.printTransform);
+                this.printTransform = undefined;
+                if (this.options.printLayout) {
+                    this.fitPrint();
+                } else {
+                    this.options.host.style.removeProperty("--mindmap-view-print-height");
+                    this.draw();
+                }
+            }
+        });
+        this.resizeObserver = new ResizeObserver(() => this.refreshLayout());
+        this.resizeObserver.observe(this.viewport);
+        this.update(this.model);
+    }
+
+    private label(key: string) {
+        return this.options.labels?.[key] || window.siyuan?.languages?.[key] || key;
+    }
+
+    private listen(target: EventTarget, event: string, handler: EventListener, options?: AddEventListenerOptions) {
+        target.addEventListener(event, handler, options);
+        this.disposers.push(() => target.removeEventListener(event, handler, options));
+    }
+
+    private makeButton(key: string, icon: string, action: (event: MouseEvent) => void, className = "") {
+        const button = createElement("button", "block__icon block__icon--show " + className);
+        button.type = "button";
+        button.setAttribute("aria-label", this.label(key));
+        // 图标引用现有图标集，避免复制或生成路径数据。
+        if (icon) {
+            button.innerHTML = `<svg aria-hidden="true"><use xlink:href="#${icon}"></use></svg>`;
+        }
+        button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.finishThen(() => action(event));
+        });
+        return button;
+    }
+
+    private showButtonTooltip = (event: Event) => {
+        const button = (event.target as Element).closest<HTMLButtonElement>("button[aria-label]");
+        if (!button || button.closest(".mindmap-view") !== this.options.host ||
+            !(this.toolbar.contains(button) || this.inspector.contains(button) ||
+                button.classList.contains("mindmap-view__add-child") || button.classList.contains("mindmap-view__fold"))) {
+            this.tooltip.hidden = true;
+            return;
+        }
+        if (this.tooltipButton === button && !this.tooltip.hidden) {
+            return;
+        }
+        this.tooltipButton = button;
+        this.tooltip.textContent = button.getAttribute("aria-label");
+        this.tooltip.hidden = false;
+        const host = this.options.host.getBoundingClientRect();
+        const rect = button.getBoundingClientRect();
+        const left = rect.left - host.left + (rect.width - this.tooltip.offsetWidth) / 2;
+        const below = rect.bottom - host.top + 6;
+        this.tooltip.style.left = `${Math.max(4, Math.min(left, host.width - this.tooltip.offsetWidth - 4))}px`;
+        this.tooltip.style.top = `${Math.max(4, below + this.tooltip.offsetHeight < host.height ?
+            below : rect.top - host.top - this.tooltip.offsetHeight - 6)}px`;
+    };
+
+    private hideButtonTooltip = (event: MouseEvent | FocusEvent) => {
+        if (event.relatedTarget instanceof Node && this.tooltipButton?.contains(event.relatedTarget)) {
+            return;
+        }
+        this.tooltip.hidden = true;
+        this.tooltipButton = undefined;
+    };
+
+    private clearSelection() {
+        this.inspector.hidden = true;
+        if (!this.selectedId && !this.selectedRelation && !this.selectedEdge && !this.relationFrom &&
+            !this.selectedSummary && !this.summarySelecting) {
+            return;
+        }
+        this.selectedId = undefined;
+        this.selectedRelation = undefined;
+        this.selectedEdge = undefined;
+        this.relationFrom = undefined;
+        this.selectedSummary = undefined;
+        this.cancelSummarySelection();
+        this.updateSelection();
+    }
+
+    private dismissControls = (event: PointerEvent) => {
+        const target = event.target as Node;
+        this.tooltip.hidden = true;
+        if (this.summarySelecting && (this.viewport.contains(target) || this.summaryControls.contains(target))) {
+            return;
+        }
+        if (target instanceof Element && target.closest(".mindmap-view__relation-editor, .mindmap-view__route-handle, .mindmap-view__summary-editor")) {
+            return;
+        }
+        if (this.inspector.contains(target) || this.buttons.get("style")?.contains(target) ||
+            this.buttons.get("relation")?.contains(target) || this.buttons.get("expandLevel")?.contains(target) ||
+            this.buttons.get("summary")?.contains(target) ||
+            this.levelSelect?.contains(target)) {
+            return;
+        }
+        this.inspector.hidden = true;
+        const node = target instanceof Element && target.closest(".mindmap-view__node, .mindmap-view__relation, .mindmap-view__summary");
+        if (!node || !this.options.host.contains(node)) {
+            this.clearSelection();
+        }
+    };
+
+    private finishThen(action: () => void) {
+        this.finishSummaryEdit?.(true);
+        const finished = this.options.finishEdit?.();
+        if (finished instanceof Promise) {
+            void finished.then(result => {
+                if (result !== false && !this.destroyed) {
+                    action();
+                }
+            }).catch(error => console.error(error));
+        } else if (finished !== false && !this.destroyed) {
+            action();
+        }
+    }
+
+    public setReadOnly(value: boolean) {
+        if (!!this.options.readOnly === value) {
+            return;
+        }
+        this.options.readOnly = value;
+        this.refreshControls();
+        this.update(this.model);
+    }
+
+    public isLocked() {
+        return this.locked;
+    }
+
+    private get readOnly() {
+        return this.locked || this.options.readOnly;
+    }
+
+    private setLocked(value: boolean) {
+        this.locked = value;
+        this.pinching = false;
+        this.pinch = undefined;
+        this.setPanning(false);
+        this.clearSelection();
+        this.refreshControls();
+    }
+
+    private refreshControls() {
+        const value = !!this.readOnly;
+        this.finishSummaryEdit?.(false);
+        this.cancelSummarySelection();
+        this.cancelPointer();
+        this.relationFrom = undefined;
+        this.inspector.hidden = true;
+        this.toolbar.replaceChildren();
+        this.buttons.clear();
+        this.createToolbar();
+        if (this.fullscreenMarker) {
+            this.fullscreenChange();
+        }
+        this.nodeElements.forEach(element => {
+            const addChild = element.querySelector<HTMLButtonElement>(".mindmap-view__add-child");
+            addChild.hidden = value;
+            addChild.disabled = value;
+            element.querySelector<HTMLElement>(".mindmap-view__add-bridge").hidden = value;
+            const task = element.querySelector<HTMLButtonElement>(".mindmap-view__task");
+            if (task) {
+                task.disabled = value;
+            }
+        });
+    }
+
+    private createToolbar() {
+        const add = (id: string, key: string, icon: string, action: () => void) => {
+            const button = this.makeButton(key, icon, action);
+            this.buttons.set(id, button);
+            this.toolbar.append(button);
+        };
+        this.toolbar.append(createElement("span", "mindmap-view__spacer fn__flex-1"));
+        this.levelSelect = undefined;
+        this.options.host.classList.toggle("mindmap-view--locked", this.locked);
+        add("lock", this.locked ? "listMindmapUnlock" : "listMindmapLock", this.locked ? "iconLock" : "iconUnlock", () => {
+            this.finishRelationEdit?.(true);
+            const locked = !this.locked;
+            const button = this.buttons.get("lock");
+            button.disabled = true;
+            void Promise.resolve(this.options.onLockChange?.(locked)).then(result => {
+                if (result !== false && !this.destroyed) {
+                    this.setLocked(locked);
+                    this.update(this.model);
+                }
+            }).catch(error => console.error(error)).finally(() => button.disabled = false);
+        });
+        this.buttons.get("lock").setAttribute("aria-pressed", String(this.locked));
+        this.buttons.get("lock").setAttribute("data-subtype", this.locked ? "lock" : "unlock");
+        if (this.locked) {
+            add("fullscreen", "fullscreen", "iconFullscreen", () => this.toggleFullscreen());
+            return;
+        }
+        if (!this.readOnly) {
+            add("summary", "listMindmapSummary", "iconGroups", () => {
+                this.finishThen(() => {
+                    const selecting = !this.summarySelecting;
+                    this.cancelPointer();
+                    this.cancelSummarySelection();
+                    this.setPanning(false);
+                    this.inspector.hidden = true;
+                    this.relationFrom = undefined;
+                    this.summarySelecting = selecting;
+                    if (selecting) {
+                        this.summarySnapshot = getListMindmapSummarySnapshot(this.model);
+                        this.summaryFrom = getListMindmapSummaryRange(this.model, this.selectedId, this.selectedId).length ?
+                            this.selectedId : undefined;
+                    }
+                    this.updateSelection();
+                });
+            });
+            add("relation", "connect", "iconRoute", () => {
+                this.cancelSummarySelection();
+                this.setPanning(false);
+                this.inspector.hidden = true;
+                this.relationFrom = this.relationFrom ? undefined : this.selectedId;
+                this.relationPreview = undefined;
+                this.updateSelection();
+            });
+        }
+        add("expandLevel", "expandLevel", "iconExpandLevel", () => {
+            const selectedId = this.selectedId;
+            this.options.onExpandLevelMenu?.(this.buttons.get("expandLevel"),
+                level => this.finishThen(() => {
+                    void this.expandToLevel(level, selectedId).catch(error => console.error(error));
+                }));
+        });
+        this.buttons.get("expandLevel").setAttribute("aria-haspopup", "menu");
+        if (!this.options.onExpandLevelMenu) {
+            // 独立导出页面使用原生选择菜单，不依赖应用菜单或移动端框架。
+            const control = createElement("div", "mindmap-view__level-control");
+            this.levelSelect = createElement("select", "mindmap-view__level-select");
+            this.levelSelect.setAttribute("aria-label", this.label("expandLevel"));
+            this.levelSelect.addEventListener("change", () => {
+                const value = this.levelSelect.value;
+                const level = value === "expandAll" || value === "foldAll" ? value : Number(value);
+                this.levelSelect.value = "";
+                this.finishThen(() => void this.expandToLevel(level).catch(error => console.error(error)));
+            });
+            const button = this.buttons.get("expandLevel");
+            button.tabIndex = -1;
+            button.setAttribute("aria-hidden", "true");
+            button.before(control);
+            control.append(button, this.levelSelect);
+        }
+        add("pan", "cursorHand", "iconPan", () => {
+            this.finishThen(() => {
+                this.finishRelationEdit?.(true);
+                this.cancelPointer();
+                this.setPanning(!this.panning);
+                this.relationFrom = undefined;
+                this.relationPreview = undefined;
+                this.inspector.hidden = true;
+                this.updateSelection();
+            });
+        });
+        this.setPanning(this.panning);
+        const zoomControl = createElement("div", "mindmap-view__zoom-control");
+        const zoomActions = createElement("div", "mindmap-view__zoom-actions");
+        this.zoomLabel.tabIndex = 0;
+        this.zoomLabel.setAttribute("aria-label", this.label("zoom"));
+        this.zoomSlider.type = "range";
+        this.zoomSlider.min = "15";
+        this.zoomSlider.max = "250";
+        this.zoomSlider.step = "1";
+        this.zoomSlider.setAttribute("aria-label", this.label("zoom"));
+        this.zoomSlider.oninput = () => this.zoomAt(Number(this.zoomSlider.value) / 100);
+        const reset = this.makeButton("reset", "iconRefresh", () => this.zoomAt(1));
+        zoomActions.append(this.zoomSlider, reset);
+        zoomControl.append(this.zoomLabel, zoomActions);
+        this.toolbar.append(zoomControl);
+        add("fit", "listMindmapFit", "iconFocus", () => this.fit());
+        add("fullscreen", "fullscreen", "iconFullscreen", () => this.toggleFullscreen());
+    }
+
+    private setPanning(value: boolean) {
+        if (value) {
+            this.cancelSummarySelection();
+        }
+        this.panning = value;
+        this.viewport.classList.toggle("mindmap-view__viewport--pan", value);
+        const button = this.buttons.get("pan");
+        button?.classList.toggle("block__icon--active", value);
+        button?.setAttribute("aria-pressed", String(value));
+    }
+
+    public update(model: ListMindmapModel) {
+        if (this.pointer?.relation || this.pointer?.summary) {
+            this.cancelPointer();
+        }
+        if (this.destroyed) {
+            return;
+        }
+        this.model = model;
+        if (!!model.metadata.viewLocked !== this.persistedLocked) {
+            this.persistedLocked = !!model.metadata.viewLocked;
+            this.setLocked(this.persistedLocked);
+        }
+        this.cancelSummarySelection();
+        if (this.levelSelect) {
+            const placeholder = new Option(this.label("expandLevel"), "");
+            placeholder.disabled = true;
+            this.levelSelect.replaceChildren(placeholder);
+            for (let level = 1; level <= 6; level++) {
+                this.levelSelect.add(new Option(this.label("listMindmapExpandToLevel").replace("${level}", String(level)),
+                    String(level)));
+            }
+            this.levelSelect.add(new Option(this.label("expandAll"), "expandAll"));
+            this.levelSelect.add(new Option(this.label("foldAll"), "foldAll"));
+            this.levelSelect.value = "";
+        }
+        const descendants = new Map<string, number>();
+        const ordered = [model.root];
+        for (let i = 0; i < ordered.length; i++) {
+            ordered.push(...ordered[i].children);
+        }
+        for (let i = ordered.length - 1; i >= 0; i--) {
+            descendants.set(ordered[i].id, ordered[i].children.reduce((count, child) => count + 1 + descendants.get(child.id), 0));
+        }
+        this.nodeElements.forEach((element, id) => {
+            if (!model.nodes.has(id)) {
+                this.destroyContentViews(id);
+                this.resizeObserver.unobserve(element);
+                element.remove();
+                this.nodeElements.delete(id);
+            }
+        });
+        model.nodes.forEach((node, id) => {
+            let element = this.nodeElements.get(id);
+            if (!element) {
+                element = createElement("div", "mindmap-view__node");
+                element.dataset.mindmapId = id;
+                element.setAttribute("role", "treeitem");
+                element.append(createElement("div", "mindmap-view__content"));
+                const addBridge = createElement("span", "mindmap-view__add-bridge");
+                addBridge.hidden = !!this.readOnly;
+                addBridge.setAttribute("aria-hidden", "true");
+                element.append(addBridge);
+                const fold = this.makeButton("collapse", "iconLeft", event => {
+                    if (event.altKey) {
+                        void this.toggleSiblingFold(id).catch(error => console.error(error));
+                    } else {
+                        this.toggleFold(id);
+                    }
+                }, "mindmap-view__fold");
+                fold.append(createElement("span", "mindmap-view__fold-count"));
+                element.append(fold);
+                const addChild = this.makeButton("listMindmapChild", "iconAdd", () => {
+                    if (!this.readOnly && this.model.nodes.has(id)) {
+                        this.options.onAdd?.(id, "child");
+                    }
+                }, "mindmap-view__add-child");
+                addChild.hidden = !!this.readOnly;
+                addChild.disabled = !!this.readOnly;
+                element.append(addChild);
+                this.nodeElements.set(id, element);
+                this.world.append(element);
+                this.resizeObserver.observe(element);
+            }
+            element.classList.toggle("mindmap-view__node--virtual", node.virtual);
+            element.classList.toggle("mindmap-view__node--untitled", node.virtual && !model.metadata.rootTitle);
+            if (node.virtual) {
+                element.setAttribute("aria-label", model.metadata.rootTitle || this.label("listMindmapRoot"));
+            }
+            element.classList.toggle("mindmap-view__node--root", id === model.root.id);
+            this.renderTask(element, id);
+            element.classList.toggle("mindmap-view__node--branch", node.children.length > 0);
+            element.style.backgroundColor = model.metadata.nodes[id]?.backgroundColor || "";
+            element.style.color = model.metadata.nodes[id]?.textColor || "";
+            const collapsed = this.folded.get(id) ?? node.collapsed;
+            element.setAttribute("aria-expanded", String(!collapsed));
+            const fold = element.querySelector<HTMLButtonElement>(".mindmap-view__fold");
+            fold.hidden = !node.children.length;
+            fold.classList.toggle("mindmap-view__fold--closed", collapsed);
+            fold.setAttribute("aria-label", this.label(collapsed ? "expand" : "collapse"));
+            fold.querySelector("span").textContent = String(descendants.get(id));
+            if (id !== this.editingId) {
+                const content = this.getContentHost(id);
+                const activeTabs = new Map<string, string>();
+                content.querySelectorAll<HTMLElement>('.tab-item[data-tabs-hidden="false"]').forEach(item => {
+                    activeTabs.set(item.parentElement.id, item.id);
+                });
+                this.destroyContentViews(id);
+                content.replaceChildren();
+                const sourceTabIDs = new Map<string, string>();
+                if (node.virtual) {
+                    content.textContent = this.model.metadata.rootTitle || "";
+                } else {
+                    node.contentBlocks.forEach((block) => {
+                        let clone = block.cloneNode(true) as HTMLElement;
+                        const sourceCanvases = block.querySelectorAll("canvas");
+                        clone.querySelectorAll("canvas").forEach((canvas, index) => {
+                            const source = sourceCanvases[index];
+                            if (source.width && source.height) {
+                                canvas.getContext("2d")?.drawImage(source, 0, 0);
+                            }
+                        });
+                        const previewTabIDs = new Map<string, string>();
+                        // 嵌套脑图使用独立模型生成静态预览，双击仍由外层节点打开正文编辑。
+                        const nested: {host: HTMLElement, model: ListMindmapModel}[] = [];
+                        const selector = '[data-type="NodeMindmap"], [data-type="NodeList"][custom-sy-list-mindmap="1"]';
+                        const nestedLists = Array.from(clone.querySelectorAll<HTMLElement>(selector));
+                        if (clone.matches(selector)) {
+                            nestedLists.unshift(clone);
+                        }
+                        nestedLists.filter(list => !list.parentElement?.closest(selector)).forEach(list => {
+                            const host = createElement("div", "mindmap-view--nested");
+                            nested.push({host, model: readListMindmap(list)});
+                            if (list === clone) {
+                                clone = host;
+                            } else {
+                                list.replaceWith(host);
+                            }
+                        });
+                        // 富文本单元格的列表标记保留为只读内容，其他编辑控件不进入预览。
+                        clone.querySelectorAll(".protyle-attr, .protyle-action:not(.li[data-table-cell-node] > .protyle-action), " +
+                            ".protyle-action__table, .protyle-icons, .mindmap-view")
+                            .forEach(item => item.remove());
+                        [clone, ...Array.from(clone.querySelectorAll<HTMLElement>("*"))].forEach((item) => {
+                            // 页签预览使用独立 DOM 标识切换正文，不携带可提交事务的块身份。
+                            if (["NodeTabs", "NodeTabItem"].includes(item.getAttribute("data-type"))) {
+                                item.id = this.previewID + item.getAttribute("data-node-id");
+                                previewTabIDs.set(item.getAttribute("data-node-id"), item.id);
+                                sourceTabIDs.set(item.id, item.getAttribute("data-node-id"));
+                            }
+                            if (item.hasAttribute("data-node-id")) {
+                                item.classList.add("mindmap-view__preview-block");
+                                item.dataset.mindmapSourceId = item.dataset.nodeId;
+                            }
+                            if (item.hasAttribute("spellcheck")) {
+                                item.classList.add("mindmap-view__text");
+                                item.classList.toggle("mindmap-view__text--trailing-newline", item.textContent.endsWith("\n"));
+                            }
+                            item.removeAttribute("contenteditable");
+                            item.removeAttribute("data-node-id");
+                            item.removeAttribute("spellcheck");
+                            item.removeAttribute("draggable");
+                            // 画布保留显示快照，实例标识不能使预览刷新或销毁源图表。
+                            item.removeAttribute("_echarts_instance_");
+                        });
+                        [clone, ...Array.from(clone.querySelectorAll<HTMLElement>('[data-type="NodeTabs"]'))]
+                            .forEach(tabs => {
+                                const active = activeTabs.get(tabs.id) || previewTabIDs.get(tabs.getAttribute("tabs-active-id"));
+                                if (active) {
+                                    tabs.setAttribute("tabs-active-id", active);
+                                }
+                            });
+                        content.append(clone);
+                        nested.forEach(({host, model}) => {
+                            const view = new ListMindmapView({host, model, readOnly: true,
+                                printLayout: this.options.printLayout, labels: this.options.labels,
+                                cdn: this.options.cdn, onExit: () => {}});
+                            host.setAttribute("role", "img");
+                            host.setAttribute("aria-label", Array.from(model.nodes.values()).map(node =>
+                                node.virtual ? model.metadata.rootTitle || "" :
+                                    node.contentBlocks.map(block => block.textContent).join("\n")).join("\n") || this.label("mindmap"));
+                            Array.from(host.children).forEach((child: HTMLElement) => child.inert = true);
+                            host.tabIndex = -1;
+                            const views = this.nestedViews.get(id) || [];
+                            views.push(view);
+                            this.nestedViews.set(id, views);
+                        });
+                    });
+                }
+                const hasBlankLines = node.contentBlocks.length > 1 || content.textContent.includes("\n") ||
+                    content.querySelectorAll("br").length > 1;
+                const empty = !node.virtual && !hasBlankLines && !content.textContent.replace(/[\u200b\ufeff]/g, "").trim() &&
+                    !content.querySelector("img, svg, video, audio, iframe, canvas, hr, [data-content]");
+                content.classList.toggle("mindmap-view__content--empty", empty);
+                content.dataset.placeholder = this.label("listMindmapPlaceholder");
+                if (content.querySelector('.tabs[data-type="NodeTabs"]')) {
+                    tabsRender(content, {
+                        label: this.label("tabItem"),
+                        readonly: () => true,
+                        taskReadonly: () => !!this.readOnly || !this.options.onTabTaskToggle,
+                        taskLabel: this.label("taskList"),
+                        task: item => {
+                            const itemId = sourceTabIDs.get(item.id);
+                            if (!this.readOnly && itemId) {
+                                this.options.onTabTaskToggle?.(id, itemId);
+                            }
+                        },
+                        taskMenu: item => {
+                            const itemId = sourceTabIDs.get(item.id);
+                            const anchor = content.querySelector<HTMLElement>(`.tabs-task[data-tab-id="${item.id}"]`);
+                            if (!this.readOnly && itemId && anchor) {
+                                this.options.onTabTaskMenu?.(id, itemId, anchor);
+                            }
+                        },
+                        shown: () => this.refreshLayout(),
+                    });
+                }
+                // 副本独立渲染公式，避免源节点的异步渲染完成后脑图仍保留未渲染内容。
+                void mathRender(content, this.options.cdn)?.then(() => this.refreshLayout()).catch(error => console.error(error));
+            }
+        });
+        if (this.selectedId && !model.nodes.has(this.selectedId)) {
+            this.selectedId = undefined;
+            this.inspector.hidden = true;
+        }
+        if (this.selectedRelation && !model.metadata.relations.some(relation => relation.id === this.selectedRelation)) {
+            this.selectedRelation = undefined;
+            this.inspector.hidden = true;
+        }
+        if (this.selectedEdge && !model.nodes.has(this.selectedEdge)) {
+            this.selectedEdge = undefined;
+            this.inspector.hidden = true;
+        }
+        if (this.selectedSummary && !model.metadata.summaries?.some(summary => summary.id === this.selectedSummary)) {
+            this.selectedSummary = undefined;
+            this.inspector.hidden = true;
+        }
+        this.updateRelations();
+        this.updateSummaries();
+        this.updateSelection();
+        this.renderInspector();
+        this.refreshLayout();
+    }
+
+    public getContentHost(id: string): HTMLElement | undefined {
+        return this.nodeElements.get(id)?.querySelector<HTMLElement>(".mindmap-view__content");
+    }
+
+    private destroyContentViews(id: string) {
+        this.nestedViews.get(id)?.forEach(view => view.destroy());
+        this.nestedViews.delete(id);
+        destroyTabsRender(this.getContentHost(id));
+    }
+
+    public getBlockById(id: string) {
+        return this.nodeElements.get(id) ||
+            this.options.host.querySelector<HTMLElement>(`[data-mindmap-source-id="${id}"]`);
+    }
+
+    public revealNode(id: string) {
+        const node = this.nodeElements.get(id);
+        if (!node || node.hidden) {
+            return;
+        }
+        const reveal = () => {
+            if (this.destroyed || node.hidden) {
+                return;
+            }
+            const viewport = this.viewport.getBoundingClientRect();
+            const rect = node.getBoundingClientRect();
+            if (!viewport.width || !viewport.height || !rect.width || !rect.height) {
+                return;
+            }
+            const margin = 16;
+            const x = rect.left < viewport.left + margin ? viewport.left + margin - rect.left :
+                rect.right > viewport.right - margin ? viewport.right - margin - rect.right : 0;
+            const y = rect.top < viewport.top + margin ? viewport.top + margin - rect.top :
+                rect.bottom > viewport.bottom - margin ? viewport.bottom - margin - rect.bottom : 0;
+            if (x || y) {
+                const bounded = this.boundedPan(this.offsetX + x, this.offsetY + y);
+                this.offsetX = bounded.x;
+                this.offsetY = bounded.y;
+                this.draw();
+            }
+        };
+        if (this.frame) {
+            requestAnimationFrame(reveal);
+        } else {
+            reveal();
+        }
+    }
+
+    public getSelectedId() {
+        return this.selectedId;
+    }
+
+    public focusNode(id: string) {
+        if (this.destroyed || !this.model.nodes.has(id)) {
+            return;
+        }
+        this.selectNode(id);
+        this.options.host.focus({preventScroll: true});
+    }
+
+    public setEditing(id?: string) {
+        if (this.editingId) {
+            this.nodeElements.get(this.editingId)?.classList.remove("mindmap-view__node--editing");
+        }
+        this.editingId = id;
+        if (id) {
+            this.destroyContentViews(id);
+            this.selectNode(id);
+            this.nodeElements.get(id)?.classList.add("mindmap-view__node--editing");
+        }
+        this.refreshLayout();
+    }
+
+    public refreshLayout() {
+        if (this.destroyed || this.frame || this.pointer?.relation) {
+            return;
+        }
+        this.frame = requestAnimationFrame(() => {
+            this.frame = 0;
+            if (this.pointer?.relation) {
+                return;
+            }
+            if (!this.viewport.clientWidth || !this.viewport.clientHeight) {
+                return;
+            }
+            // 同一帧内先恢复测量，布局完成后再隐藏折叠后代，避免展开时读取到零尺寸。
+            this.nodeElements.forEach(element => element.hidden = false);
+            const makeLayoutNode = (id: string): ListMindmapLayoutNode => {
+                const node = this.model.nodes.get(id);
+                const element = this.nodeElements.get(id);
+                return {
+                    id,
+                    width: Math.max(1, element.offsetWidth),
+                    height: Math.max(1, element.offsetHeight),
+                    collapsed: this.folded.get(id) ?? node.collapsed,
+                    children: node.children.map(child => makeLayoutNode(child.id)),
+                };
+            };
+            const anchorId = this.editingId || this.foldAnchor?.id ||
+                this.model.metadata.relations.find(relation => relation.id === this.selectedRelation)?.from;
+            const previous = anchorId ? this.positions.get(anchorId) : undefined;
+            const layoutRoot = makeLayoutNode(this.model.root.id);
+            const summarySizes = new Map<string, {width: number, height: number}>();
+            this.summaryElements.forEach((element, id) => {
+                element.hidden = false;
+                summarySizes.set(id, {width: Math.max(1, element.offsetWidth), height: Math.max(1, element.offsetHeight)});
+            });
+            const summaries = (this.model.metadata.summaries || []).map(summary => ({
+                nodeIds: summary.nodeIds, height: summarySizes.get(summary.id)?.height || 0,
+            }));
+            let result = layoutListMindmap(layoutRoot, {summaries});
+            const horizontalGaps = new Map<string, number>();
+            const verticalGaps = new Map<string, number>();
+            const reserve = (gaps: Map<string, number>, id: string, size: number) => {
+                gaps.set(id, Math.max(gaps.get(id) || 0, size));
+            };
+            const ancestors = (id: string) => {
+                const path: string[] = [];
+                while (id) {
+                    path.unshift(id);
+                    id = result.nodes.get(id)?.parentId;
+                }
+                return path;
+            };
+            // 只撑开关系线两端之间的分支边界，其他节点保留默认间距。
+            this.model.metadata.relations.forEach(relation => {
+                if (!relation.label?.trim() || !result.nodes.has(relation.from) || !result.nodes.has(relation.to)) {
+                    return;
+                }
+                const label = this.relationElements.get(relation.id);
+                if (label) {
+                    label.hidden = false;
+                    const from = result.nodes.get(relation.from);
+                    const to = result.nodes.get(relation.to);
+                    const fromPath = ancestors(from.id);
+                    const toPath = ancestors(to.id);
+                    let common = 0;
+                    while (common < Math.min(fromPath.length, toPath.length) && fromPath[common] === toPath[common]) {
+                        common++;
+                    }
+                    if (common < fromPath.length && common < toPath.length) {
+                        const lower = from.y < to.y ? toPath[common] : fromPath[common];
+                        reserve(verticalGaps, lower, label.offsetHeight + 32);
+                    }
+                    if (from.x + from.width <= to.x || to.x + to.width <= from.x) {
+                        const right = from.x < to.x ? to : from;
+                        reserve(horizontalGaps, right.id, label.offsetWidth + 32);
+                    }
+                }
+            });
+            if (horizontalGaps.size || verticalGaps.size) {
+                result = layoutListMindmap(layoutRoot, {horizontalGaps, verticalGaps, summaries});
+            }
+            this.positions = result.nodes;
+            this.summaryPositions = layoutListMindmapSummaries(this.model, this.positions, summarySizes);
+            this.relationRoutes.clear();
+            this.fallbackRoutes.clear();
+            this.anchorFallbackRoutes.clear();
+            this.edges = result.edges;
+            this.bounds = result;
+            let top = 0;
+            let left = 0;
+            this.summaryPositions.forEach(position => {
+                top = Math.min(top, position.top - 32, position.labelY - 32);
+                this.bounds.width = Math.max(this.bounds.width, position.labelX + position.width + 32);
+                this.bounds.height = Math.max(this.bounds.height, position.bottom + 32, position.labelY + position.height + 32);
+            });
+            // 每条连接独立避让节点和按钮，已有关系线不影响路径选择。
+            this.model.metadata.relations.forEach((relation) => {
+                const from = this.positions.get(relation.from);
+                const to = this.positions.get(relation.to);
+                if (from && to) {
+                    const points = this.calculateRelationRoute(relation, from, to);
+                    this.relationRoutes.set(relation.id, points);
+                    points.forEach(point => {
+                        top = Math.min(top, point.y - 24);
+                        left = Math.min(left, point.x - 100);
+                        this.bounds.width = Math.max(this.bounds.width, point.x + 100);
+                        this.bounds.height = Math.max(this.bounds.height, point.y + 24);
+                    });
+                }
+            });
+            if (top < 0 || left < 0) {
+                this.positions.forEach(position => {
+                    position.y -= top;
+                    position.x -= left;
+                });
+                this.relationRoutes.forEach(points => points.forEach(point => {
+                    point.x -= left;
+                    point.y -= top;
+                }));
+                this.summaryPositions.forEach(position => {
+                    position.x -= left;
+                    position.labelX -= left;
+                    position.top -= top;
+                    position.bottom -= top;
+                    position.labelY -= top;
+                });
+                this.bounds.height -= top;
+                this.bounds.width -= left;
+            }
+            this.nodeElements.forEach((element, id) => {
+                const position = this.positions.get(id);
+                element.hidden = !position;
+                if (position) {
+                    element.style.left = `${position.x}px`;
+                    element.style.top = `${position.y - (id === this.model.root.id ? 1 : 3)}px`;
+                }
+            });
+            // 编辑、折叠或调整路径时固定操作节点，避免整棵树随布局边界跳动。
+            const current = anchorId ? this.positions.get(anchorId) : undefined;
+            if (previous && current) {
+                this.offsetX += (previous.x - current.x) * this.scale;
+                this.offsetY += (previous.y - current.y) * this.scale;
+            }
+            if (this.foldAnchor && (this.folded.get(this.foldAnchor.id) ??
+                this.model.nodes.get(this.foldAnchor.id)?.collapsed) === this.foldAnchor.collapsed) {
+                this.foldAnchor = undefined;
+            }
+            if (this.printTransform || this.options.printLayout) {
+                this.fitPrint();
+            } else if (this.initialFit) {
+                this.initialFit = false;
+                this.fit();
+            } else {
+                const bounded = this.boundedPan(this.offsetX, this.offsetY);
+                this.offsetX = bounded.x;
+                this.offsetY = bounded.y;
+                this.draw();
+            }
+        });
+    }
+
+    private updateSummaries() {
+        this.summaryElements.forEach((element, id) => {
+            if (!this.model.metadata.summaries?.some(summary => summary.id === id)) {
+                this.resizeObserver.unobserve(element);
+                element.remove();
+                this.summaryElements.delete(id);
+            }
+        });
+        (this.model.metadata.summaries || []).forEach(summary => {
+            let element = this.summaryElements.get(summary.id);
+            if (!element) {
+                element = createElement("div", "mindmap-view__node mindmap-view__node--summary mindmap-view__summary");
+                element.setAttribute("role", "button");
+                element.tabIndex = 0;
+                element.dataset.summaryId = summary.id;
+                element.addEventListener("click", event => {
+                    event.stopPropagation();
+                    if (!this.panning && !this.suppressLinkClick) {
+                        this.finishThen(() => this.selectSummary(summary.id));
+                    }
+                });
+                element.addEventListener("focus", () => this.finishThen(() => this.selectSummary(summary.id)));
+                element.addEventListener("keydown", event => {
+                    if (!event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+                        (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (!event.repeat) {
+                            this.finishThen(() => this.selectSummary(summary.id));
+                        }
+                    }
+                });
+                this.summaryElements.set(summary.id, element);
+                this.world.append(element);
+                this.resizeObserver.observe(element);
+            }
+            element.textContent = summary.label || this.label("listMindmapSummary");
+            element.setAttribute("aria-label", element.textContent);
+            element.style.color = summary.color || "";
+        });
+    }
+
+    private selectSummary(id: string) {
+        this.selectedSummary = id;
+        this.selectedId = undefined;
+        this.selectedRelation = undefined;
+        this.selectedEdge = undefined;
+        this.relationFrom = undefined;
+        this.cancelSummarySelection();
+        this.inspector.hidden = !!this.readOnly;
+        this.updateSelection();
+        this.renderInspector();
+    }
+
+    private finishSummaryRange(id: string) {
+        const from = this.summaryFrom;
+        if (!from || !getListMindmapSummaryRange(this.model, from, id).length) {
+            return;
+        }
+        this.cancelSummarySelection();
+        this.updateSelection();
+        void this.options.onSummaryAdd?.(from, id).then(summaryId => {
+            if (summaryId && !this.destroyed) {
+                this.selectSummary(summaryId);
+                requestAnimationFrame(() => {
+                    if (!this.destroyed && this.selectedSummary === summaryId) {
+                        this.editSummaryLabel(summaryId);
+                    }
+                });
+            }
+        }).catch(error => console.error(error));
+    }
+
+    private cancelSummarySelection() {
+        this.summarySelecting = false;
+        this.summaryFrom = undefined;
+        this.summarySnapshot = undefined;
+        this.summarySelected.clear();
+        this.summaryRanges = [];
+        this.summaryControls.hidden = true;
+        this.summaryBox.hidden = true;
+    }
+
+    private previewSummarySelection() {
+        const {ranges, conflict} = getListMindmapSummarySelection(this.model, this.summarySelected);
+        this.summaryRanges = ranges;
+        this.summaryConfirm.disabled = conflict || !ranges.length || !this.options.onSummaryBatchAdd;
+        this.summaryCount.textContent = conflict ? this.label("listMindmapSummaryConflict") :
+            this.label("listMindmapSummaryBatch").replace("${count}", String(ranges.length));
+        this.summaryControls.hidden = false;
+        this.updateSelection();
+    }
+
+    private async confirmSummarySelection() {
+        if (!this.summarySelecting || this.summaryConfirm.disabled || this.readOnly) {
+            return;
+        }
+        const ranges = this.summaryRanges;
+        const expected = this.summarySnapshot;
+        this.summaryConfirm.disabled = true;
+        let ids: string[];
+        try {
+            ids = await this.options.onSummaryBatchAdd?.(ranges, expected);
+        } catch (error) {
+            console.error(error);
+        }
+        if (this.destroyed) {
+            return;
+        }
+        this.cancelSummarySelection();
+        if (ids?.length === 1) {
+            this.selectSummary(ids[0]);
+            requestAnimationFrame(() => {
+                if (!this.destroyed && this.selectedSummary === ids[0]) {
+                    this.editSummaryLabel(ids[0]);
+                }
+            });
+        } else {
+            this.updateSelection();
+        }
+    }
+
+    private editSummaryLabel(id: string) {
+        const summary = this.model.metadata.summaries?.find(item => item.id === id);
+        const position = this.summaryPositions.get(id);
+        if (this.readOnly || !summary || !position) {
+            return;
+        }
+        this.finishSummaryEdit?.(true);
+        this.finishRelationEdit?.(true);
+        this.inspector.hidden = true;
+        const expected = JSON.stringify(summary);
+        const input = createElement("input", "b3-text-field mindmap-view__summary-editor");
+        input.type = "text";
+        input.value = summary.label;
+        input.setAttribute("aria-label", this.label("listMindmapSummary"));
+        input.style.left = `${position.labelX}px`;
+        input.style.top = `${position.labelY}px`;
+        this.editingSummary = id;
+        let finished = false;
+        const finish = (save: boolean) => {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            this.finishSummaryEdit = undefined;
+            this.editingSummary = undefined;
+            input.remove();
+            if (save && input.value !== summary.label) {
+                this.options.onSummaryChange?.(id, {label: input.value}, expected);
+            }
+            this.draw();
+        };
+        this.finishSummaryEdit = finish;
+        input.addEventListener("blur", () => finish(true));
+        input.addEventListener("keydown", event => {
+            if (!event.isComposing && (event.key === "Enter" || event.key === "Escape")) {
+                event.preventDefault();
+                event.stopPropagation();
+                finish(event.key === "Enter");
+                this.options.host.focus({preventScroll: true});
+            }
+        });
+        this.world.append(input);
+        this.draw();
+        input.focus();
+        input.select();
+    }
+
+    private drawSummaries(context: CanvasRenderingContext2D,
+                          resolveStyle: (color: string, selected: boolean, hovered: boolean) => {color: string, width: number}) {
+        (this.model.metadata.summaries || []).forEach(summary => {
+            const position = this.summaryPositions.get(summary.id);
+            const element = this.summaryElements.get(summary.id);
+            if (!element) {
+                return;
+            }
+            element.hidden = !position;
+            if (!position) {
+                return;
+            }
+            const {x, top, bottom, labelX, labelY} = position;
+            const radius = Math.min(6, (bottom - top) / 2);
+            const path = new Path2D();
+            path.moveTo(x - 10, top);
+            if (bottom > top) {
+                path.lineTo(x - radius, top);
+                path.quadraticCurveTo(x, top, x, top + radius);
+                path.lineTo(x, bottom - radius);
+                path.quadraticCurveTo(x, bottom, x - radius, bottom);
+                path.lineTo(x - 10, bottom);
+                path.moveTo(x, (top + bottom) / 2);
+            }
+            path.lineTo(labelX - 6, (top + bottom) / 2);
+            const selected = this.selectedSummary === summary.id && !this.printTransform && !this.options.printLayout;
+            const hovered = this.hoveredLine === `summary:${summary.id}` && !this.printTransform && !this.options.printLayout;
+            const style = resolveStyle(summary.color, selected, hovered);
+            context.strokeStyle = style.color;
+            context.lineWidth = style.width;
+            context.setLineDash([]);
+            context.stroke(path);
+            this.linePaths.push({id: summary.id, relation: false, summary: true, path});
+            element.style.left = `${labelX}px`;
+            element.style.top = `${labelY}px`;
+            element.style.visibility = this.editingSummary === summary.id ? "hidden" : "";
+            element.classList.toggle("mindmap-view__summary--selected", selected);
+            element.classList.toggle("mindmap-view__node--selected", selected);
+            element.setAttribute("aria-pressed", String(selected));
+        });
+    }
+
+    private updateRelations() {
+        this.relationElements.forEach((element, id) => {
+            if (!this.model.metadata.relations.some(relation => relation.id === id)) {
+                element.remove();
+                this.relationElements.delete(id);
+            }
+        });
+        this.model.metadata.relations.forEach((relation) => {
+            let element = this.relationElements.get(relation.id);
+            if (!element) {
+                element = createElement("button", "mindmap-view__relation");
+                element.type = "button";
+                element.dataset.relationId = relation.id;
+                element.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    this.finishThen(() => {
+                        this.selectedRelation = relation.id;
+                        this.selectedSummary = undefined;
+                        this.cancelSummarySelection();
+                        this.selectedEdge = undefined;
+                        this.relationFrom = undefined;
+                        this.selectedId = undefined;
+                        this.updateSelection();
+                        if (!this.readOnly) {
+                            this.inspector.hidden = false;
+                            this.renderInspector();
+                        }
+                    });
+                });
+                this.relationElements.set(relation.id, element);
+                this.world.append(element);
+            }
+            element.textContent = relation.label || "";
+            element.setAttribute("aria-label", relation.label || this.label("connect"));
+            element.style.color = relation.color || "";
+        });
+    }
+
+    private routingObstacles() {
+        return [...this.positions.values()].map(node => ({...node,
+            controlY: node.y + (node.id === this.model.root.id ? node.height / 2 : node.height),
+        })).concat([...this.summaryPositions.values()].map(summary => ({
+            id: `summary:${summary.id}`, x: summary.x - 10, y: Math.min(summary.top, summary.labelY),
+            width: summary.labelX + summary.width - summary.x + 10,
+            height: Math.max(summary.bottom, summary.labelY + summary.height) - Math.min(summary.top, summary.labelY),
+            controlY: summary.top,
+        })));
+    }
+
+    private relationPath(id: string | undefined, from: ListMindmapPosition, to: ListMindmapPosition, label?: HTMLElement) {
+        let points = id ? this.relationRoutes.get(id) : undefined;
+        if (!points) {
+            points = this.calculateRelationRoute(this.model.metadata.relations.find(relation => relation.id === id), from, to);
+            if (id) {
+                this.relationRoutes.set(id, points);
+            }
+        }
+        if (points.length < 2) {
+            return;
+        }
+        const end = points[points.length - 1];
+        const previous = points[points.length - 2];
+        const start = points[0];
+        const next = points[1];
+        // 按整条路径限制箭头大小，短尾段不会把长关系线的箭头压小。
+        const arrowSizeLimit = points.slice(1).reduce((length, point, i) =>
+            length + Math.hypot(point.x - points[i].x, point.y - points[i].y), 0) / 3;
+        // 重合路径从同一端绘制，避免反向虚线填满正向虚线的间隙。
+        const drawingPoints = (points[0].x - end.x || points[0].y - end.y) > 0 ? [...points].reverse() : points;
+        const path = new Path2D();
+        path.moveTo(drawingPoints[0].x, drawingPoints[0].y);
+        for (let i = 1; i < drawingPoints.length - 1; i++) {
+            const a = drawingPoints[i - 1];
+            const b = drawingPoints[i];
+            const c = drawingPoints[i + 1];
+            const before = Math.hypot(b.x - a.x, b.y - a.y);
+            const after = Math.hypot(c.x - b.x, c.y - b.y);
+            const radius = Math.min(8, before / 2, after / 2);
+            path.lineTo(b.x + (a.x - b.x) * radius / before, b.y + (a.y - b.y) * radius / before);
+            path.quadraticCurveTo(b.x, b.y, b.x + (c.x - b.x) * radius / after, b.y + (c.y - b.y) * radius / after);
+        }
+        const drawingEnd = drawingPoints[drawingPoints.length - 1];
+        path.lineTo(drawingEnd.x, drawingEnd.y);
+        if (!label) {
+            return {path, start, next, end, previous, arrowSizeLimit, labelPoint: undefined as MindmapRoutePoint | undefined};
+        }
+        const width = label.offsetWidth;
+        const height = label.offsetHeight;
+        const segments = points.slice(1).map((p, i) => ({a: points[i], b: p,
+            length: Math.hypot(p.x - points[i].x, p.y - points[i].y)})).sort((a, b) => b.length - a.length);
+        const nodes = this.routingObstacles();
+        const available = (p: MindmapRoutePoint) => !nodes.some(node =>
+            p.x + width / 2 > node.x - 4 && p.x - width / 2 < node.x + node.width + 4 &&
+            p.y + height / 2 > node.y - 4 && p.y - height / 2 < node.y + node.height + 4);
+        let labelPoint: MindmapRoutePoint;
+        for (const segment of segments) {
+            const candidates = [0.5, 0.25, 0.75].map(ratio => ({
+                x: segment.a.x + (segment.b.x - segment.a.x) * ratio,
+                y: segment.a.y + (segment.b.y - segment.a.y) * ratio,
+            }));
+            labelPoint = candidates.find(available);
+            if (labelPoint) {
+                break;
+            }
+        }
+        // 调整关系线时隐藏文字，保留测量尺寸，避免遮挡手柄或改变节点布局。
+        label.style.visibility = !labelPoint || (id === this.selectedRelation && !this.readOnly &&
+            !this.printTransform && !this.options.printLayout) ? "hidden" : "";
+        return {path, start, next, end, previous, arrowSizeLimit, labelPoint};
+    }
+
+    private resolveRelationRoute(relation: ListMindmapRelation | undefined, from: ListMindmapPosition,
+                                 to: ListMindmapPosition, allowAnchorFallback = true) {
+        const obstacles = this.routingObstacles();
+        if (relation?.route) {
+            const points = routeManualMindmapRelation(from, to, obstacles, relation.route, relation);
+            if (points.length >= 2) {
+                return {points, routeFallback: false, anchorFallback: false};
+            }
+        }
+        const points = routeMindmapRelation(from, to, obstacles, undefined, relation);
+        const routeFallback = !!relation?.route;
+        if (points.length >= 2 || !allowAnchorFallback || (!relation?.fromAnchor && !relation?.toAnchor)) {
+            return {points, routeFallback, anchorFallback: false};
+        }
+        // 布局变化时保留原约束，临时自动选取接入点；再次可用后恢复保存的位置。
+        return {points: routeMindmapRelation(from, to, obstacles), routeFallback, anchorFallback: true};
+    }
+
+    private calculateRelationRoute(relation: ListMindmapRelation | undefined, from: ListMindmapPosition, to: ListMindmapPosition) {
+        const result = this.resolveRelationRoute(relation, from, to);
+        if (relation) {
+            this.fallbackRoutes.delete(relation.id);
+            this.anchorFallbackRoutes.delete(relation.id);
+            if (result.routeFallback) {
+                this.fallbackRoutes.add(relation.id);
+            }
+            if (result.anchorFallback) {
+                this.anchorFallbackRoutes.add(relation.id);
+            }
+        }
+        return result.points;
+    }
+
+    private renderRouteControls() {
+        const id = this.selectedRelation;
+        const drag = this.pointer?.relation;
+        const editable = !this.readOnly && !this.printTransform && !this.options.printLayout && !this.finishRelationEdit;
+        const points = editable && !drag?.endpoint ? drag?.points || this.relationRoutes.get(id) || [] : [];
+        const visible = new Set<string>();
+        for (let i = 0; i < points.length - 1; i++) {
+            const a = points[i];
+            const b = points[i + 1];
+            if (Math.hypot(b.x - a.x, b.y - a.y) < 12 || (drag && drag.segment !== i)) {
+                continue;
+            }
+            const horizontal = a.y === b.y;
+            let x = this.offsetX + (a.x + b.x) / 2 * this.scale;
+            let y = this.offsetY + (a.y + b.y) / 2 * this.scale;
+            if (drag) {
+                x = this.offsetX + (drag.handle.x + (horizontal ? 0 : drag.offset)) * this.scale;
+                y = this.offsetY + (drag.handle.y + (horizontal ? drag.offset : 0)) * this.scale;
+            }
+            const key = `${id}:${i}`;
+            visible.add(key);
+            const handle = this.getRouteHandle(id, i);
+            handle.style.left = `${x}px`;
+            handle.style.top = `${y}px`;
+            handle.style.cursor = horizontal ? "ns-resize" : "ew-resize";
+        }
+        const route = editable ? this.relationRoutes.get(id) : undefined;
+        if (route?.length >= 2) {
+            (["from", "to"] as const).forEach(endpoint => {
+                visible.add(`${id}:${endpoint}`);
+                const handle = this.getRouteHandle(id, endpoint);
+                const point = drag?.endpoint === endpoint && this.pointer.moved ? drag.handle :
+                    route[endpoint === "from" ? 0 : route.length - 1];
+                handle.style.left = `${this.offsetX + point.x * this.scale}px`;
+                handle.style.top = `${this.offsetY + point.y * this.scale}px`;
+            });
+        }
+        this.routeHandles.forEach((handle, key) => {
+            if (!visible.has(key)) {
+                handle.remove();
+                this.routeHandles.delete(key);
+            }
+        });
+        const invalid = drag && !drag.valid;
+        const anchorFallback = !drag && this.anchorFallbackRoutes.size > 0;
+        const routeFallback = drag ? drag.valid && drag.routeFallback :
+            this.readOnly ? this.fallbackRoutes.size > 0 : this.fallbackRoutes.has(id);
+        this.viewport.classList.toggle("mindmap-view__viewport--route-invalid", !!invalid);
+        this.routeStatus.hidden = !!this.options.printLayout || !!this.printTransform ||
+            (!invalid && !anchorFallback && !routeFallback);
+        this.routeStatus.textContent = this.label(invalid ? drag.anchor ? "listMindmapAnchorInvalid" : "invalid" :
+            anchorFallback ? "listMindmapAnchorFallback" : "listMindmapRouteFallback");
+    }
+
+    private getRouteHandle(id: string, part: number | "from" | "to") {
+        const key = `${id}:${part}`;
+        let handle = this.routeHandles.get(key);
+        if (handle) {
+            return handle;
+        }
+        handle = createElement("button", "mindmap-view__route-handle");
+        handle.type = "button";
+        const endpoint = typeof part === "string" ? part : undefined;
+        if (endpoint) {
+            handle.classList.add("mindmap-view__route-endpoint");
+            handle.dataset.endpoint = endpoint;
+        }
+        handle.setAttribute("aria-label", this.label(endpoint ?
+            endpoint === "from" ? "listMindmapRouteStart" : "listMindmapRouteEnd" : "listMindmapRouteHandle"));
+        handle.addEventListener("pointerdown", event => {
+            event.stopPropagation();
+            if (event.button === 0 && !this.readOnly && !this.pointer) {
+                event.preventDefault();
+                this.preparePointer(event);
+                this.finishThen(() => {
+                    if (this.pendingPointerId === event.pointerId) {
+                        this.beginRouteDrag(event, id, typeof part === "number" ? part : 0, endpoint);
+                    }
+                });
+            }
+        });
+        handle.addEventListener("dblclick", event => {
+            event.stopPropagation();
+            this.resetRelationRoute(id);
+        });
+        this.routeHandles.set(key, handle);
+        this.viewport.append(handle);
+        return handle;
+    }
+
+    private beginRouteDrag(event: PointerEvent, id: string, segment: number, endpoint?: "from" | "to") {
+        const relation = this.model.metadata.relations.find(item => item.id === id);
+        const points = this.relationRoutes.get(id);
+        if (this.readOnly || !relation || !points?.[segment + 1]) {
+            return;
+        }
+        this.selectedId = undefined;
+        this.selectedEdge = undefined;
+        this.selectedRelation = id;
+        this.relationFrom = undefined;
+        this.finishRelationEdit?.(true);
+        this.options.host.focus({preventScroll: true});
+        const handle = this.routeHandles.get(`${id}:${endpoint || segment}`);
+        this.pointer = {pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+            x: this.offsetX, y: this.offsetY, moved: false,
+            relation: {id, segment, endpoint, targetId: endpoint ? relation[endpoint] : undefined,
+                points: points.map(point => ({...point})), original: JSON.stringify(relation), offset: 0, valid: true,
+                handle: handle ? {x: (parseFloat(handle.style.left) - this.offsetX) / this.scale,
+                    y: (parseFloat(handle.style.top) - this.offsetY) / this.scale} :
+                    {x: (points[segment].x + points[segment + 1].x) / 2, y: (points[segment].y + points[segment + 1].y) / 2}}};
+        try {
+            this.pointerCapture = (event.target as Element).closest<HTMLElement>(".mindmap-view__route-handle") || this.viewport;
+            this.pointerCapture.setPointerCapture(event.pointerId);
+        } catch {
+            this.cancelPointer();
+            return;
+        }
+        this.inspector.hidden = false;
+        this.updateSelection();
+        this.renderInspector();
+    }
+
+    private previewRouteDrag() {
+        cancelAnimationFrame(this.routeDragFrame);
+        this.routeDragFrame = 0;
+        const drag = this.pointer?.relation;
+        const relation = this.model.metadata.relations.find(item => item.id === drag?.id);
+        if (!drag || !relation) {
+            return;
+        }
+        const from = this.positions.get(relation.from);
+        const to = this.positions.get(relation.to);
+        drag.valid = false;
+        if (!from || !to) {
+            this.draw();
+            return;
+        }
+        if (drag.endpoint) {
+            const target = this.positions.get(drag.targetId);
+            const point = target || {id: "", ...drag.handle, width: 0, height: 0};
+            const nextFrom = drag.endpoint === "from" ? point : from;
+            const nextTo = drag.endpoint === "to" ? point : to;
+            const anchorKey = drag.endpoint === "from" ? "fromAnchor" : "toAnchor";
+            const sameNode = target?.id === relation[drag.endpoint];
+            const preview = {...relation, [drag.endpoint]: target?.id || relation[drag.endpoint],
+                [anchorKey]: sameNode ? drag.anchor : undefined, route: sameNode ? relation.route : undefined};
+            const {points, routeFallback} = this.resolveRelationRoute(preview, nextFrom, nextTo, false);
+            drag.valid = !!target && (!sameNode || !!drag.anchor) &&
+                this.canReconnectRelation(relation, drag.endpoint, target.id) && points.length >= 2;
+            drag.routeFallback = routeFallback;
+            if (points.length >= 2) {
+                this.relationRoutes.set(drag.id, points);
+            }
+            this.nodeElements.forEach((element, id) => element.classList.toggle("mindmap-view__node--relation",
+                id === drag.targetId && (sameNode || drag.valid)));
+            this.draw();
+            return;
+        }
+        const route = from && to && adjustMindmapRoute(drag.points, drag.segment, drag.offset, from, to,
+            this.fallbackRoutes.has(drag.id) ? undefined : relation.route);
+        if (route) {
+            const points = routeManualMindmapRelation(from, to, this.routingObstacles(), route, relation);
+            if (points.length >= 2) {
+                drag.route = route;
+                drag.valid = true;
+                this.relationRoutes.set(drag.id, points);
+            }
+        }
+        this.draw();
+    }
+
+    private canReconnectRelation(relation: ListMindmapRelation, endpoint: "from" | "to", targetId: string) {
+        const target = this.model.nodes.get(targetId);
+        const from = endpoint === "from" ? targetId : relation.from;
+        const to = endpoint === "to" ? targetId : relation.to;
+        return target && !target.virtual && from !== to && !this.model.metadata.relations.some(item =>
+            item.id !== relation.id && item.from === from && item.to === to);
+    }
+
+    private resetRelationRoute(id: string) {
+        if (this.readOnly) {
+            return;
+        }
+        this.cancelPointer();
+        this.finishThen(() => {
+            const relation = this.model.metadata.relations.find(item => item.id === id);
+            if (!this.readOnly && relation?.route) {
+                this.options.onRelationChange?.(id, {route: undefined}, JSON.stringify(relation));
+            }
+        });
+    }
+
+    private resetRelationAnchors(id: string) {
+        if (this.readOnly) {
+            return;
+        }
+        this.cancelPointer();
+        this.finishThen(() => {
+            const relation = this.model.metadata.relations.find(item => item.id === id);
+            if (!this.readOnly && (relation?.fromAnchor || relation?.toAnchor)) {
+                this.options.onRelationChange?.(id, {fromAnchor: undefined, toAnchor: undefined}, JSON.stringify(relation));
+            }
+        });
+    }
+
+    private draw() {
+        if (this.destroyed) {
+            return;
+        }
+        this.world.style.transform = `translate(${this.offsetX}px, ${this.offsetY}px) scale(${this.scale})`;
+        this.zoomLabel.textContent = `${Math.round(this.scale * 100)}%`;
+        this.zoomSlider.value = String(Math.round(this.scale * 100));
+        const width = this.viewport.clientWidth;
+        const height = this.viewport.clientHeight;
+        const ratio = window.devicePixelRatio || 1;
+        if (this.canvas.width !== Math.round(width * ratio) || this.canvas.height !== Math.round(height * ratio)) {
+            this.canvas.width = Math.round(width * ratio);
+            this.canvas.height = Math.round(height * ratio);
+        }
+        const context = this.canvas.getContext("2d");
+        this.linePaths = [];
+        if (!context) {
+            return;
+        }
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.clearRect(0, 0, width, height);
+        context.translate(this.offsetX, this.offsetY);
+        context.scale(this.scale, this.scale);
+        const theme = getComputedStyle(this.options.host);
+        const defaultLine = theme.getPropertyValue("--b3-border-color").trim() || "#a8adb5";
+        const primary = theme.getPropertyValue("--b3-theme-primary").trim() || "#3574f0";
+        const readLineStyles = (type: "line" | "relation" | "summary") => ["", "hover-", "selected-"].map(state => {
+            const prefix = `--b3-mindmap-${type}-${state}`;
+            const width = Number(theme.getPropertyValue(`${prefix}width`).trim().replace(/px$/, ""));
+            return {
+                color: theme.getPropertyValue(`${prefix}color`).trim(),
+                width: Number.isFinite(width) && width > 0 ? width : undefined,
+            };
+        });
+        const lineStyles = readLineStyles("line");
+        const relationStyles = readLineStyles("relation");
+        const summaryStyles = readLineStyles("summary");
+        const colors = new Map<string, string>();
+        const resolveColor = (value: string, fallback: string) => {
+            const key = `${fallback}\n${value || ""}`;
+            if (!colors.has(key)) {
+                this.colorProbe.style.color = fallback;
+                if (value) {
+                    this.colorProbe.style.color = value;
+                }
+                colors.set(key, getComputedStyle(this.colorProbe).color);
+            }
+            return colors.get(key);
+        };
+        const resolveLineStyle = (styles: typeof lineStyles, color: string, width: number, fallback: string,
+                                  selected: boolean, hovered: boolean) => {
+            const baseColor = resolveColor(styles[0].color, fallback);
+            const baseWidth = width || styles[0].width || 1.5;
+            const stateStyle = selected ? styles[2] : hovered ? styles[1] : undefined;
+            return {
+                // 显式颜色始终优先，状态颜色缺省时沿用普通主题色。
+                color: resolveColor(color, resolveColor(stateStyle?.color, baseColor)),
+                width: stateStyle?.width ?? baseWidth + (selected ? 1 : 0) + (hovered ? 1.5 / this.scale : 0),
+                baseWidth,
+            };
+        };
+        this.edges.forEach((edge) => {
+            const from = this.positions.get(edge.from);
+            const to = this.positions.get(edge.to);
+            if (!from || !to) {
+                return;
+            }
+            const style = {...this.model.metadata.nodes[this.model.root.id], ...this.model.metadata.nodes[edge.to]};
+            const startX = from.x + from.width;
+            const startY = from.y + (edge.from === this.model.root.id ? from.height / 2 : from.height);
+            const endX = to.x;
+            const endY = to.y + to.height;
+            const center = (startX + endX) / 2;
+            const path = new Path2D();
+            path.moveTo(startX, startY);
+            path.bezierCurveTo(center, startY, center, endY, endX, endY);
+            path.lineTo(to.x + to.width, endY);
+            this.linePaths.push({id: edge.to, relation: false, path});
+            context.beginPath();
+            const selected = this.selectedEdge === edge.to;
+            const hovered = this.hoveredLine === `edge:${edge.to}`;
+            const lineStyle = resolveLineStyle(lineStyles, style.lineColor, style.lineWidth, defaultLine, selected, hovered);
+            context.strokeStyle = lineStyle.color;
+            context.lineWidth = lineStyle.width;
+            context.setLineDash(style.lineDash ? [6, 4] : []);
+            context.stroke(path);
+        });
+        this.model.metadata.relations.forEach((relation) => {
+            const from = this.positions.get(relation.from);
+            const to = this.positions.get(relation.to);
+            const element = this.relationElements.get(relation.id);
+            element.hidden = !from || !to || !relation.label?.trim();
+            if (!from || !to) {
+                return;
+            }
+            const route = this.relationPath(relation.id, from, to, element);
+            if (!route) {
+                element.hidden = true;
+                return;
+            }
+            const {path, start, next, end, previous, arrowSizeLimit, labelPoint} = route;
+            const direction = relation.arrowDirection || "forward";
+            const arrows = [];
+            if (direction === "forward" || direction === "both") {
+                arrows.push({tip: end, previous});
+            }
+            if (direction === "reverse" || direction === "both") {
+                arrows.push({tip: start, previous: next});
+            }
+            this.linePaths.push({id: relation.id, relation: true, path, arrows: arrows.map(arrow => arrow.tip)});
+            context.beginPath();
+            const selected = relation.id === this.selectedRelation;
+            const hovered = this.hoveredLine === `relation:${relation.id}`;
+            const lineStyle = resolveLineStyle(relationStyles, relation.color, relation.width, primary, selected, hovered);
+            const baseWidth = lineStyle.baseWidth;
+            context.strokeStyle = lineStyle.color;
+            context.lineWidth = lineStyle.width;
+            const emphasis = Math.max(0, context.lineWidth - baseWidth);
+            element.classList.toggle("mindmap-view__relation--hover", hovered);
+            context.setLineDash(relation.dash === false ? [] : [5, 4]);
+            context.stroke(path);
+            context.setLineDash([]);
+            // 短线上的双向箭头预留间隙，避免合并成菱形。
+            const arrowSize = Math.min(Math.max(7 / this.scale, baseWidth * 2), arrowSizeLimit);
+            // 箭头随线条状态加宽，保持长度不变以保留双向箭头之间的间隙。
+            const halfWidth = arrowSize / 2 + emphasis / 2;
+            context.fillStyle = context.strokeStyle;
+            arrows.forEach(({tip, previous}) => {
+                const angle = Math.atan2(tip.y - previous.y, tip.x - previous.x);
+                const baseX = tip.x - arrowSize * Math.cos(Math.PI / 6) * Math.cos(angle);
+                const baseY = tip.y - arrowSize * Math.cos(Math.PI / 6) * Math.sin(angle);
+                context.beginPath();
+                context.moveTo(baseX - halfWidth * Math.sin(angle), baseY + halfWidth * Math.cos(angle));
+                context.lineTo(tip.x, tip.y);
+                context.lineTo(baseX + halfWidth * Math.sin(angle), baseY - halfWidth * Math.cos(angle));
+                context.closePath();
+                context.fill();
+            });
+            if (labelPoint) {
+                element.style.left = `${labelPoint.x}px`;
+                element.style.top = `${labelPoint.y}px`;
+            }
+        });
+        this.drawRelationPreview(context, resolveColor(relationStyles[0].color, primary), relationStyles[0].width || 1.5);
+        this.drawSummaries(context, (color, selected, hovered) =>
+            resolveLineStyle(summaryStyles, color, undefined, defaultLine, selected, hovered));
+        if (this.summarySelecting && !this.printTransform && !this.options.printLayout && this.summaryRanges.length) {
+            const previews = this.summaryRanges.map((range, index) => ({...range, id: `preview:${index}`, label: ""}));
+            const sizes = new Map([...this.summaryPositions].map(([id, position]) =>
+                [id, {width: position.width, height: position.height}]));
+            previews.forEach(preview => sizes.set(preview.id, {width: 0, height: 0}));
+            const model = {...this.model, metadata: {...this.model.metadata,
+                summaries: [...(this.model.metadata.summaries || []), ...previews]}};
+            const positions = layoutListMindmapSummaries(model, this.positions, sizes);
+            context.save();
+            context.strokeStyle = primary;
+            context.lineWidth = 1.5 / this.scale;
+            context.setLineDash([4 / this.scale, 4 / this.scale]);
+            previews.forEach(preview => {
+                const position = positions.get(preview.id);
+                if (position) {
+                    context.beginPath();
+                    context.moveTo(position.x - 10, position.top);
+                    context.lineTo(position.x, position.top);
+                    context.lineTo(position.x, position.bottom);
+                    context.lineTo(position.x - 10, position.bottom);
+                    context.stroke();
+                }
+            });
+            context.restore();
+        }
+        this.renderRouteControls();
+    }
+
+    private drawRelationPreview(context: CanvasRenderingContext2D, color: string, width: number) {
+        const from = this.positions.get(this.relationFrom);
+        if (!from || !this.relationPreview) {
+            return;
+        }
+        const target = this.positions.get(this.relationPreview.targetId);
+        const route = this.relationPath(undefined, from, target || {
+            id: "", x: this.relationPreview.x, y: this.relationPreview.y, width: 0, height: 0,
+        });
+        if (!route) {
+            return;
+        }
+        const {path, end, previous, arrowSizeLimit} = route;
+        context.beginPath();
+        context.strokeStyle = color;
+        context.lineWidth = width;
+        context.setLineDash([5, 4]);
+        context.stroke(path);
+        context.setLineDash([]);
+        context.beginPath();
+        const size = Math.min(Math.max(7 / this.scale, width * 2), arrowSizeLimit);
+        const direction = Math.atan2(end.y - previous.y, end.x - previous.x);
+        context.fillStyle = color;
+        context.moveTo(end.x - size * Math.cos(direction - Math.PI / 6), end.y - size * Math.sin(direction - Math.PI / 6));
+        context.lineTo(end.x, end.y);
+        context.lineTo(end.x - size * Math.cos(direction + Math.PI / 6), end.y - size * Math.sin(direction + Math.PI / 6));
+        context.closePath();
+        context.fill();
+    }
+
+    private renderTask(element: HTMLElement, id: string) {
+        const marker = this.model.nodes.get(id)?.taskMarker;
+        let task = element.querySelector<HTMLButtonElement>(".mindmap-view__task");
+        if (marker === undefined) {
+            task?.remove();
+            element.removeAttribute("data-task");
+            element.classList.remove("protyle-task--done");
+            return;
+        }
+        element.dataset.task = marker;
+        element.classList.toggle("protyle-task--done", marker !== " ");
+        if (!task) {
+            task = this.makeButton("task", "iconUncheck", () => {
+                if (!this.readOnly && this.model.nodes.get(id)?.taskMarker !== undefined) {
+                    this.options.onTaskToggle?.(id);
+                }
+            });
+            task.className = "protyle-action protyle-action--task mindmap-view__task";
+            task.addEventListener("contextmenu", event => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.finishThen(() => this.openTaskMenu(id, task));
+            });
+            element.prepend(task);
+        }
+        task.dataset.task = marker;
+        task.disabled = !!this.readOnly;
+        const key = {" ": "taskStatusTodo", "/": "taskStatusInProgress", X: "taskStatusDone", "-": "taskStatusCanceled"}[marker.toUpperCase()];
+        task.setAttribute("aria-label", key ? this.label(key) : `${this.label("customTaskStatus")} ${marker}`);
+        task.querySelector("use").setAttribute("xlink:href", marker === " " ? "#iconUncheck" : "#iconCheck");
+    }
+
+    private openTaskMenu(id: string, anchor: HTMLElement) {
+        if (!this.readOnly && this.model.nodes.get(id)?.taskMarker !== undefined) {
+            this.options.onTaskMenu?.(id, anchor);
+        }
+    }
+
+    private selectNode(id: string) {
+        const changed = this.selectedId !== id || !!this.selectedRelation;
+        this.selectedId = id;
+        this.selectedSummary = undefined;
+        this.selectedRelation = undefined;
+        this.selectedEdge = undefined;
+        this.updateSelection();
+        if (!this.readOnly && !this.relationFrom && !this.summarySelecting) {
+            this.inspector.hidden = false;
+        }
+        if (changed || !this.inspector.hidden) {
+            this.renderInspector();
+        }
+    }
+
+    private updateSelection() {
+        if (!this.relationFrom) {
+            this.relationPreview = undefined;
+        }
+        this.nodeElements.forEach((element, id) => {
+            const selected = this.selectedId === id || this.summarySelected.has(id);
+            element.classList.toggle("mindmap-view__node--selected", selected);
+            element.classList.toggle("mindmap-view__node--relation", this.relationFrom === id ||
+                this.relationPreview?.targetId === id || !!this.summaryFrom &&
+                getListMindmapSummaryRange(this.model, this.summaryFrom, id).length > 0);
+            element.setAttribute("aria-selected", String(selected));
+        });
+        this.relationElements.forEach((element, id) => element.classList.toggle("mindmap-view__relation--selected", this.selectedRelation === id));
+        const node = this.model.nodes.get(this.selectedId);
+        const disabled: Record<string, boolean> = {
+            relation: !node || node.virtual,
+            summary: false,
+            style: !node && !this.selectedRelation && !this.selectedEdge,
+        };
+        Object.keys(disabled).forEach((key) => {
+            const button = this.buttons.get(key);
+            if (button) {
+                button.disabled = disabled[key];
+            }
+        });
+        this.buttons.get("relation")?.classList.toggle("block__icon--active", !!this.relationFrom);
+        this.buttons.get("summary")?.classList.toggle("block__icon--active", this.summarySelecting);
+        this.buttons.get("summary")?.setAttribute("aria-pressed", String(this.summarySelecting));
+        this.summaryStatus.hidden = !this.summarySelecting || !this.summaryControls.hidden;
+        this.viewport.classList.toggle("mindmap-view__viewport--summary", this.summarySelecting);
+        this.draw();
+    }
+
+    private toggleFold(id: string) {
+        if (this.locked) {
+            return;
+        }
+        const node = this.model.nodes.get(id);
+        if (!node?.children.length) {
+            return;
+        }
+        this.foldAnchor = {id, collapsed: !(this.folded.get(id) ?? node.collapsed)};
+        if (this.readOnly || node.virtual) {
+            this.folded.set(id, !(this.folded.get(id) ?? node.collapsed));
+            this.update(this.model);
+        } else {
+            this.options.onFold?.(id);
+        }
+    }
+
+    private async toggleSiblingFold(id: string) {
+        if (this.locked) {
+            return;
+        }
+        const states = getListMindmapSiblingFoldStates(this.model, id, this.folded);
+        if (!states.size) {
+            return;
+        }
+        const selectedId = this.selectedId;
+        this.finishRelationEdit?.(true);
+        this.cancelPointer();
+        if (!this.readOnly && !await this.options.onFoldSiblings?.(id)) {
+            return;
+        }
+        if (!this.destroyed) {
+            this.updateFoldStates(states, selectedId);
+        }
+    }
+
+    private async expandToLevel(level: ListMindmapFoldTarget, selectedId = this.selectedId) {
+        if (this.locked) {
+            return;
+        }
+        this.finishRelationEdit?.(true);
+        this.cancelPointer();
+        if (!this.readOnly && !await this.options.onFoldLevel?.(level)) {
+            return;
+        }
+        if (this.destroyed) {
+            return;
+        }
+        this.updateFoldStates(getListMindmapFoldStates(this.model.root, level), selectedId);
+    }
+
+    private updateFoldStates(states: Map<string, boolean>, selectedId: string) {
+        states.forEach((collapsed, id) => {
+            if (this.readOnly || this.model.nodes.get(id)?.virtual) {
+                this.folded.set(id, collapsed);
+            } else {
+                this.folded.delete(id);
+            }
+        });
+        let selected = this.model.nodes.get(selectedId) || this.model.root;
+        let ancestor = selected;
+        while (ancestor.parentId) {
+            ancestor = this.model.nodes.get(ancestor.parentId);
+            if (this.folded.get(ancestor.id) ?? ancestor.collapsed) {
+                selected = ancestor;
+            }
+        }
+        this.selectedId = selected.id;
+        this.selectedSummary = undefined;
+        this.cancelSummarySelection();
+        this.selectedRelation = undefined;
+        this.selectedEdge = undefined;
+        this.relationFrom = undefined;
+        this.relationPreview = undefined;
+        this.inspector.hidden = true;
+        this.foldAnchor = {id: selected.id, collapsed: this.folded.get(selected.id) ?? selected.collapsed};
+        this.update(this.model);
+    }
+
+    private deleteSelection() {
+        if (this.readOnly) {
+            return;
+        }
+        if (this.selectedSummary) {
+            this.options.onSummaryDelete?.(this.selectedSummary);
+        } else if (this.selectedRelation) {
+            this.options.onRelationDelete?.(this.selectedRelation);
+        } else {
+            const node = this.model.nodes.get(this.selectedId);
+            if (node && !node.virtual && node !== this.model.root) {
+                const siblings = this.model.nodes.get(node.parentId)?.children || [];
+                const index = siblings.findIndex(item => item.id === node.id);
+                const nextId = siblings[index + 1]?.id || siblings[index - 1]?.id || node.parentId;
+                if (this.options.onDelete) {
+                    void Promise.resolve(this.options.onDelete(node.id)).then(deleted => {
+                        if (deleted !== false && !this.model.nodes.has(node.id) && nextId &&
+                            (!this.selectedId || this.selectedId === node.id)) {
+                            this.focusNode(nextId);
+                        }
+                    }).catch(error => console.error(error));
+                }
+            }
+        }
+    }
+
+    private pinchStart = (event: TouchEvent) => {
+        if (this.locked || event.touches.length !== 2 || Array.from(event.touches).some(touch =>
+            !this.viewport.contains(touch.target as Node) ||
+            ((touch.target as Element).closest("button, input, select, textarea, audio, video, iframe") ||
+                this.viewport.contains((touch.target as Element).closest(".mindmap-view__node--editing"))))) {
+            this.pinch = undefined;
+            return;
+        }
+        event.preventDefault();
+        this.cancelPointer();
+        clearTimeout(this.linkTimer);
+        this.suppressLinkClick = true;
+        this.pinching = true;
+        const [first, second] = Array.from(event.touches);
+        this.pinch = {distance: Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY), scale: this.scale};
+    };
+
+    private pinchMove = (event: TouchEvent) => {
+        if (!this.pinching) {
+            return;
+        }
+        event.preventDefault();
+        if (!this.pinch || event.touches.length !== 2 || this.pinch.distance === 0) {
+            return;
+        }
+        const [first, second] = Array.from(event.touches);
+        const bounds = this.viewport.getBoundingClientRect();
+        this.zoomAt(this.pinch.scale * Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY) /
+            this.pinch.distance, (first.clientX + second.clientX) / 2 - bounds.left,
+            (first.clientY + second.clientY) / 2 - bounds.top);
+    };
+
+    private pinchEnd = (event: TouchEvent) => {
+        if (!this.pinching) {
+            return;
+        }
+        event.preventDefault();
+        this.pinch = undefined;
+        // 双指结束后等待所有手指离开，避免剩余手指触发节点拖动或点击。
+        if (event.touches.length === 0) {
+            this.pinching = false;
+        } else if (event.touches.length === 2) {
+            this.pinchStart(event);
+        }
+    };
+
+    private pointerDown = (event: PointerEvent) => {
+        if (this.locked || this.pinching || event.pointerType === "touch" && !event.isPrimary) {
+            return;
+        }
+        clearTimeout(this.linkTimer);
+        this.suppressLinkClick = false;
+        this.suppressPanContextMenu = false;
+        const target = event.target as HTMLElement;
+        if (![0, 2].includes(event.button) || target.closest("button, input, select, textarea, audio, video, iframe") ||
+            this.viewport.contains(target.closest(".mindmap-view__node--editing"))) {
+            return;
+        }
+        if (event.button === 0 && !this.panning && target.closest(".mindmap-view__summary")) {
+            return;
+        }
+        this.suppressPanContextMenu = event.button === 2;
+        const element = target.closest<HTMLElement>(".mindmap-view__node");
+        const id = element?.dataset.mindmapId;
+        this.preparePointer(event);
+        this.finishThen(() => {
+            if (this.pendingPointerId === event.pointerId) {
+                this.beginPointer(event, id);
+            }
+        });
+    };
+
+    private preparePointer(event: PointerEvent) {
+        this.pendingPointerId = event.pointerId;
+        // 按下时即暂停悬浮预览，等待编辑提交期间也不能补开旧浮窗。
+        this.endInteraction ||= this.options.onInteractionStart?.(event);
+    }
+
+    private beginPointer(event: PointerEvent, id?: string) {
+        if (this.summarySelecting && !this.readOnly && event.button === 0 && !this.panning) {
+            event.preventDefault();
+            this.suppressLinkClick = true;
+            if (id) {
+                if (this.summaryFrom) {
+                    this.finishSummaryRange(id);
+                } else if (!this.model.nodes.get(id)?.virtual && getListMindmapSummaryParentID(this.model, id)) {
+                    if (this.summarySelected.has(id)) {
+                        this.summarySelected.delete(id);
+                    } else {
+                        this.summarySelected.add(id);
+                    }
+                    this.selectedId = undefined;
+                    this.previewSummarySelection();
+                }
+                this.cancelPointer();
+                return;
+            }
+            this.summaryFrom = undefined;
+            this.selectedId = undefined;
+            this.summarySelected.clear();
+            this.summaryRanges = [];
+            this.summaryControls.hidden = true;
+            this.options.host.focus({preventScroll: true});
+            this.pointer = {pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+                x: this.offsetX, y: this.offsetY, moved: false, summary: true};
+            try {
+                this.pointerCapture = this.viewport;
+                this.viewport.setPointerCapture(event.pointerId);
+            } catch {
+                this.cancelPointer();
+            }
+            this.updateSelection();
+            return;
+        }
+        if (this.panning || event.button === 2) {
+            id = undefined;
+            event.preventDefault();
+        }
+        if (event.button !== 2 && !this.panning && !id && !this.readOnly && !this.relationFrom) {
+            const line = this.findLine(event);
+            const points = line?.relation && this.relationRoutes.get(line.id);
+            if (points) {
+                const bounds = this.viewport.getBoundingClientRect();
+                const x = (event.clientX - bounds.left - this.offsetX) / this.scale;
+                const y = (event.clientY - bounds.top - this.offsetY) / this.scale;
+                const segment = points.slice(1).map((b, index) => {
+                    const a = points[index];
+                    return {index, length: Math.hypot(b.x - a.x, b.y - a.y), distance: Math.hypot(
+                        x - Math.max(Math.min(a.x, b.x), Math.min(x, Math.max(a.x, b.x))),
+                        y - Math.max(Math.min(a.y, b.y), Math.min(y, Math.max(a.y, b.y))))};
+                }).filter(item => item.length >= 12 && item.distance <= 12 / this.scale)
+                    .sort((a, b) => a.distance - b.distance)[0];
+                if (segment) {
+                    this.beginRouteDrag(event, line.id, segment.index);
+                    return;
+                }
+            }
+        }
+        if (this.relationFrom && id) {
+            this.suppressLinkClick = true;
+            event.preventDefault();
+            if (id !== this.relationFrom && !this.model.nodes.get(id)?.virtual) {
+                this.options.onRelationAdd?.(this.relationFrom, id);
+                this.relationFrom = undefined;
+                this.selectNode(id);
+            }
+            return;
+        }
+        if (id) {
+            this.selectNode(id);
+        }
+        this.options.host.focus({preventScroll: true});
+        this.pointer = {
+            pointerId: event.pointerId,
+            rightButton: event.button === 2,
+            id: !this.readOnly && id && !this.model.nodes.get(id)?.virtual ? id : undefined,
+            startX: event.clientX,
+            startY: event.clientY,
+            x: this.offsetX,
+            y: this.offsetY,
+            moved: false,
+        };
+        try {
+            // 在原点击元素捕获指针，保留链接目标，同时让连续点击可以识别为双击。
+            this.pointerCapture = id ? event.target as HTMLElement : this.viewport;
+            this.pointerCapture.setPointerCapture(event.pointerId);
+        } catch {
+            this.cancelPointer();
+        }
+    }
+
+    private pointerMove = (event: PointerEvent) => {
+        if (this.pinching) {
+            return;
+        }
+        if (this.relationFrom && !this.pointer?.rightButton) {
+            const bounds = this.viewport.getBoundingClientRect();
+            const id = (event.target as Element).closest<HTMLElement>(".mindmap-view__node")?.dataset.mindmapId;
+            this.relationPreview = {
+                x: (event.clientX - bounds.left - this.offsetX) / this.scale,
+                y: (event.clientY - bounds.top - this.offsetY) / this.scale,
+                targetId: id && id !== this.relationFrom && !this.model.nodes.get(id)?.virtual ? id : undefined,
+            };
+            this.updateSelection();
+            return;
+        }
+        const pointer = this.pointer;
+        if (!pointer) {
+            if (this.panning) {
+                this.setHoveredLine();
+                return;
+            }
+            const target = event.target as Element;
+            const relation = target.closest<HTMLElement>(".mindmap-view__relation[data-relation-id]");
+            const summary = target.closest<HTMLElement>(".mindmap-view__summary[data-summary-id]");
+            const line = target.closest(".mindmap-view__node, input, button") ? undefined : this.findLine(event);
+            this.setHoveredLine(summary ? `summary:${summary.dataset.summaryId}` : relation ? `relation:${relation.dataset.relationId}` :
+                line ? `${line.summary ? "summary" : line.relation ? "relation" : "edge"}:${line.id}` : undefined);
+            return;
+        }
+        this.setHoveredLine();
+        if (!pointer || event.pointerId !== pointer.pointerId) {
+            return;
+        }
+        const dx = event.clientX - pointer.startX;
+        const dy = event.clientY - pointer.startY;
+        if (!pointer.moved && Math.hypot(dx, dy) < 5) {
+            return;
+        }
+        event.preventDefault();
+        pointer.moved = true;
+        if (pointer.summary) {
+            const viewport = this.viewport.getBoundingClientRect();
+            const left = Math.min(pointer.startX, event.clientX);
+            const right = Math.max(pointer.startX, event.clientX);
+            const top = Math.min(pointer.startY, event.clientY);
+            const bottom = Math.max(pointer.startY, event.clientY);
+            this.summaryBox.hidden = false;
+            this.summaryBox.style.left = `${left - viewport.left}px`;
+            this.summaryBox.style.top = `${top - viewport.top}px`;
+            this.summaryBox.style.width = `${right - left}px`;
+            this.summaryBox.style.height = `${bottom - top}px`;
+            this.summarySelected.clear();
+            this.positions.forEach((position, id) => {
+                const node = this.model.nodes.get(id);
+                const x = viewport.left + this.offsetX + (position.x + position.width / 2) * this.scale;
+                const y = viewport.top + this.offsetY + (position.y - (id === this.model.root.id ? 1 : 3) +
+                    position.height / 2) * this.scale;
+                if (!node.virtual && getListMindmapSummaryParentID(this.model, id) &&
+                    x >= left && x <= right && y >= top && y <= bottom) {
+                    this.summarySelected.add(id);
+                }
+            });
+            this.previewSummarySelection();
+            return;
+        }
+        if (pointer.relation) {
+            const drag = pointer.relation;
+            if (drag.endpoint) {
+                const bounds = this.viewport.getBoundingClientRect();
+                drag.handle = {x: (event.clientX - bounds.left - this.offsetX) / this.scale,
+                    y: (event.clientY - bounds.top - this.offsetY) / this.scale};
+                drag.targetId = [...this.positions.values()].find(node => drag.handle.x >= node.x &&
+                    drag.handle.x <= node.x + node.width && drag.handle.y >= node.y &&
+                    drag.handle.y <= node.y + node.height)?.id;
+                const relation = this.model.metadata.relations.find(item => item.id === drag.id);
+                const original = this.positions.get(relation?.[drag.endpoint]);
+                const tolerance = (event.pointerType === "touch" ? 16 : 8) / this.scale;
+                // 真实节点命中优先于原节点的近边吸附，避免缩小时抢占换接目标。
+                if (original && (!drag.targetId || drag.targetId === original.id) &&
+                    drag.handle.x >= original.x - tolerance && drag.handle.x <= original.x + original.width + tolerance &&
+                    drag.handle.y >= original.y - tolerance && drag.handle.y <= original.y + original.height + tolerance) {
+                    drag.targetId = original.id;
+                    const anchor = relation[drag.endpoint === "from" ? "fromAnchor" : "toAnchor"];
+                    drag.anchor = {...anchor, ...projectMindmapRelationAnchor(original, drag.handle, drag.anchor || anchor)};
+                    drag.handle = getMindmapRelationAnchorPoint(original, drag.anchor, 3);
+                } else {
+                    drag.anchor = undefined;
+                }
+            } else {
+                drag.offset = (drag.points[drag.segment].y === drag.points[drag.segment + 1].y ? dy : dx) / this.scale;
+            }
+            if (!this.routeDragFrame) {
+                this.routeDragFrame = requestAnimationFrame(() => this.previewRouteDrag());
+            }
+            return;
+        }
+        this.viewport.classList.add("mindmap-view__viewport--dragging");
+        if (!pointer.id) {
+            const bounded = this.boundedPan(pointer.x + dx, pointer.y + dy);
+            const remainingY = pointer.y + dy - bounded.y;
+            this.offsetX = bounded.x;
+            this.offsetY = bounded.y;
+            this.draw();
+            if (event.pointerType === "touch" && remainingY && !this.fullscreenMarker) {
+                const scrollHost = this.options.host.closest<HTMLElement>(".protyle-content");
+                if (scrollHost) {
+                    scrollHost.scrollTop -= remainingY;
+                }
+            }
+            pointer.x = this.offsetX;
+            pointer.y = this.offsetY;
+            pointer.startX = event.clientX;
+            pointer.startY = event.clientY;
+            return;
+        }
+        if (!this.ghost) {
+            const source = this.nodeElements.get(pointer.id);
+            this.ghost = source.cloneNode(true) as HTMLDivElement;
+            this.ghost.className = "mindmap-view__node mindmap-view__node--selected mindmap-view__ghost";
+            this.ghost.removeAttribute("data-mindmap-id");
+            this.ghost.querySelectorAll(".mindmap-view__fold, .mindmap-view__add-child, .mindmap-view__add-bridge")
+                .forEach(button => button.remove());
+            this.world.append(this.ghost);
+            source.classList.add("mindmap-view__node--dragging");
+        }
+        const source = this.positions.get(pointer.id);
+        this.ghost.style.left = `${source.x + dx / this.scale}px`;
+        this.ghost.style.top = `${source.y + dy / this.scale}px`;
+        this.clearDrop();
+        const hit = document.elementFromPoint(event.clientX, event.clientY);
+        let target = hit?.closest<HTMLElement>(".mindmap-view__node");
+        let blankPlacement: PointerState["placement"];
+        // 直接命中节点时保留原有操作，空白处再比较同级和子节点落点的二维距离。
+        if (!target && hit && this.viewport.contains(hit)) {
+            const bounds = this.viewport.getBoundingClientRect();
+            const x = (event.clientX - bounds.left - this.offsetX) / this.scale;
+            const y = (event.clientY - bounds.top - this.offsetY) / this.scale;
+            const drop = findMindmapDrop(this.positions.values(), x, y, id => this.canDrop(pointer.id, id));
+            if (drop) {
+                target = this.nodeElements.get(drop.id);
+                blankPlacement = drop.placement;
+            }
+        }
+        let targetId = target?.dataset.mindmapId;
+        if (!targetId || !this.world.contains(target) || !this.canDrop(pointer.id, targetId)) {
+            return;
+        }
+        const rect = target.getBoundingClientRect();
+        const part = (event.clientY - rect.top) / rect.height;
+        const node = this.model.nodes.get(targetId);
+        let placement: PointerState["placement"] = blankPlacement || (node.virtual ? "child" :
+            part < .25 ? "before" : part > .75 ? "after" : "child");
+        // 同一个兄弟间隙统一显示在后一个节点之前，避免最近节点切换时插入线跳动。
+        if (placement === "after" && node.parentId) {
+            const siblings = this.model.nodes.get(node.parentId).children;
+            const next = siblings[siblings.indexOf(node) + 1];
+            if (next && this.positions.has(next.id) && this.canDrop(pointer.id, next.id)) {
+                targetId = next.id;
+                target = this.nodeElements.get(next.id);
+                placement = "before";
+            }
+        }
+        pointer.targetId = targetId;
+        pointer.placement = placement;
+        target.dataset.mindmapDrop = placement;
+    };
+
+    private canDrop(id: string, targetId: string) {
+        let current = this.model.nodes.get(targetId);
+        while (current) {
+            if (current.id === id) {
+                return false;
+            }
+            current = this.model.nodes.get(current.parentId);
+        }
+        return true;
+    }
+
+    private pointerUp = (event: PointerEvent) => {
+        this.pendingPointerId = undefined;
+        const pointer = this.pointer;
+        if (!pointer || event.pointerId !== pointer.pointerId) {
+            return;
+        }
+        const {id, targetId, placement, moved} = pointer;
+        if (pointer.summary) {
+            this.suppressLinkClick = true;
+            pointer.summary = false;
+            this.cancelPointer();
+            this.previewSummarySelection();
+            return;
+        }
+        if (pointer.relation) {
+            if (moved) {
+                this.previewRouteDrag();
+            }
+            const drag = pointer.relation;
+            this.cancelPointer();
+            const relation = this.model.metadata.relations.find(item => item.id === drag.id);
+            if (moved && drag.endpoint && drag.valid && relation && !this.readOnly &&
+                this.canReconnectRelation(relation, drag.endpoint, drag.targetId)) {
+                const anchorKey = drag.endpoint === "from" ? "fromAnchor" : "toAnchor";
+                if (relation[drag.endpoint] === drag.targetId) {
+                    if (drag.anchor && JSON.stringify(relation[anchorKey]) !== JSON.stringify(drag.anchor)) {
+                        this.options.onRelationChange?.(drag.id, {[anchorKey]: drag.anchor}, drag.original);
+                    }
+                } else {
+                    const patch: Partial<ListMindmapRelation> = {[drag.endpoint]: drag.targetId, route: undefined};
+                    if (relation[anchorKey]) {
+                        patch[anchorKey] = undefined;
+                    }
+                    this.options.onRelationChange?.(drag.id, patch, drag.original);
+                }
+            } else if (moved && !drag.endpoint && Math.abs(drag.offset) > .01 && drag.valid && drag.route && !this.readOnly) {
+                this.options.onRelationChange?.(drag.id, {route: drag.route}, drag.original);
+            }
+            return;
+        }
+        this.suppressLinkClick = moved;
+        this.cancelPointer();
+        if (moved && id && targetId && placement) {
+            this.options.onMove?.(id, targetId, placement);
+        } else if (!moved && !id && !pointer.rightButton && !this.readOnly && !this.panning) {
+            this.selectLine(event);
+        }
+    };
+
+    private setHoveredLine(key?: string) {
+        if (key === this.hoveredLine) {
+            return;
+        }
+        if (this.hoveredLine?.startsWith("edge:")) {
+            this.nodeElements.get(this.hoveredLine.slice(5))?.classList.remove("mindmap-view__node--line-hover");
+        }
+        this.hoveredLine = key;
+        if (key?.startsWith("edge:")) {
+            this.nodeElements.get(key.slice(5))?.classList.add("mindmap-view__node--line-hover");
+        }
+        this.viewport.classList.toggle("mindmap-view__viewport--line-hover", !!key);
+        this.draw();
+    }
+
+    private findLine(event: MouseEvent) {
+        const context = this.canvas.getContext("2d");
+        if (!context) {
+            return;
+        }
+        const bounds = this.viewport.getBoundingClientRect();
+        const x = (event.clientX - bounds.left - this.offsetX) / this.scale;
+        const y = (event.clientY - bounds.top - this.offsetY) / this.scale;
+        context.save();
+        context.resetTransform();
+        context.setLineDash([]);
+        context.lineWidth = 12 / this.scale;
+        const lines = this.linePaths.slice().reverse();
+        // 优先命中最近的箭头，重合的双向连接可从各自的箭头单独选中。
+        let arrow: typeof lines[number];
+        let distance = 12 / this.scale;
+        lines.forEach(item => {
+            item.arrows?.forEach(tip => {
+                const current = Math.hypot(tip.x - x, tip.y - y);
+                if (current < distance || (arrow && current === distance && item.id === this.selectedRelation)) {
+                    distance = current;
+                    arrow = item;
+                }
+            });
+        });
+        const hits = lines.filter(item => context.isPointInStroke(item.path, x, y));
+        // 沿线移动或双击时保持已选关系，避免重新选中覆盖在上方的反向连接。
+        const line = arrow || hits.find(item => item.relation && item.id === this.selectedRelation) || hits[0];
+        context.restore();
+        return line;
+    }
+
+    private selectLine(event: MouseEvent) {
+        const line = this.findLine(event);
+        if (!line) {
+            return;
+        }
+        if (line.summary) {
+            this.selectSummary(line.id);
+            return;
+        }
+        this.selectedSummary = undefined;
+        this.cancelSummarySelection();
+        this.selectedId = undefined;
+        this.relationFrom = undefined;
+        this.selectedRelation = line.relation ? line.id : undefined;
+        this.selectedEdge = line.relation ? undefined : line.id;
+        this.inspector.hidden = false;
+        this.updateSelection();
+        this.renderInspector();
+    }
+
+    private clearDrop() {
+        if (this.pointer) {
+            this.pointer.targetId = undefined;
+            this.pointer.placement = undefined;
+        }
+        this.world.querySelectorAll<HTMLElement>("[data-mindmap-drop]").forEach(element => element.removeAttribute("data-mindmap-drop"));
+    }
+
+    private cancelPointer = () => {
+        cancelAnimationFrame(this.routeDragFrame);
+        this.routeDragFrame = 0;
+        this.pendingPointerId = undefined;
+        this.clearDrop();
+        const pointer = this.pointer;
+        this.pointer = undefined;
+        this.summaryBox.hidden = true;
+        if (pointer?.summary) {
+            this.summarySelected.clear();
+            this.summaryRanges = [];
+            this.summaryControls.hidden = true;
+            this.updateSelection();
+        }
+        if (pointer && this.pointerCapture?.hasPointerCapture(pointer.pointerId)) {
+            this.pointerCapture.releasePointerCapture(pointer.pointerId);
+        }
+        this.pointerCapture = undefined;
+        this.endInteraction?.();
+        this.endInteraction = undefined;
+        this.ghost?.remove();
+        this.ghost = undefined;
+        this.viewport.classList.remove("mindmap-view__viewport--dragging");
+        this.nodeElements.forEach(element => element.classList.remove("mindmap-view__node--dragging"));
+        if (pointer?.relation) {
+            if (pointer.relation.endpoint) {
+                this.nodeElements.forEach(element => element.classList.remove("mindmap-view__node--relation"));
+            }
+            this.relationRoutes.set(pointer.relation.id, pointer.relation.points);
+            this.draw();
+            this.refreshLayout();
+        }
+    };
+
+    private contentClick = (event: MouseEvent) => {
+        const target = event.target as Element;
+        if (this.viewport.contains(target.closest(".mindmap-view__node--editing"))) {
+            return;
+        }
+        const link = target.closest<HTMLElement>('a[href], [data-type~="a"][data-href], [data-type~="block-ref"][data-id]');
+        if (!link?.closest(".mindmap-view__content")) {
+            return;
+        }
+        clearTimeout(this.linkTimer);
+        if (this.panning || this.suppressLinkClick || this.relationFrom || this.summarySelecting || event.detail > 1) {
+            event.preventDefault();
+            return;
+        }
+        const href = getAVRichTextSafeURL(link.getAttribute("data-type")?.split(" ").includes("block-ref") ?
+            `siyuan://blocks/${link.dataset.id}` : link.dataset.href || link.getAttribute("href"));
+        if (!href) {
+            event.preventDefault();
+            return;
+        }
+        if (this.options.onOpenLink) {
+            event.preventDefault();
+            // 等待双击判定，拖拽和进入节点编辑均不触发跳转。
+            this.linkTimer = window.setTimeout(() => {
+                if (!this.destroyed && link.isConnected) {
+                    this.finishThen(() => this.options.onOpenLink(href, event));
+                }
+            }, Constants.TIMEOUT_DBLCLICK);
+        }
+    };
+
+    private doubleClick = (event: MouseEvent) => {
+        clearTimeout(this.linkTimer);
+        if (this.readOnly || this.relationFrom || this.summarySelecting || this.panning || this.pinching) {
+            return;
+        }
+        const target = event.target as HTMLElement;
+        const summary = target.closest<HTMLElement>(".mindmap-view__summary");
+        if (summary) {
+            this.editSummaryLabel(summary.dataset.summaryId);
+            return;
+        }
+        if (target.closest(".mindmap-view__relation")) {
+            this.editRelationLabel(event);
+            return;
+        }
+        if (target.closest("button, input, select, audio, video, iframe") ||
+            this.viewport.contains(target.closest(".mindmap-view__node--editing"))) {
+            return;
+        }
+        const id = target.closest<HTMLElement>(".mindmap-view__node")?.dataset.mindmapId;
+        if (!id) {
+            this.selectLine(event);
+            if (this.selectedRelation) {
+                this.editRelationLabel(event);
+            } else if (this.selectedSummary) {
+                this.editSummaryLabel(this.selectedSummary);
+            }
+            return;
+        }
+        if (!id) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        this.cancelPointer();
+        this.finishThen(() => {
+            const content = this.getContentHost(id);
+            if (!content?.isConnected || !this.model.nodes.has(id)) {
+                return;
+            }
+            if (this.model.nodes.get(id)?.virtual) {
+                this.editRootTitle(id);
+                return;
+            }
+            this.setEditing(id);
+            this.options.onEdit?.(id, content);
+        });
+    };
+
+    private editRootTitle(id: string, toEnd = false, replaceText?: string) {
+        this.finishRelationEdit?.(true);
+        const content = this.getContentHost(id);
+        const input = createElement("textarea", "mindmap-view__root-title");
+        const measure = createElement("span", "mindmap-view__root-title-measure");
+        input.rows = 1;
+        input.value = replaceText === undefined ? this.model.metadata.rootTitle || "" : replaceText;
+        measure.textContent = input.value;
+        input.setAttribute("aria-label", this.label("text"));
+        content.classList.add("mindmap-view__root-title-host");
+        this.setEditing(id);
+        content.replaceChildren(measure, input);
+        input.addEventListener("input", () => {
+            measure.textContent = input.value || "\u200b";
+            this.refreshLayout();
+        });
+        let finished = false;
+        const finish = (save: boolean) => {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            this.finishRelationEdit = undefined;
+            const title = input.value.trim();
+            content.classList.remove("mindmap-view__root-title-host");
+            this.setEditing(undefined);
+            if (save && title !== (this.model.metadata.rootTitle || "")) {
+                this.options.onRootTitleChange?.(title);
+            }
+            this.update(this.model);
+        };
+        this.finishRelationEdit = finish;
+        this.renderRouteControls();
+        input.addEventListener("blur", () => finish(true));
+        input.addEventListener("keydown", event => {
+            event.stopPropagation();
+            if (!event.isComposing && (event.key === "Enter" || event.key === "Escape")) {
+                event.preventDefault();
+                finish(event.key === "Enter");
+                this.options.host.focus({preventScroll: true});
+            }
+        });
+        input.focus();
+        if (toEnd || replaceText !== undefined) {
+            input.setSelectionRange(input.value.length, input.value.length);
+        } else {
+            input.select();
+        }
+    }
+
+    private editRelationLabel(event?: MouseEvent) {
+        const relation = this.model.metadata.relations.find(item => item.id === this.selectedRelation);
+        const element = this.relationElements.get(this.selectedRelation);
+        if (!relation || !element) {
+            return;
+        }
+        event?.preventDefault();
+        event?.stopPropagation();
+        this.finishRelationEdit?.(true);
+        this.inspector.hidden = true;
+        const input = createElement("input", "b3-text-field mindmap-view__relation mindmap-view__relation-editor");
+        input.type = "text";
+        input.value = relation.label || "";
+        input.setAttribute("aria-label", this.label("text"));
+        input.style.left = element.style.left;
+        input.style.top = element.style.top;
+        element.style.visibility = "hidden";
+        let finished = false;
+        const finish = (save: boolean) => {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            this.finishRelationEdit = undefined;
+            const value = input.value;
+            input.remove();
+            if (save && value !== (relation.label || "")) {
+                this.options.onRelationChange?.(relation.id, {label: value});
+            }
+            this.draw();
+        };
+        this.finishRelationEdit = finish;
+        this.renderRouteControls();
+        input.addEventListener("blur", () => finish(true));
+        input.addEventListener("keydown", event => {
+            if (event.isComposing || (event.key !== "Enter" && event.key !== "Escape")) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            finish(event.key === "Enter");
+            this.options.host.focus({preventScroll: true});
+        });
+        this.world.append(input);
+        input.focus();
+        input.select();
+    }
+
+    private wheel = (event: WheelEvent) => {
+        if (this.locked || this.viewport.contains((event.target as HTMLElement).closest(".mindmap-view__node--editing"))) {
+            return;
+        }
+        if (this.pointer?.relation) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+        const mode = event.deltaMode;
+        const unitX = mode === WheelEvent.DOM_DELTA_LINE ? 16 :
+            mode === WheelEvent.DOM_DELTA_PAGE ? this.viewport.clientWidth : 1;
+        const unitY = mode === WheelEvent.DOM_DELTA_LINE ? 16 :
+            mode === WheelEvent.DOM_DELTA_PAGE ? this.viewport.clientHeight : 1;
+        // 浏览器将触控板捏合转换为带 Ctrl 的滚轮事件，和鼠标组合滚轮共用光标锚点缩放。
+        if (event.ctrlKey) {
+            event.preventDefault();
+            event.stopPropagation();
+            const bounds = this.viewport.getBoundingClientRect();
+            const delta = Math.max(-24, Math.min(24, event.deltaY * unitY));
+            this.zoomAt(this.scale * Math.exp(-delta * .01),
+                event.clientX - bounds.left, event.clientY - bounds.top);
+            return;
+        }
+        if (!this.fullscreenMarker && !event.shiftKey && !event.deltaX && event.deltaY) {
+            const {left, top, right, bottom} = this.contentBounds();
+            if (left * this.scale + this.offsetX >= 0 && right * this.scale + this.offsetX <= this.viewport.clientWidth &&
+                top * this.scale + this.offsetY >= 0 && bottom * this.scale + this.offsetY <= this.viewport.clientHeight) {
+                return;
+            }
+        }
+        const next = this.boundedPan(this.offsetX - (event.shiftKey ?
+            (event.deltaX ? event.deltaX : event.deltaY) * unitX : event.deltaX * unitX),
+            this.offsetY - (event.shiftKey ? 0 : event.deltaY * unitY));
+        if (!this.fullscreenMarker && !event.shiftKey && event.deltaY && next.y === this.offsetY) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        this.offsetX = next.x;
+        this.offsetY = next.y;
+        this.draw();
+    };
+
+    private boundedPan(x: number, y: number) {
+        const {left, top, right, bottom} = this.contentBounds();
+        return {
+            x: clampMindmapPanOffset(x, left, right, this.scale, this.viewport.clientWidth),
+            y: clampMindmapPanOffset(y, top, bottom, this.scale, this.viewport.clientHeight),
+        };
+    }
+
+    private zoomAt(scale: number, x = this.viewport.clientWidth / 2, y = this.viewport.clientHeight / 2) {
+        if (this.locked) {
+            return;
+        }
+        const next = Math.min(2.5, Math.max(.15, scale));
+        this.offsetX = x - (x - this.offsetX) * next / this.scale;
+        this.offsetY = y - (y - this.offsetY) * next / this.scale;
+        this.scale = next;
+        const bounded = this.boundedPan(this.offsetX, this.offsetY);
+        this.offsetX = bounded.x;
+        this.offsetY = bounded.y;
+        this.draw();
+    }
+
+    private contentBounds() {
+        // 按实际可见节点、关系线和文字计算边界，不包含布局预留的空白。
+        let left = Infinity;
+        let top = Infinity;
+        let right = -Infinity;
+        let bottom = -Infinity;
+        const include = (x: number, y: number, width = 0, height = 0) => {
+            left = Math.min(left, x);
+            top = Math.min(top, y);
+            right = Math.max(right, x + width);
+            bottom = Math.max(bottom, y + height);
+        };
+        this.positions.forEach(node => include(node.x, node.y - 1, node.width, node.height + 1));
+        this.relationRoutes.forEach(points => points.forEach(point => include(point.x, point.y)));
+        this.summaryPositions.forEach(summary => {
+            include(summary.x - 10, summary.top, summary.labelX + summary.width - summary.x + 10, summary.bottom - summary.top);
+            include(summary.labelX, summary.labelY, summary.width, summary.height);
+        });
+        this.relationElements.forEach(element => {
+            if (!element.hidden && element.style.visibility !== "hidden") {
+                const x = parseFloat(element.style.left);
+                const y = parseFloat(element.style.top);
+                if (Number.isFinite(x) && Number.isFinite(y)) {
+                    include(x - element.offsetWidth / 2, y - element.offsetHeight / 2,
+                        element.offsetWidth, element.offsetHeight);
+                }
+            }
+        });
+        return {left, top, right, bottom};
+    }
+
+    private fitPrint() {
+        if (!this.positions.size || !this.viewport.clientWidth) {
+            return;
+        }
+        const {left, top, right, bottom} = this.contentBounds();
+        const width = this.viewport.clientWidth;
+        this.scale = Math.min(1, Math.max(1, width - 24) / Math.max(1, right - left));
+        this.options.host.style.setProperty("--mindmap-view-print-height", `${Math.ceil((bottom - top) * this.scale + 26)}px`);
+        this.offsetX = (width - (right - left) * this.scale) / 2 - left * this.scale;
+        this.offsetY = 12 - top * this.scale;
+        this.draw();
+    }
+
+    public fit(maxScale = 1) {
+        const width = this.viewport.clientWidth;
+        const height = this.viewport.clientHeight;
+        if (!this.positions.size || !width || !height) {
+            return;
+        }
+        // 先更新关系文字的位置，再按画布上下留白缩放并居中。
+        this.draw();
+        const {left, top, right, bottom} = this.contentBounds();
+        const insetTop = 16;
+        // 底部为菜单、外侧间距和横向滚动条留出空间，避免选中节点时画布跳动。
+        const insetBottom = 66;
+        const availableWidth = Math.max(1, width - 48);
+        const availableHeight = Math.max(1, height - insetTop - insetBottom);
+        this.scale = Math.min(maxScale, Math.max(.15, Math.min(availableWidth / Math.max(1, right - left),
+            availableHeight / Math.max(1, bottom - top))));
+        this.offsetX = width / 2 - (left + right) * this.scale / 2;
+        this.offsetY = insetTop + availableHeight / 2 - (top + bottom) * this.scale / 2;
+        this.draw();
+    }
+
+    private pasteImages = (event: ClipboardEvent) => {
+        if (event.defaultPrevented || this.readOnly || this.editingId || this.relationFrom || this.summarySelecting ||
+            !this.options.onPasteImages || !this.selectedId ||
+            (event.target as HTMLElement).isContentEditable ||
+            (event.target as HTMLElement).closest("input, textarea, select")) {
+            return;
+        }
+        const id = this.selectedId;
+        const node = this.model.nodes.get(id);
+        const files = Array.from(event.clipboardData?.files || []).filter(file => file.type.startsWith("image/"));
+        if (!node || node.virtual || files.length === 0) {
+            return;
+        }
+        event.preventDefault();
+        this.finishThen(() => {
+            if (!this.readOnly && this.selectedId === id && this.model.nodes.has(id)) {
+                this.options.onPasteImages(id, files);
+            }
+        });
+    };
+
+    private keyDown = (event: KeyboardEvent) => {
+        if (this.locked) {
+            if (event.key === "Escape" && this.fullscreenMarker) {
+                event.preventDefault();
+                this.toggleFullscreen();
+            }
+            return;
+        }
+        const target = event.target as HTMLElement;
+        const startingComposition = event.isComposing || event.key === "Process" || event.key === "Dead" ||
+            event.keyCode === 229;
+        if (target.closest("input, textarea, select, audio, video, iframe") ||
+            this.viewport.contains(target.closest(".mindmap-view__node--editing"))) {
+            return;
+        }
+        if (this.summaryControls.contains(target) && target.closest("button") && event.key !== "Escape") {
+            return;
+        }
+        if (this.pointer?.relation && event.key !== "Escape") {
+            return;
+        }
+        if (this.summarySelecting && event.key !== "Escape") {
+            if (startingComposition || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
+                return;
+            }
+            if (event.key === "Enter") {
+                if (this.summaryFrom) {
+                    this.finishSummaryRange(this.selectedId);
+                } else {
+                    void this.confirmSummarySelection();
+                }
+            } else if (this.summaryFrom && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+                const parent = this.model.nodes.get(this.model.nodes.get(this.summaryFrom)?.parentId);
+                const index = parent?.children.findIndex(node => node.id === this.selectedId) ?? -1;
+                const next = parent?.children[index + (event.key === "ArrowUp" ? -1 : 1)];
+                if (next) {
+                    this.selectNode(next.id);
+                    this.revealNode(next.id);
+                }
+            } else {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+        const noModifiers = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+        const siblingShortcut = !startingComposition &&
+            (event.key === "Enter" && noModifiers || this.options.isAddSiblingShortcut?.(event));
+        const childShortcut = !startingComposition &&
+            (event.key === "Tab" && noModifiers || this.options.isAddChildShortcut?.(event));
+        const text = !startingComposition && !event.ctrlKey && !event.metaKey && !event.altKey &&
+            event.key !== " " && Array.from(event.key).length === 1 ? event.key : undefined;
+        const isTaskCompletionToggle = !startingComposition && this.options.isTaskCompletionToggle?.(event);
+        if (!startingComposition && !this.readOnly &&
+            (isTaskCompletionToggle || this.options.isTaskCycle?.(event))) {
+            const id = target.closest<HTMLElement>(".mindmap-view__node")?.dataset.mindmapId || this.selectedId;
+            if (this.model.nodes.get(id)?.taskMarker !== undefined) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!event.repeat) {
+                    this.finishThen(() => {
+                        if (!this.readOnly) {
+                            this.options.onTaskToggle?.(id, !isTaskCompletionToggle);
+                        }
+                    });
+                }
+            }
+            return;
+        }
+        if (!startingComposition && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " "].includes(event.key) &&
+            !this.editingId && !this.relationFrom && this.selectedId &&
+            noModifiers &&
+            !target.isContentEditable && !target.closest("button, a")) {
+            const node = this.model.nodes.get(this.selectedId);
+            if (!node) {
+                return;
+            }
+            if (event.key === " ") {
+                if (this.readOnly || event.repeat) {
+                    return;
+                }
+                this.finishThen(() => {
+                    if (this.selectedId !== node.id) {
+                        return;
+                    }
+                    if (node.virtual) {
+                        this.editRootTitle(node.id, true);
+                    } else {
+                        this.setEditing(node.id);
+                        this.options.onEdit?.(node.id, this.getContentHost(node.id));
+                    }
+                });
+            } else {
+                const parent = this.model.nodes.get(node.parentId);
+                let next: string;
+                if (event.key === "ArrowLeft") {
+                    next = parent?.id;
+                } else if (event.key === "ArrowRight") {
+                    if (!(this.folded.get(node.id) ?? node.collapsed)) {
+                        next = node.children[0]?.id;
+                    }
+                } else if (parent) {
+                    const index = parent.children.findIndex(child => child.id === node.id);
+                    next = parent.children[index + (event.key === "ArrowUp" ? -1 : 1)]?.id;
+                }
+                if (next) {
+                    this.selectNode(next);
+                }
+            }
+        } else if (!this.readOnly && !this.editingId && !this.relationFrom && this.selectedId &&
+            (text !== undefined || startingComposition && !event.ctrlKey && !event.metaKey && !event.altKey) &&
+            !target.isContentEditable && !target.closest("button, a")) {
+            const id = this.selectedId;
+            if (event.repeat) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+            this.finishThen(() => {
+                const node = this.model.nodes.get(id);
+                if (this.selectedId !== id || !node) {
+                    return;
+                }
+                if (node.virtual) {
+                    this.editRootTitle(id, false, text);
+                } else {
+                    this.setEditing(id);
+                    this.options.onEdit?.(id, this.getContentHost(id), text ?? "");
+                }
+            });
+            if (startingComposition) {
+                event.stopPropagation();
+                return;
+            }
+        } else if (!this.readOnly && !this.editingId && !this.relationFrom && this.selectedId &&
+            (siblingShortcut || childShortcut) &&
+            !target.isContentEditable && !target.closest("button, a")) {
+            if (event.repeat) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+            const id = this.selectedId;
+            const node = this.model.nodes.get(id);
+            const kind = siblingShortcut ? "sibling" : "child";
+            if (!node || (kind === "sibling" && node.virtual)) {
+                return;
+            }
+            this.finishThen(() => {
+                if (this.selectedId === id) {
+                    this.options.onAdd?.(id, kind);
+                }
+            });
+        } else if (!startingComposition && (event.key === "Delete" || event.key === "Backspace") &&
+            !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+            const selectedId = this.selectedId;
+            const selectedRelation = this.selectedRelation;
+            const selectedSummary = this.selectedSummary;
+            this.finishThen(() => {
+                if (selectedId === this.selectedId && selectedRelation === this.selectedRelation && selectedSummary === this.selectedSummary) {
+                    this.deleteSelection();
+                }
+            });
+        } else if (!startingComposition && event.key === "Escape") {
+            const draggingRoute = !!this.pointer?.relation;
+            const selectingSummary = this.summarySelecting;
+            this.cancelPointer();
+            if (draggingRoute) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+            this.relationFrom = undefined;
+            this.cancelSummarySelection();
+            this.inspector.hidden = true;
+            if (this.fullscreenMarker && !selectingSummary) {
+                this.exitFullscreen();
+            }
+            this.updateSelection();
+        } else {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+    };
+
+    private renderInspector() {
+        if (this.inspector.hidden || this.readOnly) {
+            return;
+        }
+        const focusArrowDirection = this.inspector.querySelector("select") === document.activeElement;
+        this.inspector.replaceChildren();
+        const lineSelected = !!this.selectedRelation || !!this.selectedEdge || !!this.selectedSummary;
+        this.inspector.classList.toggle("mindmap-view__inspector--node", !lineSelected);
+        this.inspector.classList.toggle("mindmap-view__inspector--line", lineSelected);
+        this.inspector.style.left = "";
+        this.inspector.style.top = "";
+        const squareButton = (key: string, icon: string, action: () => void) => {
+            const button = this.makeButton(key, icon, action);
+            button.className = "color__square";
+            button.querySelector("svg").classList.add("svg--mid");
+            return button;
+        };
+        const color = (value: string, action: (value: string) => void, key = "color") => {
+            const palette = createElement("div", "mindmap-view__palette");
+            palette.setAttribute("role", "group");
+            palette.setAttribute("aria-label", this.label(key));
+            const colors = [{label: this.label("default"), value: ""}, ...(this.options.colors?.() || [])];
+            colors.forEach(item => {
+                const button = this.makeButton("color", "", () => action(item.value));
+                const selected = (value || "") === item.value;
+                button.className = "color__square" + (selected ? " color__square--current" : "");
+                button.setAttribute("aria-label", item.label);
+                button.setAttribute("aria-pressed", String(selected));
+                button.style.backgroundColor = item.value || "var(--b3-theme-background)";
+                palette.append(button);
+            });
+            if (this.options.onManageLineColors) {
+                palette.append(squareButton("manageColors", "iconSettings", this.options.onManageLineColors));
+            }
+            this.inspector.append(palette);
+        };
+        if (this.selectedSummary) {
+            const summary = this.model.metadata.summaries?.find(item => item.id === this.selectedSummary);
+            if (summary) {
+                color(summary.color, value => this.options.onSummaryChange?.(summary.id, {color: value}));
+                this.inspector.append(squareButton("edit", "iconEdit", () => this.editSummaryLabel(summary.id)),
+                    squareButton("delete", "iconTrashcan", () => this.options.onSummaryDelete?.(summary.id)));
+            }
+            return;
+        }
+        if (this.selectedRelation) {
+            const relation = this.model.metadata.relations.find(item => item.id === this.selectedRelation);
+            if (!relation) {
+                return;
+            }
+            const change = (patch: Partial<ListMindmapRelation>) => this.options.onRelationChange?.(relation.id, patch);
+            color(relation.color, value => change({color: value}));
+            const direction = createElement("select", "b3-select");
+            direction.setAttribute("aria-label", this.label("listMindmapArrowDirection"));
+            for (const [value, key] of [["forward", "listMindmapArrowForward"], ["reverse", "listMindmapArrowReverse"],
+                ["both", "listMindmapArrowBoth"], ["none", "listMindmapArrowNone"]]) {
+                const option = document.createElement("option");
+                option.value = value;
+                option.textContent = this.label(key);
+                direction.append(option);
+            }
+            direction.value = relation.arrowDirection || "forward";
+            direction.addEventListener("change", () => change({arrowDirection: direction.value as ListMindmapRelation["arrowDirection"]}));
+            this.inspector.append(direction);
+            if (focusArrowDirection) {
+                direction.focus({preventScroll: true});
+            }
+            this.inspector.append(squareButton("edit", "iconEdit", () => this.editRelationLabel()),
+                squareButton("delete", "iconTrashcan", () => this.options.onRelationDelete?.(relation.id)));
+            if (relation.fromAnchor || relation.toAnchor) {
+                this.inspector.append(squareButton("listMindmapAnchorReset", "iconRefresh", () => this.resetRelationAnchors(relation.id)));
+            }
+            return;
+        }
+        if (this.selectedEdge) {
+            const id = this.selectedEdge;
+            const style = {...this.model.metadata.nodes[this.model.root.id], ...this.model.metadata.nodes[id]};
+            const change = (patch: Partial<ListMindmapNodeStyle>) => this.options.onNodeStyle?.(id, patch);
+            color(style.lineColor, value => change({lineColor: value}));
+            return;
+        }
+        if (!this.selectedId) {
+            return;
+        }
+        const id = this.selectedId;
+        const style = this.model.metadata.nodes[id] || {};
+        const change = (patch: Partial<ListMindmapNodeStyle>) => this.options.onNodeStyle?.(id, patch);
+        const nodePalette = createElement("div", "fn__flex");
+        nodePalette.setAttribute("role", "group");
+        nodePalette.setAttribute("aria-label", this.label("color"));
+        const nodeColors: ReturnType<NonNullable<ListMindmapViewOptions["nodeColors"]>> = [
+            {label: this.label("default"), color: "", backgroundColor: ""}, ...(this.options.nodeColors?.() || []),
+        ];
+        nodeColors.forEach(item => {
+            const button = this.makeButton("color", "iconFont", () => change({
+                textColor: item.color, backgroundColor: item.backgroundColor,
+            }));
+            const selected = (style.textColor || "") === item.color && (style.backgroundColor || "") === item.backgroundColor;
+            button.className = "color__square" + (selected ? " color__square--current" : "");
+            button.textContent = "A";
+            button.setAttribute("aria-label", item.label);
+            button.setAttribute("aria-pressed", String(selected));
+            button.style.color = item.preview?.color ?? item.color;
+            button.style.backgroundColor = item.preview?.backgroundColor ?? item.backgroundColor;
+            nodePalette.append(button);
+        });
+        if (this.options.onManageNodeColors) {
+            const manage = squareButton("manageColors", "iconSettings", this.options.onManageNodeColors);
+            nodePalette.append(manage);
+        }
+        this.inspector.append(nodePalette);
+        const node = this.model.nodes.get(id);
+        if (node?.taskMarker !== undefined && this.options.onTaskMenu) {
+            const task = squareButton("checkToggle", "iconCheck", () => this.openTaskMenu(id, task));
+            nodePalette.append(task);
+        }
+        if (node && !node.virtual && node !== this.model.root) {
+            nodePalette.append(squareButton("delete", "iconTrashcan", () => this.deleteSelection()));
+        }
+    }
+
+    private toggleFullscreen() {
+        if (this.fullscreenMarker) {
+            this.exitFullscreen();
+        } else {
+            this.enterFullscreen();
+        }
+    }
+
+    private enterFullscreen() {
+        if (this.destroyed || this.fullscreenMarker) {
+            return;
+        }
+        // 移到独立容器，避免编辑器祖先的变换和裁剪改变全屏覆盖范围。
+        this.fullscreenMarker = document.createComment("mindmap-view");
+        this.options.host.before(this.fullscreenMarker);
+        document.body.append(this.options.host);
+        this.options.onFullscreen?.(true, this.buttons.get("fullscreen"));
+        this.options.host.classList.add("fullscreen");
+        this.toolbar.classList.add("block__icons");
+        this.fullscreenChange();
+        this.options.host.focus({preventScroll: true});
+    }
+
+    private exitFullscreen() {
+        if (!this.fullscreenMarker) {
+            return;
+        }
+        this.options.onFullscreen?.(false, this.buttons.get("fullscreen"));
+        this.options.host.classList.remove("fullscreen");
+        this.fullscreenMarker.replaceWith(this.options.host);
+        this.fullscreenMarker = undefined;
+        this.fullscreenChange();
+        if (!this.destroyed) {
+            this.options.host.focus({preventScroll: true});
+        }
+    }
+
+    private fullscreenChange = () => {
+        const active = !!this.fullscreenMarker;
+        this.tooltip.hidden = true;
+        const button = this.buttons.get("fullscreen");
+        button.setAttribute("aria-label", this.label(active ? "exitFullscreen" : "fullscreen"));
+        button.querySelector("use").setAttribute("xlink:href", active ? "#iconFullscreenExit" : "#iconFullscreen");
+        this.initialFit = true;
+        this.refreshLayout();
+    };
+
+    public destroy() {
+        this.finishSummaryEdit?.(false);
+        this.finishRelationEdit?.(false);
+        if (this.destroyed) {
+            return;
+        }
+        this.destroyed = true;
+        clearTimeout(this.linkTimer);
+        this.cancelPointer();
+        if (this.frame) {
+            cancelAnimationFrame(this.frame);
+        }
+        this.resizeObserver.disconnect();
+        this.disposers.forEach(dispose => dispose());
+        this.exitFullscreen();
+        this.nodeElements.forEach((_element, id) => this.destroyContentViews(id));
+        this.nodeElements.clear();
+        this.relationElements.clear();
+        this.summaryElements.clear();
+        this.options.host.replaceChildren();
+    }
+}

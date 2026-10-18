@@ -1,9 +1,11 @@
+import {toggleMenu} from "../../menus/menuToggle";
 import {getTabContent, getTabItems, getTabTask, getTabTitle, getTabTitleBlock, hasTabsTasks, revealTabAncestors, tabsRender} from "../render/tabsRender";
 import {repairActiveTab} from "./tabsRemoval";
 import {transaction} from "./transaction";
 import {Constants} from "../../constants";
 import {fetchPost} from "../../util/fetch";
-import {focusBlock, focusByRange} from "../util/selection";
+import {focusBlock} from "../util/selection";
+import {focusByRange} from "../util/selectionOffsets";
 import {genEmptyElement, genSBElement} from "../../block/util";
 import {Menu} from "../../plugin/Menu";
 import {processRender} from "../util/processCode";
@@ -11,10 +13,16 @@ import {avRender} from "../render/av/render";
 import {isHiddenTabContent} from "../render/tabsVisibility";
 import {queueTransaction} from "../util/transactionQueue";
 import {remapTabsDOMIDs} from "../util/tabsCopy";
-import {copySubMenu} from "../../menus/commonMenuItem";
+import {remapListMindmapIDs} from "../render/listMindmap/model";
+import {copySubMenu, openAttr} from "../../menus/commonMenuItem";
 import {isTaskListMarker, nextTaskListMarker} from "./taskListMarker";
 import {hideElements} from "../ui/hideElements";
 import {getTaskStatusItems} from "./taskStatusDialog";
+import {canFocusTabItem, getFocusedTabItem, prepareFocusedTabItem} from "./tabsFocus";
+import {zoomOut} from "../../menus/protyle";
+import {getTabReadingID, saveTabReadingID} from "./tabsReading";
+
+const boundFocusedTitles = new WeakSet<HTMLElement>();
 
 export const toggleTabsTasks = (protyle: IProtyle, tabs: HTMLElement) => {
     const items = getTabItems(tabs);
@@ -37,11 +45,13 @@ export const setTabTask = (protyle: IProtyle, item: HTMLElement, marker: string)
 };
 
 const canEdit = (protyle: IProtyle, element: Element) => !protyle.disabled &&
-    !protyle.options.action.includes(Constants.CB_GET_HISTORY) && !element.closest(".protyle-wysiwyg__embed");
+    !protyle.options.action.includes(Constants.CB_GET_HISTORY) &&
+    !element.closest(".protyle-wysiwyg__embed, .mindmap-view__preview-block") &&
+    element.closest(".protyle-wysiwyg") === protyle.wysiwyg.element;
 
 // 同一事务提交受影响的最外层容器，嵌套移动时避免父子更新相互覆盖。
 const changeTabs = (protyle: IProtyle, elements: HTMLElement[], change: () => void) => {
-    if (elements.some(element => !canEdit(protyle, element))) {
+    if (elements.some(element => !element.dataset.nodeId || !canEdit(protyle, element))) {
         return;
     }
     const roots = Array.from(new Set(elements)).filter(element =>
@@ -149,57 +159,93 @@ export const setTabsPosition = (protyle: IProtyle, tabs: HTMLElement, position: 
     }
 };
 
-export const openTabsMenu = (protyle: IProtyle, tabs: HTMLElement, item: HTMLElement, anchor: HTMLElement) => {
-    if (!item) {
-        return;
-    }
-    const lang = window.siyuan.languages;
-    const menu = new Menu();
-    menu.addItem({icon: "iconCopy", label: lang.copy, submenu: copySubMenu([item.dataset.nodeId], false)});
-    if (canEdit(protyle, tabs)) {
-        if (getTabTask(item) !== null) {
-            menu.addSeparator({id: "separator_taskStatusBefore"});
-            getTaskStatusItems(getTabTask(item), marker => setTabTask(protyle, item, marker))
-                .forEach(option => menu.addItem(option));
-            menu.addSeparator({id: "separator_taskStatus"});
-        }
-        menu.addItem({icon: "iconEdit", label: lang.rename, click: () => renameTab(protyle, item)});
-        menu.addItem({icon: "iconCopy", label: lang.duplicateCopy, click: () => {
-            const copy = item.cloneNode(true) as HTMLElement;
-            const ids = new Map<string, string>();
-            [copy, ...Array.from(copy.querySelectorAll<HTMLElement>("[data-node-id]"))].forEach(block => {
-                const id = Lute.NewNodeID();
-                ids.set(block.dataset.nodeId, id);
-                block.dataset.nodeId = id;
-                block.setAttribute("updated", id.substring(0, 14));
-            });
-            remapTabsDOMIDs(copy, ids);
-            changeTabs(protyle, [tabs], () => {
-                item.after(copy);
-                tabs.setAttribute("tabs-active-id", copy.dataset.nodeId);
-            });
-        }});
-        menu.addItem({icon: "iconTrashcan", label: lang.delete, click: () => {
-            const ids = getTabItems(tabs).map(entry => entry.dataset.nodeId);
-            changeTabs(protyle, [tabs], () => {
-                item.remove();
-                repairActiveTab(tabs, ids, item.dataset.nodeId);
-            });
-            focusBlock(tabs);
-        }});
-    }
-    const rect = anchor.getBoundingClientRect();
-    menu.open({x: rect.left, y: rect.bottom, h: rect.height});
+export const openTabsMenu = (protyle: IProtyle, tabs: HTMLElement, item: HTMLElement, anchor: HTMLElement, toggle = true) => {
+    toggleMenu({
+        target: anchor,
+        toggle,
+        build: (_menu, session) => {
+            if (!item) {
+                return;
+            }
+            const lang = window.siyuan.languages;
+            const menu = new Menu();
+            menu.addItem({icon: "iconCopy", label: lang.copy, submenu: copySubMenu([item.dataset.nodeId], false)});
+            if (canFocusTabItem(protyle, item)) {
+                menu.addItem({icon: "iconEnter", label: lang.enter, click: () => zoomOut({protyle, id: item.dataset.nodeId})});
+            }
+            if (canEdit(protyle, tabs)) {
+                if (getTabTask(item) !== null) {
+                    menu.addSeparator({id: "separator_taskStatusBefore"});
+                    getTaskStatusItems(getTabTask(item), marker => setTabTask(protyle, item, marker))
+                        .forEach(option => menu.addItem(option));
+                    menu.addSeparator({id: "separator_taskStatus"});
+                }
+                menu.addItem({icon: "iconEdit", label: lang.rename, click: () => renameTab(protyle, item)});
+            }
+            if (canEdit(protyle, tabs) && tabs.classList.contains("tabs")) {
+                menu.addItem({
+                    icon: "iconCopy", label: lang.duplicateCopy, click: () => {
+                        const copy = item.cloneNode(true) as HTMLElement;
+                        const ids = new Map<string, string>();
+                        [copy, ...Array.from(copy.querySelectorAll<HTMLElement>("[data-node-id]"))].forEach(block => {
+                            const id = Lute.NewNodeID();
+                            ids.set(block.dataset.nodeId, id);
+                            block.dataset.nodeId = id;
+                            block.setAttribute("updated", id.substring(0, 14));
+                        });
+                        remapTabsDOMIDs(copy, ids);
+                        remapListMindmapIDs(copy, ids);
+                        changeTabs(protyle, [tabs], () => {
+                            item.after(copy);
+                            tabs.setAttribute("tabs-active-id", copy.dataset.nodeId);
+                        });
+                    }
+                });
+                menu.addItem({
+                    icon: "iconTrashcan", label: lang.delete, click: () => {
+                        const ids = getTabItems(tabs).map(entry => entry.dataset.nodeId);
+                        changeTabs(protyle, [tabs], () => {
+                            item.remove();
+                            repairActiveTab(tabs, ids, item.dataset.nodeId);
+                        });
+                        focusBlock(tabs);
+                    }
+                });
+            }
+            const rect = anchor.getBoundingClientRect();
+            session.show(() => menu.open({x: rect.left, y: rect.bottom, h: rect.height}));
+
+        },
+    });
 };
 
 export const initEditorTabs = (protyle: IProtyle) => {
     const root = protyle.wysiwyg.element;
     const measured = new WeakSet<Element>();
+    if (!boundFocusedTitles.has(root)) {
+        boundFocusedTitles.add(root);
+        root.addEventListener("contextmenu", event => {
+            if (event.shiftKey || protyle.toolbar?.isMultiSelectMode()) {
+                return;
+            }
+            const item = getFocusedTabItem(protyle);
+            const info = (event.target as Element).closest(".tab-item-info");
+            if (item?.parentElement === root && info?.parentElement === item) {
+                event.preventDefault();
+                event.stopPropagation();
+                openTabsMenu(protyle, item, item, info as HTMLElement, false);
+            }
+        }, true);
+    }
     tabsRender(root, {
+        prepare: () => prepareFocusedTabItem(protyle),
         readonly: tabs => !canEdit(protyle, tabs || root),
+        restore: tabs => getTabReadingID(protyle, tabs),
+        remember: (tabs, id) => saveTabReadingID(protyle, tabs, id),
         label: window.siyuan.languages.tabItem,
         addLabel: window.siyuan.languages.newTabItem,
         taskLabel: window.siyuan.languages.task,
+        attributes: {label: window.siyuan.languages.attr, open: (block, focus) => openAttr(block, focus, protyle)},
         task: item => setTabTask(protyle, item, nextTaskListMarker(getTabTask(item))),
         endEdit: () => hideElements(["toolbar"], protyle),
         activate: item => {

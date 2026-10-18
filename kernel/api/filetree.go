@@ -24,7 +24,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -38,6 +37,8 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
+
+var documentBaseNameReplacer = strings.NewReplacer("\r\n", "", "\r", "", "\n", "", "\u2028", "", "\u2029", "", "\t", "", "/", "")
 
 var moveLocalShorthands = contractHandler(apicontract.MoveLocalShorthands, moveLocalShorthandsContract)
 
@@ -708,6 +709,19 @@ func renameDocByIDContract(c *gin.Context, request apicontract.FileTreeRenameIDR
 
 var duplicateDoc = contractHandler(apicontract.DuplicateDoc, duplicateDocContract)
 
+var duplicateDocTree = contractHandler(apicontract.DuplicateDocTree, duplicateDocTreeContract)
+
+func duplicateDocTreeContract(c *gin.Context, request apicontract.FileTreeIDRequest) apicontract.Response[apicontract.FileTreeDuplicateData] {
+	if err := holdEncryptedBlockRequests(c, "", []string{request.ID}, false); err != nil {
+		return apicontract.FailureWithTimeout[apicontract.FileTreeDuplicateData](-1, err.Error(), 7000)
+	}
+	tree, err := model.DuplicateDocTree(request.ID)
+	if err != nil {
+		return apicontract.FailureWithTimeout[apicontract.FileTreeDuplicateData](-1, err.Error(), 7000)
+	}
+	return apicontract.Success(apicontract.FileTreeDuplicateData{ID: tree.ID, Notebook: tree.Box, Path: tree.Path, HPath: tree.HPath})
+}
+
 func duplicateDocContract(c *gin.Context, request apicontract.FileTreeIDRequest) apicontract.Response[apicontract.FileTreeDuplicateData] {
 	ret := gulu.Ret.NewResult()
 
@@ -751,7 +765,21 @@ func createDailyNoteContract(c *gin.Context, request apicontract.FileTreeDailyNo
 	ret := gulu.Ret.NewResult()
 
 	notebook := request.Notebook
-	p, existed, err := model.CreateDailyNote(notebook)
+	if err := holdEncryptedBoxRequest(c, notebook); err != nil {
+		return apicontract.Failure[apicontract.FileTreeCreateData](-1, model.Conf.Language(314))
+	}
+	var p string
+	var existed bool
+	var err error
+	if request.Date == "" {
+		p, existed, err = model.CreateDailyNote(notebook)
+	} else {
+		date, dateErr := parseDailyNoteDate(request.Date)
+		err = dateErr
+		if err == nil {
+			p, existed, err = model.CreateDailyNoteAt(notebook, date)
+		}
+	}
 	if err != nil {
 		if errors.Is(err, model.ErrBoxNotFound) {
 			ret.Code = 1
@@ -811,8 +839,7 @@ func createDocWithMdContract(c *gin.Context, request apicontract.FileTreeCreateM
 
 	baseName := path.Base(hPath)
 	dir := path.Dir(hPath)
-	r, _ := regexp.Compile("\r\n|\r|\n|\u2028|\u2029|\t|/")
-	baseName = r.ReplaceAllString(baseName, "")
+	baseName = documentBaseNameReplacer.Replace(baseName)
 	if 512 < utf8.RuneCountInString(baseName) {
 		baseName = gulu.Str.SubStr(baseName, 512)
 	}
@@ -840,7 +867,7 @@ func getDocCreateSavePathContract(c *gin.Context, request apicontract.FileTreeNo
 
 	notebook := request.Notebook
 	docCreateSaveBox, docCreateSavePathTpl := model.ResolveDocCreateSaveLocation(notebook)
-	docCreateTemplatePath := model.Conf.FileTree.DocCreateTemplatePath
+	docCreateTemplatePath := model.Conf.FileTree.Load().DocCreateTemplatePath
 	if box := model.Conf.Box(notebook); nil != box {
 		boxConf := box.GetConf()
 		if "" != boxConf.DocCreateTemplatePath {
@@ -869,19 +896,21 @@ func getDocCreateSavePathContract(c *gin.Context, request apicontract.FileTreeNo
 var getRefCreateSavePath = contractHandler(apicontract.GetRefCreateSavePath, getRefCreateSavePathContract)
 
 func getRefCreateSavePathContract(c *gin.Context, request apicontract.FileTreeNotebookRequest) apicontract.Response[apicontract.FileTreeSavePathData] {
+	confFileTreeSnapshot := model.Conf.LoadFileTree()
+
 	ret := gulu.Ret.NewResult()
 
 	notebook := request.Notebook
 	box := model.Conf.Box(notebook)
 	var refCreateSaveBox string
-	refCreateSavePathTpl := model.Conf.FileTree.RefCreateSavePath
+	refCreateSavePathTpl := confFileTreeSnapshot.RefCreateSavePath
 	if nil != box {
 		boxConf := box.GetConf()
 		refCreateSaveBox = boxConf.RefCreateSaveBox
 		refCreateSavePathTpl = boxConf.RefCreateSavePath
 	}
 	if "" == refCreateSaveBox && "" == refCreateSavePathTpl {
-		refCreateSaveBox = model.Conf.FileTree.RefCreateSaveBox
+		refCreateSaveBox = confFileTreeSnapshot.RefCreateSaveBox
 	}
 	if "" != refCreateSaveBox {
 		if nil == model.Conf.Box(refCreateSaveBox) {
@@ -893,7 +922,7 @@ func getRefCreateSavePathContract(c *gin.Context, request apicontract.FileTreeNo
 		refCreateSaveBox = notebook
 	}
 	if "" == refCreateSavePathTpl {
-		refCreateSavePathTpl = model.Conf.FileTree.RefCreateSavePath
+		refCreateSavePathTpl = confFileTreeSnapshot.RefCreateSavePath
 	}
 
 	if refCreateSaveBox != notebook {
@@ -915,12 +944,14 @@ func getRefCreateSavePathContract(c *gin.Context, request apicontract.FileTreeNo
 var getShorthandSavePath = contractHandler(apicontract.GetShorthandSavePath, getShorthandSavePathContract)
 
 func getShorthandSavePathContract(c *gin.Context, request apicontract.FileTreeNotebookRequest) apicontract.Response[apicontract.FileTreeSavePathData] {
+	confFileTreeSnapshot := model.Conf.LoadFileTree()
+
 	ret := gulu.Ret.NewResult()
 
 	notebook := request.Notebook
 
-	shorthandSaveBox := model.Conf.FileTree.ShorthandSaveBox
-	shorthandSavePathTpl := model.Conf.FileTree.ShorthandSavePath
+	shorthandSaveBox := confFileTreeSnapshot.ShorthandSaveBox
+	shorthandSavePathTpl := confFileTreeSnapshot.ShorthandSavePath
 
 	if "" == shorthandSaveBox {
 		shorthandSaveBox = notebook
@@ -1115,6 +1146,8 @@ func searchDocsContract(c *gin.Context, request apicontract.FileTreeSearchReques
 var listDocsByPath = contractHandler(apicontract.ListDocsByPath, listDocsByPathContract)
 
 func listDocsByPathContract(c *gin.Context, request apicontract.FileTreeListRequest) apicontract.Response[apicontract.FileTreeListData] {
+	confFileTreeSnapshot := model.Conf.LoadFileTree()
+
 	ret := gulu.Ret.NewResult()
 
 	notebook := request.Notebook
@@ -1128,7 +1161,7 @@ func listDocsByPathContract(c *gin.Context, request apicontract.FileTreeListRequ
 	}
 
 	if isEncryptedNotebookDeniedForPublish(c, notebook) {
-		return apicontract.Success(apicontract.FileTreeListData{Box: notebook, Path: p, Files: []*apicontract.FileTreeFile{}, EffectiveSortMode: model.Conf.FileTree.Sort})
+		return apicontract.Success(apicontract.FileTreeListData{Box: notebook, Path: p, Files: []*apicontract.FileTreeFile{}, EffectiveSortMode: confFileTreeSnapshot.Sort})
 	}
 
 	options, decodeErr := request.Options()
@@ -1151,7 +1184,7 @@ func listDocsByPathContract(c *gin.Context, request apicontract.FileTreeListRequ
 		}
 	}
 	flashcard := options.Flashcard
-	maxListCount := model.Conf.FileTree.MaxListCount
+	maxListCount := confFileTreeSnapshot.MaxListCount
 	if options.MaxListCount != nil {
 		// API `listDocsByPath` add an optional parameter `maxListCount` https://github.com/siyuan-note/siyuan/issues/7993
 		maxListCount = int(*options.MaxListCount)
@@ -1176,6 +1209,10 @@ func listDocsByPathContract(c *gin.Context, request apicontract.FileTreeListRequ
 		for _, file := range files {
 			if model.CheckPathAccessableByPublishIgnore(notebook, file.Path, publishInvisible) &&
 				model.CheckPathAccessableByPublishIgnore(notebook, file.Path, publishDisable) {
+				// 下级文档数同样只统计发布可见的文档，避免读者据此推断被排除文档的数量
+				if 0 < file.SubFileCount {
+					file.SubFileCount = model.BoxDocSubFileCountForPublishAt(notebook, file.Path, publishAccess)
+				}
 				tempFiles = append(tempFiles, file)
 			}
 		}
@@ -1188,7 +1225,7 @@ func listDocsByPathContract(c *gin.Context, request apicontract.FileTreeListRequ
 			return apicontract.Failure[apicontract.FileTreeListData](-1, hintErr.Error())
 		}
 		if !ignoreHint {
-			if nil == util.NotificationsCfg || util.NotificationsCfg.DocTreeMaxList {
+			if nil == util.NotificationsCfg.Load() || util.NotificationsCfg.Load().DocTreeMaxList {
 				util.PushMsgWithApp(app, fmt.Sprintf(model.Conf.Language(48), len(files)), 7000)
 			}
 		}
@@ -1235,7 +1272,7 @@ func getDocContract(c *gin.Context, request apicontract.FileTreeGetDocRequest) a
 	startID, endID := "", ""
 	if options.StartID != nil && options.EndID != nil {
 		startID, endID = *options.StartID, *options.EndID
-		size = model.Conf.Editor.DynamicLoadBlocks
+		size = model.Conf.Editor.Load().DynamicLoadBlocks
 	}
 	isBacklink := options.IsBacklink
 	originalRefBlockIDs := options.OriginalRefBlockIDs

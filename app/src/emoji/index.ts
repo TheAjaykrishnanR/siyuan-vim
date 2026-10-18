@@ -1,3 +1,4 @@
+import {config as configApi} from "../config/util/configApi";
 import {getRandom, isMobile} from "../util/functions";
 import {fetchPost} from "../util/fetch";
 import {ContractFormData} from "../util/contractFormData";
@@ -37,6 +38,10 @@ import {
     type TRandomEmojiScope,
 } from "./panel";
 import {getFileTreeIconHTML, updateFileTreeItemIcon} from "./fileTreeIcon";
+import {bindBottomSheetDialog} from "../mobile/util/bindBottomSheetDialog";
+import {activeBlur} from "../mobile/util/keyboardToolbar";
+import {bindEmojiSheetSelection} from "../mobile/util/bindEmojiSheetSelection";
+import {getDynamicIconValue} from "./dynamicIcon";
 
 export {unicode2Emoji};
 
@@ -437,24 +442,32 @@ export class EmojiPanelController {
         }
     }
 
+    private getPanelOffsetTop(element: HTMLElement) {
+        // 使用布局坐标，避免弹窗缩放影响分类定位和虚拟分块的可见范围。
+        let top = 0;
+        for (let current = element; current; current = current.offsetParent as HTMLElement) {
+            top += current.offsetTop;
+        }
+        for (let current = this.panelElement; current; current = current.offsetParent as HTMLElement) {
+            top -= current.offsetTop;
+        }
+        return top;
+    }
+
     private updateCategoryOffsets() {
-        const panelTop = this.panelElement.getBoundingClientRect().top;
         this.categoryOffsets = Array.from(this.panelElement.querySelectorAll<HTMLElement>(".emojis__section[data-category]"))
             .map((item) => ({
                 id: item.dataset.category || "",
-                top: item.getBoundingClientRect().top - panelTop + this.panelElement.scrollTop,
+                top: this.getPanelOffsetTop(item),
             }));
     }
 
     private updateBuiltInChunkOffsets() {
-        const panelTop = this.panelElement.getBoundingClientRect().top;
-        const scrollTop = this.panelElement.scrollTop;
         this.builtInChunkOffsets = Array.from(this.panelElement.querySelectorAll<HTMLElement>(".emojis__chunk"))
             .map((element) => {
-                const rect = element.getBoundingClientRect();
-                const top = rect.top - panelTop + scrollTop;
+                const top = this.getPanelOffsetTop(element);
                 const categoryID = element.closest<HTMLElement>(".emojis__section")?.dataset.category || "";
-                return {element, categoryID, top, bottom: top + rect.height};
+                return {element, categoryID, top, bottom: top + element.offsetHeight};
             });
     }
 
@@ -473,10 +486,10 @@ export class EmojiPanelController {
         const itemStyle = getComputedStyle(item);
         const contentStyle = getComputedStyle(content);
         const number = (value: string) => parseFloat(value) || 0;
-        const width = item.getBoundingClientRect().width + number(itemStyle.marginLeft) + number(itemStyle.marginRight);
+        const width = item.offsetWidth + number(itemStyle.marginLeft) + number(itemStyle.marginRight);
         const gap = number(contentStyle.columnGap);
         const availableWidth = content.clientWidth - number(contentStyle.paddingLeft) - number(contentStyle.paddingRight);
-        this.rowHeight = item.getBoundingClientRect().height + number(itemStyle.marginTop) + number(itemStyle.marginBottom);
+        this.rowHeight = item.offsetHeight + number(itemStyle.marginTop) + number(itemStyle.marginBottom);
         this.rowGap = number(contentStyle.rowGap);
         section.remove();
         return width > 0 ? Math.max(1, Math.floor((availableWidth + gap) / (width + gap))) : this.columnCount;
@@ -801,7 +814,7 @@ export const addEmoji = (unicode: string) => {
         Constants.SIZE_UNDO,
     );
 
-    fetchPost("/api/setting/setEmoji", {emoji: window.siyuan.config.editor.emoji});
+    configApi.set("editor.emoji", window.siyuan.config.editor.emoji);
 };
 
 const genWeekdayOptions = (lang: string, weekdayType: string) => {
@@ -837,7 +850,11 @@ export const openEmojiPanel = (
         custom?: boolean,
         ownerElement?: HTMLElement,
         targetID?: string,
+        insertRange?: Range,
     }) => {
+    if ((type === "doc" || type === "notebook") && (window.siyuan.config.readonly || window.siyuan.isPublish)) {
+        return;
+    }
     if (type !== "av") {
         window.siyuan.menus.menu.remove();
     }
@@ -884,13 +901,17 @@ export const openEmojiPanel = (
         }
     };
 
+    let disposeSheet: (() => void) | undefined;
+    let disposeSelection: (() => void) | undefined;
     const dialog = new Dialog({
-        disableAnimation: true,
-        transparent: true,
+        disableAnimation: !isMobile(),
+        transparent: !isMobile(),
         hideCloseIcon: true,
-        width: isMobile() ? "80vw" : "368px",
-        height: "50vh",
+        width: isMobile() ? "100vw" : "368px",
+        height: isMobile() ? "min(40vh, 360px)" : "50vh",
         destroyCallback: () => {
+            disposeSheet?.();
+            disposeSelection?.();
             clearPastedCustomIcon();
             emojiPanelState.controller?.destroy();
         },
@@ -913,7 +934,7 @@ export const openEmojiPanel = (
                 <span class="fn__space"></span>
                 <label class="b3-form__icon fn__flex-1" style="overflow:initial;">
                     <svg class="b3-form__icon-icon"><use xlink:href="#iconSearch"></use></svg>
-                    <input class="b3-form__icon-input b3-text-field fn__block" placeholder="${window.siyuan.languages.searchPlaceholder}">
+                    <input spellcheck="false" class="b3-form__icon-input b3-text-field fn__block" placeholder="${window.siyuan.languages.searchPlaceholder}">
                 </label>
                 <span class="fn__space"></span>
                 <span class="block__icon block__icon--show fn__flex-center ariaLabel" data-action="random" aria-label="${window.siyuan.languages.random}"><svg><use xlink:href="#iconDices"></use></svg></span>
@@ -933,8 +954,8 @@ export const openEmojiPanel = (
                 <div class="color__square fn__pointer${dynamicCurrentObj.color === "#ea5d97" ? " color__square--current" : ""}" style="background-color:#ea5d97"></div>
                 <div class="color__square fn__pointer${dynamicCurrentObj.color === "#93627f" ? " color__square--current" : ""}" style="background-color:#93627f"></div>
                 <div class="color__square fn__pointer${dynamicCurrentObj.color === "#5f6368" ? " color__square--current" : ""}" style="background-color:#5f6368"></div>
-                <div class="fn__space--small"></div>
-                <input type="text" class="b3-text-field fn__flex-1 fn__flex-center" value="${dynamicCurrentObj.color}">
+                <div class="fn__space--small fn__flex-1"></div>
+                <input type="color" class="b3-text-field fn__flex-center" value="${dynamicCurrentObj.color}" aria-label="${window.siyuan.languages.colorFont}">
             </div>
             <div class="fn__flex">
                 <span class="fn__space"></span>
@@ -1010,7 +1031,7 @@ export const openEmojiPanel = (
             <div class="fn__none emojis__link-input">
                 <label class="emojis__link-value">
                     <span class="b3-label__text">URL / Base64</span>
-                    <textarea class="b3-text-field fn__block" data-type="network-icon-url"
+                    <textarea spellcheck="false" class="b3-text-field fn__block" data-type="network-icon-url"
                               placeholder="https://... / data:image/..."></textarea>
                 </label>
                 <div class="emojis__link-footer">
@@ -1027,7 +1048,7 @@ export const openEmojiPanel = (
                 </div>
                 <label class="emojis__link-name">
                     <span class="b3-label__text">${window.siyuan.languages.fileName}</span>
-                    <input class="b3-text-field fn__block" data-type="custom-icon-name" placeholder="path/to/icon">
+                    <input spellcheck="false" class="b3-text-field fn__block" data-type="custom-icon-name" placeholder="path/to/icon">
                 </label>
                 <div class="fn__none emojis__link-footer emojis__link-footer--choice">
                     <button class="b3-button b3-button--cancel emojis__link-choice-back" data-action="back-custom-icon">${window.siyuan.languages.returnLabel}</button>
@@ -1052,8 +1073,23 @@ export const openEmojiPanel = (
     }
     dialog.element.querySelector(".b3-dialog__container").setAttribute("data-menu", "true");
     const dialogElement = dialog.element.querySelector(".b3-dialog") as HTMLElement;
-    dialogElement.style.justifyContent = "inherit";
-    dialogElement.style.alignItems = "inherit";
+    if (isMobile()) {
+        const destroyDialog = dialog.destroy.bind(dialog);
+        dialog.destroy = (destroyOptions?: IObject) => {
+            if (dialog.element.contains(document.activeElement)) {
+                activeBlur(true);
+            }
+            destroyDialog(destroyOptions);
+        };
+        disposeSheet = bindBottomSheetDialog(dialog, async () => dialog.destroy());
+        if (type === "insert" && options?.insertRange) {
+            disposeSelection = bindEmojiSheetSelection(
+                dialog.element.querySelector(".b3-dialog__container"), options.insertRange.cloneRange());
+        }
+    } else {
+        dialogElement.style.justifyContent = "inherit";
+        dialogElement.style.alignItems = "inherit";
+    }
     let currentTab = window.siyuan.storage[Constants.LOCAL_EMOJIS].currentTab;
     const currentTabElement = dialog.element.querySelector(`[data-type="tab-${currentTab}"]`);
     if (!currentTabElement || currentTabElement.classList.contains("fn__none")) {
@@ -1063,7 +1099,9 @@ export const openEmojiPanel = (
     const currentBodyTab = customEmojiPage ? "emoji" : currentTab;
     dialog.element.querySelector(`.emojis__tabheader [data-type="tab-${currentTab}"]`).classList.add("block__icon--active");
     dialog.element.querySelector(`.emojis__tabbody [data-type="tab-${currentBodyTab}"]`).classList.remove("fn__none");
-    setPosition(dialog.element.querySelector(".b3-dialog__container"), position.x, position.y, position.h, position.w);
+    if (!isMobile()) {
+        setPosition(dialog.element.querySelector(".b3-dialog__container"), position.x, position.y, position.h, position.w);
+    }
     const networkIconInputElement = dialog.element.querySelector('[data-type="network-icon-url"]') as HTMLTextAreaElement;
     const customIconFileElement = dialog.element.querySelector('[data-type="custom-icon-file"]') as HTMLInputElement;
     const customIconNameElement = dialog.element.querySelector('[data-type="custom-icon-name"]') as HTMLInputElement;
@@ -1421,7 +1459,7 @@ export const openEmojiPanel = (
                     unicode = target.getAttribute("data-unicode");
                     dialog.destroy();
                 } else if (target.classList.contains("emoji__dynamic-item")) {
-                    unicode = target.getAttribute("src");
+                    unicode = getDynamicIconValue(target.getAttribute("src"));
                     dialog.destroy();
                 } else {
                     // 随机
@@ -1495,8 +1533,8 @@ export const openEmojiPanel = (
                 }
                 break;
             } else if (target.classList.contains("color__square")) {
-                dynamicTextElements[0].value = target.getAttribute("style").replace("background-color:", "");
-                dynamicTextElements[0].dispatchEvent(new CustomEvent("input"));
+                dynamicColorElement.value = target.getAttribute("style").replace("background-color:", "");
+                dynamicColorElement.dispatchEvent(new CustomEvent("input"));
                 break;
             } else if ("clearDate" === target.dataset.action) {
                 dynamicDateElement.value = "";
@@ -1534,29 +1572,27 @@ export const openEmojiPanel = (
             item.setAttribute("src", dynamicURL + url.toString());
         });
     });
-    const dynamicTextElements: NodeListOf<HTMLInputElement> = dialog.element.querySelectorAll('[data-type="tab-dynamic"] [type="text"]');
+    const dynamicColorElement = dialog.element.querySelector<HTMLInputElement>('[data-type="tab-dynamic"] [type="color"]');
+    const dynamicTextElement = dialog.element.querySelector<HTMLInputElement>('[data-type="tab-dynamic"] input[type="text"]');
     const dynamicTextImgElement = dialog.element.querySelector('.emoji__dynamic-item[data-type="text"]');
-    dynamicTextElements[0].addEventListener("input", () => {
-        if (!dynamicTextElements[0].value.startsWith("#")) {
-            return;
-        }
+    dynamicColorElement.addEventListener("input", () => {
         dialog.element.querySelectorAll(".emoji__dynamic-item").forEach(item => {
             const url = new URLSearchParams(item.getAttribute("src").replace(dynamicURL, ""));
-            url.set("color", dynamicTextElements[0].value);
+            url.set("color", dynamicColorElement.value);
             item.setAttribute("src", dynamicURL + url.toString());
         });
         dialog.element.querySelectorAll(".color__square").forEach((item: HTMLElement) => {
-            if (item.style.backgroundColor === dynamicTextElements[0].value) {
+            if (item.getAttribute("style").replace("background-color:", "") === dynamicColorElement.value) {
                 item.classList.add("color__square--current");
             } else {
                 item.classList.remove("color__square--current");
             }
         });
     });
-    dynamicTextElements[1].value = dynamicCurrentObj.content;
-    dynamicTextElements[1].addEventListener("input", () => {
+    dynamicTextElement.value = dynamicCurrentObj.content;
+    dynamicTextElement.addEventListener("input", () => {
         const url = new URLSearchParams(dynamicTextImgElement.getAttribute("src").replace(dynamicURL, ""));
-        url.set("content", dynamicTextElements[1].value);
+        url.set("content", dynamicTextElement.value);
         dynamicTextImgElement.setAttribute("src", dynamicURL + url.toString());
     });
 };

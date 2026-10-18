@@ -1,8 +1,10 @@
+import {isTableLikeView} from "./viewType";
 import {Menu} from "../../../plugin/Menu";
 import {unicode2Emoji} from "../../../emoji";
 import {transaction} from "../../wysiwyg/transaction";
 import {openMenuPanel} from "./openMenuPanel";
-import {focusBlock, focusByRange, getEditorRange} from "../../util/selection";
+import {focusBlock, getEditorRange} from "../../util/selection";
+import {focusByRange} from "../../util/selectionOffsets";
 import {upDownHint} from "../../../util/upDownHint";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {hasClosestByClassName} from "../../util/hasClosest";
@@ -11,6 +13,7 @@ import {clearSelect} from "../../util/clear";
 import {getAVVisibleViewIDs, setAVVisibleViewIDs} from "./viewVisibility";
 import {isNotEditBlock} from "../../wysiwyg/getBlock";
 import {countFilterLeaves} from "./filterTree";
+import {isMobile} from "../../../util/functions";
 
 export const setAVBlockVisibleViewIDs = (
     protyle: IProtyle,
@@ -214,7 +217,9 @@ export const bindViewEvent = (options: {
             options.menuElement.parentElement.remove();
         }
     });
-    inputElement.select();
+    if (!isMobile()) {
+        inputElement.select();
+    }
     inputElement.value = inputElement.dataset.value;
     const descElement = options.menuElement.querySelector('.b3-text-field[data-type="desc"]') as HTMLTextAreaElement;
     inputElement.nextElementSibling.addEventListener("click", () => {
@@ -298,16 +303,27 @@ export const getViewHTML = (data: IAV) => {
     <span class="b3-menu__accelerator">${countFilterLeaves(view.filters)}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
+<button class="b3-menu__item" data-type="goConditionalColors">
+    <svg class="b3-menu__icon"><use xlink:href="#iconFont"></use></svg>
+    <span class="b3-menu__label">${window.siyuan.languages.conditionalColors}</span>
+    <span class="b3-menu__accelerator">${view.conditionalColors?.length || 0}</span>
+    <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
+</button>
+<button class="b3-menu__item" data-type="automations">
+    <svg class="b3-menu__icon"><use xlink:href="#iconZap"></use></svg>
+    <span class="b3-menu__label">${window.siyuan.languages.databaseAutomations}</span>
+    <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
+</button>
 <button class="b3-menu__item" data-type="goSorts">
     <svg class="b3-menu__icon"><use xlink:href="#iconSort"></use></svg>
     <span class="b3-menu__label">${window.siyuan.languages.sort}</span>
     <span class="b3-menu__accelerator">${view.sorts.length}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
-<button class="b3-menu__item" data-type="goGroups">
+<button class="b3-menu__item${data.viewType === "calendar" ? " fn__none" : ""}" data-type="goGroups">
     <svg class="b3-menu__icon"><use xlink:href="#iconGroups"></use></svg>
     <span class="b3-menu__label">${window.siyuan.languages.group}</span>
-    <span class="b3-menu__accelerator">${escapeHtml((data.view.group && data.view.group.field) ? fields.filter((item: IAVColumn) => item.id === data.view.group.field)[0].name : "")}</span>
+    <span class="b3-menu__accelerator">${escapeHtml((data.view.group && data.view.group.field) ? fields.find((item: IAVColumn) => item.id === data.view.group.field)?.name || "" : "")}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__separator"></button>
@@ -326,7 +342,9 @@ export const getViewHTML = (data: IAV) => {
 
 export const bindSwitcherEvent = (options: { protyle: IProtyle, menuElement: Element, blockElement: Element }) => {
     const inputElement = options.menuElement.querySelector(".b3-text-field") as HTMLInputElement;
-    inputElement.focus();
+    if (!isMobile()) {
+        inputElement.focus();
+    }
     inputElement.addEventListener("keydown", (event) => {
         event.stopPropagation();
         if (event.isComposing) {
@@ -439,7 +457,7 @@ export const getSwitcherHTML = (views: IAVView[], viewId: string, blockElement: 
 </div>${hiddenHTML}` : "";
     return `<div class="b3-menu__items fn__flex-column">
 <div class="b3-menu__item fn__flex-shrink" data-type="nobg">
-    <input class="b3-text-field fn__block" type="text" style="margin: 4px 0" placeholder="${window.siyuan.languages.searchPlaceholder}">
+    <input spellcheck="false" class="b3-text-field fn__block" type="text" style="margin: 4px 0" placeholder="${window.siyuan.languages.searchPlaceholder}">
 </div>
 <div class="fn__flex-1" style="overflow: auto">
     ${visibleSectionHTML}
@@ -484,19 +502,19 @@ export const addView = (protyle: IProtyle, blockElement: Element) => {
         }
     });
     addMenu.addItem({
-        icon: "iconBoard",
-        label: window.siyuan.languages.kanban,
+        icon: "iconList",
+        label: window.siyuan.languages.listView,
         click() {
             addVisibleView();
             transaction(protyle, [{
                 action: "addAttrViewView",
                 avID,
-                layout: "kanban",
+                layout: "list",
                 id,
                 blockID: blockElement.getAttribute("data-node-id")
             }], [{
                 action: "removeAttrViewView",
-                layout: "kanban",
+                layout: "list",
                 avID,
                 id,
                 blockID: blockElement.getAttribute("data-node-id")
@@ -523,6 +541,35 @@ export const addView = (protyle: IProtyle, blockElement: Element) => {
             }]);
         }
     });
+    addMenu.addItem({
+        icon: "iconBoard",
+        label: window.siyuan.languages.kanban,
+        click() {
+            addVisibleView();
+            transaction(protyle, [{
+                action: "addAttrViewView",
+                avID,
+                layout: "kanban",
+                id,
+                blockID: blockElement.getAttribute("data-node-id")
+            }], [{
+                action: "removeAttrViewView",
+                layout: "kanban",
+                avID,
+                id,
+                blockID: blockElement.getAttribute("data-node-id")
+            }]);
+        }
+    });
+    addMenu.addItem({
+        icon: "iconCalendar",
+        label: window.siyuan.languages.calendarView,
+        click() {
+            addVisibleView();
+            const context = {avID, id, blockID: blockElement.getAttribute("data-node-id"), layout: "calendar"};
+            transaction(protyle, [{...context, action: "addAttrViewView"}], [{...context, action: "removeAttrViewView"}]);
+        }
+    });
     viewElement.classList.add("av__views--show");
     const addRect = viewElement.querySelector('.block__icon[data-type="av-add"]')?.getBoundingClientRect();
     addMenu.open({
@@ -534,8 +581,12 @@ export const addView = (protyle: IProtyle, blockElement: Element) => {
 
 export const getViewIcon = (type: string) => {
     switch (type) {
+        case "calendar":
+            return "iconCalendar";
         case "table":
             return "iconTable";
+        case "list":
+            return "iconList";
         case "gallery":
             return "iconGallery";
         case "kanban":
@@ -545,8 +596,12 @@ export const getViewIcon = (type: string) => {
 
 export const getViewName = (type: string) => {
     switch (type) {
+        case "calendar":
+            return window.siyuan.languages.calendarView;
         case "table":
             return window.siyuan.languages.table;
+        case "list":
+            return window.siyuan.languages.listView;
         case "gallery":
             return window.siyuan.languages.gallery;
         case "kanban":
@@ -555,7 +610,7 @@ export const getViewName = (type: string) => {
 };
 
 export const getFieldsByData = (data: IAV) => {
-    return data.viewType === "table" ? (data.view as IAVTable).columns : (data.view as IAVGallery).fields;
+    return isTableLikeView(data.viewType) || data.viewType === "calendar" ? (data.view as IAVTable).columns : (data.view as IAVGallery).fields;
 };
 
 export const dragoverTab = (event: DragEvent) => {

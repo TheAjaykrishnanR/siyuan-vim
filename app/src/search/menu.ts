@@ -1,3 +1,4 @@
+import {removeSearchCriterion} from "../config/util/resourceConfig";
 import {Dialog} from "../dialog";
 import {openInputDialog} from "../dialog/inputDialog";
 import {isMobile, objEquals} from "../util/functions";
@@ -6,18 +7,32 @@ import {Constants} from "../constants";
 import {showMessage} from "../dialog/message";
 import {fetchPost} from "../util/fetch";
 import {escapeHtml} from "../util/escape";
-import {isSensitiveSearchConfig, setStorageVal} from "../protyle/util/compatibility";
+import {isDisabledFeature, isSensitiveSearchConfig, setStorageVal} from "../protyle/util/compatibility";
 import {confirmDialog} from "../dialog/confirmDialog";
 import {goUnRef, updateSearchResult} from "../mobile/menu/search";
 import {bindSearchSubtypeFilters} from "./subTypes";
 import {getDefaultSubType, normalizeSearchTypes} from "./getDefault";
 import {hasSearchConfigTemporaryPath, resolvePersistedSearchConfig} from "./config";
+import {getSearchMethodCapabilities, isSearchSortAvailable, setSearchControlAvailability} from "./methodCapabilities";
+
+const withSearchMethodAvailability = (item: IMenu, enabled: boolean): IMenu => ({
+    ...item,
+    disabled: !enabled,
+    bind: (element) => {
+        item.bind?.(element);
+        setSearchControlAvailability(element, enabled, item.label, !enabled);
+    },
+});
 
 export const filterMenu = (config: Config.IUILayoutTabSearchConfig, cb: () => void) => {
+    if (!getSearchMethodCapabilities(config.method, config.group).filter) {
+        return;
+    }
     config.types = normalizeSearchTypes(config.types);
     const filterDialog = new Dialog({
         title: window.siyuan.languages.searchType,
         content: `<div class="b3-dialog__content">
+    ${(["mindmap", "mindmapItem"] as const).map(type => `<label class="fn__flex b3-label"><svg class="ft__on-surface svg fn__flex-center"><use xlink:href="#${type === "mindmap" ? "iconMindmap" : "iconListItem"}"></use></svg><span class="fn__space"></span><div class="fn__flex-1 fn__flex-center">${window.siyuan.languages[type]} <sup>[1]</sup></div><input class="b3-switch fn__flex-center" data-type="${type}" type="checkbox"${config.types[type] ? " checked" : ""}></label>`).join("")}
     <label class="fn__flex b3-label">
         <svg class="ft__on-surface svg fn__flex-center"><use xlink:href="#iconPlugin"></use></svg>
         <span class="fn__space"></span>
@@ -254,6 +269,9 @@ export const filterMenu = (config: Config.IUILayoutTabSearchConfig, cb: () => vo
 };
 
 export const replaceFilterMenu = (config: Config.IUILayoutTabSearchConfig) => {
+    if (!getSearchMethodCapabilities(config.method, config.group).replace) {
+        return;
+    }
     let html = "";
     Object.keys(Constants.SIYUAN_DEFAULT_REPLACETYPES).forEach((key: keyof Config.IUILayoutTabSearchConfigReplaceTypes) => {
         html += `<label class="fn__flex b3-label">
@@ -338,7 +356,7 @@ export const queryMenu = (config: Config.IUILayoutTabSearchConfig, cb: () => voi
             cb();
         }
     }).element);
-    if (window.siyuan.config.ai.embedding.enabled) {
+    if (!isDisabledFeature("ai") && window.siyuan.config.ai.embedding.enabled) {
         window.siyuan.menus.menu.append(new MenuItem({
             icon: "iconSparkles",
             label: window.siyuan.languages.semanticSearch,
@@ -437,7 +455,7 @@ export const saveCriterion = (config: Config.IUILayoutTabSearchConfig,
                                 item.remove();
                             }
                         });
-                        fetchPost("/api/storage/removeCriterion", {name: removeName});
+                        removeSearchCriterion(removeName);
                         removeCriterionData(criteriaData, [hasSameConfig, hasSameName]);
                         saveCriterionData(config, criteriaData, element, value, saveDialog);
                     });
@@ -449,7 +467,7 @@ export const saveCriterion = (config: Config.IUILayoutTabSearchConfig,
                             item.remove();
                         }
                     });
-                    fetchPost("/api/storage/removeCriterion", {name: hasSameConfig});
+                    removeSearchCriterion(hasSameConfig);
                     removeCriterionData(criteriaData, [hasSameConfig]);
                     saveCriterionData(config, criteriaData, element, value, saveDialog);
                 });
@@ -467,6 +485,7 @@ export const moreMenu = async (config: Config.IUILayoutTabSearchConfig,
                                cb: () => void,
                                removeCriterion: () => void,
                                layoutMenu?: () => void) => {
+    const capabilities = getSearchMethodCapabilities(config.method, config.group);
     if (!window.siyuan.menus.menu.element.classList.contains("fn__none") &&
         window.siyuan.menus.menu.element.getAttribute("data-name") === Constants.MENU_SEARCH_MORE) {
         window.siyuan.menus.menu.remove();
@@ -483,7 +502,7 @@ export const moreMenu = async (config: Config.IUILayoutTabSearchConfig,
         }
     }).element);
     window.siyuan.menus.menu.append(new MenuItem({type: "separator"}).element);
-    window.siyuan.menus.menu.append(new MenuItem({
+    window.siyuan.menus.menu.append(new MenuItem(withSearchMethodAvailability({
         iconHTML: "",
         label: window.siyuan.languages.searchType,
         click() {
@@ -491,14 +510,14 @@ export const moreMenu = async (config: Config.IUILayoutTabSearchConfig,
                 updateSearchResult(config, element, true);
             });
         }
-    }).element);
-    window.siyuan.menus.menu.append(new MenuItem({
+    }, capabilities.filter)).element);
+    window.siyuan.menus.menu.append(new MenuItem(withSearchMethodAvailability({
         iconHTML: "",
         label: window.siyuan.languages.replaceType,
         click() {
             replaceFilterMenu(config);
         }
-    }).element);
+    }, capabilities.replace)).element);
     const searchMethodSubmenu = [{
         icon: "iconExact",
         label: window.siyuan.languages.keyword,
@@ -536,7 +555,7 @@ export const moreMenu = async (config: Config.IUILayoutTabSearchConfig,
             updateSearchResult(config, element, true);
         }
     }];
-    if (window.siyuan.config.ai.embedding.enabled) {
+    if (!isDisabledFeature("ai") && window.siyuan.config.ai.embedding.enabled) {
         searchMethodSubmenu.push({
             icon: "iconSparkles",
             label: window.siyuan.languages.semanticSearch,
@@ -555,7 +574,7 @@ export const moreMenu = async (config: Config.IUILayoutTabSearchConfig,
         submenu: searchMethodSubmenu
     }).element);
     /// #endif
-    const sortMenu = [{
+    const sortMenu: IMenu[] = [{
         iconHTML: "",
         label: window.siyuan.languages.type,
         current: config.sort === 0,
@@ -623,13 +642,15 @@ export const moreMenu = async (config: Config.IUILayoutTabSearchConfig,
             }
         });
     }
-    window.siyuan.menus.menu.append(new MenuItem({
+    const sortValues = [0, 1, 2, 3, 4, 6, 7, 5];
+    window.siyuan.menus.menu.append(new MenuItem(withSearchMethodAvailability({
         iconHTML: "",
         label: window.siyuan.languages.sort,
         type: "submenu",
-        submenu: sortMenu,
-    }).element);
-    window.siyuan.menus.menu.append(new MenuItem({
+        submenu: sortMenu.map((item, index) => withSearchMethodAvailability(item,
+            isSearchSortAvailable(config.method, config.group, sortValues[index]))),
+    }, capabilities.sort)).element);
+    window.siyuan.menus.menu.append(new MenuItem(withSearchMethodAvailability({
         iconHTML: "",
         label: window.siyuan.languages.group,
         type: "submenu",
@@ -664,8 +685,8 @@ export const moreMenu = async (config: Config.IUILayoutTabSearchConfig,
                 config.group = 1;
                 cb();
             }
-        }]
-    }).element);
+        }].map(item => withSearchMethodAvailability(item, capabilities.group)),
+    }, capabilities.group)).element);
     if (layoutMenu) {
         layoutMenu();
     }

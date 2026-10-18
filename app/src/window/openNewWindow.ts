@@ -10,6 +10,8 @@ import {getAssetExtension, getDisplayName} from "../util/pathName";
 import {getSearch} from "../util/functions";
 import {isBrowserRenderableImagePath} from "../util/imageURL";
 import {appendRemoteQuery} from "../util/hostCapabilities";
+import type {IWindowGeometry} from "./geometry";
+import {getWindowAppearance} from "./appearance";
 
 interface windowOptions {
     position?: {
@@ -28,11 +30,22 @@ const getWindowURL = (layout: unknown) => {
     return appendRemoteQuery(url).href;
 };
 
+export const openNewWindowByWorkspace = (id: string, windowGeometry?: IWindowGeometry) => {
+    /// #if !BROWSER
+    const url = new URL(getWindowURL([]));
+    url.searchParams.set("windowWorkspace", id);
+    ipcRenderer.send(Constants.SIYUAN_OPEN_WINDOW, {
+        ...getWindowAppearance(), url: url.href, alwaysOnTop: false, windowGeometry,
+    });
+    /// #endif
+};
+
 export const openNewWindow = (tab: Tab, options: windowOptions = {}) => {
     const json = {};
     layoutToJSON(tab, json);
     /// #if !BROWSER
     ipcRenderer.send(Constants.SIYUAN_OPEN_WINDOW, {
+        ...getWindowAppearance(),
         position: options.position,
         width: options.width,
         height: options.height,
@@ -77,6 +90,7 @@ export const openNewWindowById = async (id: string | string[], options: windowOp
     }
     /// #if !BROWSER
     ipcRenderer.send(Constants.SIYUAN_OPEN_WINDOW, {
+        ...getWindowAppearance(),
         position: options.position,
         width: options.width,
         height: options.height,
@@ -117,6 +131,7 @@ export const openAssetNewWindow = (
             }
         }];
         ipcRenderer.send(Constants.SIYUAN_OPEN_WINDOW, {
+            ...getWindowAppearance(),
             position: options.position,
             width: options.width,
             height: options.height,

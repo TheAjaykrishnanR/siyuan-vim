@@ -7,7 +7,7 @@
 		"id": "20240208171522-y7dxcno",
 		"title": "資料庫",
 		"type": "doc",
-		"updated": "20260904121106"
+		"updated": "20261012014930"
 	},
 	"Children": [
 		{
@@ -16,7 +16,7 @@
 			"HeadingLevel": 2,
 			"Properties": {
 				"id": "20251224101729-y8gjlt8",
-				"updated": "20251224101729"
+				"updated": "20261012014930"
 			},
 			"Children": [
 				{
@@ -30,12 +30,109 @@
 			"Type": "NodeParagraph",
 			"Properties": {
 				"id": "20251224101729-3lny7un",
-				"updated": "20260730184353"
+				"updated": "20260920225154"
 			},
 			"Children": [
 				{
 					"Type": "NodeText",
-					"Data": "資料庫由內容區塊或非內容區塊資料組成，並以不同視圖呈現，例如表格視圖、看板視圖和卡片視圖。"
+					"Data": "資料庫由內容區塊或非內容區塊資料組成，並以不同視圖呈現，例如表格視圖、列表視圖、日曆視圖、看板視圖和卡片視圖。"
+				}
+			]
+		},
+		{
+			"ID": "20261012014537-wuukhda",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261012014537-wuukhda",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "詳見"
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "block-ref",
+					"TextMarkBlockRefID": "20261009034010-5oq6h7a",
+					"TextMarkBlockRefSubtype": "s",
+					"TextMarkTextContent": "位置欄位"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "。"
+				}
+			]
+		},
+		{
+			"ID": "20260930175958-lm4h64b",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20260930175958-lm4h64b",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "資料庫面板欄位可見性"
+				}
+			]
+		},
+		{
+			"ID": "20260930175958-m98nd8z",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260930175958-m98nd8z",
+				"updated": "20261001060000"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "在文件頂部、資料庫項目頁或區塊屬性對話方塊的資料庫屬性面板中點選欄位名稱，可以將「資料庫面板欄位可見性」設為「始終顯示」「空白時隱藏」或「始終隱藏」。「預設」保留面板原有的顯示設定，其中文件頂部面板沿用全域隱藏空欄位設定。規則對該資料庫的屬性面板生效，不影響資料庫各檢視的欄位顯隱。點選面板的編輯按鈕可以暫時展開隱藏欄位，編輯欄位值或修改顯示規則。"
+				}
+			]
+		},
+		{
+			"ID": "20260929105001-ao0pcy0",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20260929105001-ao0pcy0",
+				"updated": "20260929105001"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "條目圖示"
+				}
+			]
+		},
+		{
+			"ID": "20260929105001-6i0c6yq",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260929105001-6i0c6yq",
+				"updated": "20260930140000"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "未綁定條目可以擁有自己的圖示，點擊主鍵旁、條目詳情或關聯欄位中的圖示即可修改或清除。條目範本可以為未綁定條目和文件條目預設圖示。未設定自訂圖示的未綁定條目顯示短橫線，檢視的圖示顯示設定仍然生效。"
+				}
+			]
+		},
+		{
+			"ID": "20260929105001-jnlk4z8",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260929105001-jnlk4z8",
+				"updated": "20260930140000"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "綁定或重新綁定到未設定自訂圖示的一般區塊時，區塊會繼承條目的圖示。一般區塊已有圖示或綁定到既有文件時，使用目標區塊本身的圖示。綁定時新建的文件會繼承條目已設定的圖示；條目未設定圖示時，沿用文件範本圖示。綁定後，條目與綁定區塊共用圖示。取消綁定會保留最後顯示的圖示，之後可以獨立修改。"
 				}
 			]
 		},
@@ -45,7 +142,7 @@
 			"HeadingLevel": 2,
 			"Properties": {
 				"id": "20251224101729-yhz5zrt",
-				"updated": "20260904121106"
+				"updated": "20261012014930"
 			},
 			"Children": [
 				{
@@ -503,6 +600,467 @@
 			]
 		},
 		{
+			"ID": "20260920084445-j00bcic",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260920084445-j00bcic",
+				"updated": "20260920084445"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "列表視圖"
+				}
+			]
+		},
+		{
+			"ID": "20260920084445-smyd92u",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260920084445-smyd92u",
+				"updated": "20260920084445"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "每個項目顯示為一行，不顯示表頭和表格格線。新建列表視圖預設只顯示主鍵欄位，其他欄位均隱藏。"
+				}
+			]
+		},
+		{
+			"ID": "20260920084445-8tidkbr",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260920084445-8tidkbr",
+				"updated": "20260920084445"
+			},
+			"Children": [
+				{
+					"ID": "20260920084445-x1l8sd3",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920084445-x1l8sd3",
+						"updated": "20260920084445"
+					},
+					"Children": [
+						{
+							"ID": "20260920084445-derir4d",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920084445-derir4d",
+								"updated": "20260920084445"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "切換方式：在視圖設定中選擇 "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "佈局"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " - "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "列表"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "，也可透過斜線選單插入資料庫列表檢視"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920084445-m4ql9o3",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920084445-m4ql9o3",
+						"updated": "20260920084445"
+					},
+					"Children": [
+						{
+							"ID": "20260920084445-25af675",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920084445-25af675",
+								"updated": "20260920084445"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "欄位顯示：開啟 "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "欄位"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " 面板啟用需要顯示的欄位。可見欄位與主鍵顯示於同一行，並支援編輯欄位值"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920084445-n3ijykx",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920084445-n3ijykx",
+						"updated": "20260920084445"
+					},
+					"Children": [
+						{
+							"ID": "20260920084445-k2g10dv",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920084445-k2g10dv",
+								"updated": "20260920084445"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "視圖設定：複製列表視圖或切回該視圖的列表佈局時，會保留已設定的欄位顯示與隱藏狀態"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920084445-nz5oupp",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920084445-nz5oupp",
+						"updated": "20260920084445"
+					},
+					"Children": [
+						{
+							"ID": "20260920084445-z20o9jj",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920084445-z20o9jj",
+								"updated": "20260920084445"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "篩選、排序和分組：與同一資料庫的其他視圖共享資料，支援獨立設定篩選、排序和分組"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
+			"ID": "20260920225154-xknvq29",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260920225154-xknvq29",
+				"updated": "20260929123717"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "日曆視圖"
+				}
+			]
+		},
+		{
+			"ID": "20260920225154-z9ga0hb",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260920225154-z9ga0hb",
+				"updated": "20260923103343"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "按月或週顯示有日期的項目。週視圖包含七個日期欄，跨日項目會連續顯示在對應日期上。各編輯器的目前模式與瀏覽日期互不影響。每個日曆視圖的月、週模式會儲存在目前工作空間，在新編輯器中開啟或重新啟動思源後恢復。新編輯器從今天開始瀏覽。"
+				}
+			]
+		},
+		{
+			"ID": "20260920225154-mpwyzfe",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260920225154-mpwyzfe",
+				"updated": "20260929123717"
+			},
+			"Children": [
+				{
+					"ID": "20260920225154-6a8qyqe",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-6a8qyqe",
+						"updated": "20260920225154"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-r1vw5b7",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-r1vw5b7",
+								"updated": "20260920225154"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "切換方式：在視圖設定中選擇 "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "佈局"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " - "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "日曆"
+								},
+								{
+									"Type": "NodeText",
+									"Data": "，也可透過斜線選單插入資料庫日曆檢視"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-nvf2ccc",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-nvf2ccc",
+						"updated": "20260920225154"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-6aj594a",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-6aj594a",
+								"updated": "20260920225154"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "日期欄位：在佈局設定中選擇一個日期、建立時間或更新時間欄位。沒有適用欄位時，日曆會提示選擇或建立欄位，不會為既有項目自動填入一般日期；沒有日期的項目不會顯示在日期格中。綁定一般日期欄位時，可在無日期清單中找到這些項目"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260929122307-ltcytyu",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260929122307-ltcytyu",
+						"updated": "20260929123717"
+					},
+					"Children": [
+						{
+							"ID": "20260929122307-s1kwa3w",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260929122307-s1kwa3w",
+								"updated": "20260929123717"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "範本日期：日期欄位設定顯示範本後，日曆依範本計算出的日期顯示項目，原始日期保持不變。範本需輸出純文字日期，支援 YYYY-MM-DD、欄位所選的數字日期格式，以及目前語言的本地日期格式（如 2026年10月2日）；可附加 HH:mm 或 HH:mm:ss，以空格或 T 分隔。日期依目前裝置的本地時區解讀，斜線日期依欄位格式解讀，不猜測日月順序。空白結果、無效日期及其他格式不會顯示，也不會進入無日期列表。計算日期不支援拖曳、清空或按日期新增，請修改來源欄位或範本來調整日期；跨語言使用時建議輸出 YYYY-MM-DD"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-aibikc5",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-aibikc5",
+						"updated": "20260923095432"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-t9xok0u",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-t9xok0u",
+								"updated": "20260923095432"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "瀏覽日期：使用上一頁、下一頁、今天或日期選擇器切換日期。月視圖會摺疊項目較多的日期，點擊更多按鈕可展開所在週。日期依目前裝置的本地時區顯示。月視圖依當月實際需要顯示四、五或六週。月視圖和週視圖都在每列起始日期顯示 ISO 週數。點擊日曆按鈕可依日期或 ISO 週所屬年份和週數跳轉。每週起始日不是星期一時，以該列的星期四決定週數"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-8jo2ad8",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-8jo2ad8",
+						"updated": "20260924110133"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-wxzch42",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-wxzch42",
+								"updated": "20260924110133"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "編輯項目：點擊項目使用既有資料庫項目編輯介面。使用一般日期欄位時，可透過日期格內的加號建立項目，拖曳項目調整日期，或拖曳兩端調整日期範圍。點擊檢視篩選旁的無日期按鈕，可搜尋尚未安排的項目；將項目拖到日期格，或先選取項目再點選日期格，觸控裝置也可使用後一種方式。安排時會填入全天日期，清空日期後項目會回到無日期清單。日期修改支援復原，觸控裝置可拖曳日曆中既有項目上的移動把手。點擊或新增項目後自動聚焦主鍵欄位；拖曳時預覽調整後的日期範圍並醒目提示對應日期格，放開後儲存。右鍵選單也支援複製、新建文件並綁定、新增至其他資料庫、編輯欄位及在所選日期新增項目"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-xpzcvxc",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-xpzcvxc",
+						"updated": "20260920225154"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-z6bn57l",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-z6bn57l",
+								"updated": "20260920225154"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "系統時間：建立時間和更新時間沿用項目或綁定區塊的實際時間，不支援拖曳修改，也不提供日期格內的新增按鈕"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-csqj5ki",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-csqj5ki",
+						"updated": "20260920225154"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-embq9da",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-embq9da",
+								"updated": "20260920225154"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "日期範圍：全天範圍包含結束當天；帶時間的範圍若在午夜結束，則顯示到前一天。僅有一個端點時顯示在該日期，結束早於開始時標記異常並保留原值"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-0na3b4b",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-0na3b4b",
+						"updated": "20260927112821"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-dp0msus",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-dp0msus",
+								"updated": "20260927112821"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "視圖設定：沿用資料庫的篩選、排序、欄位顯示與隱藏及新項目範本，可透過條件顏色設定項目背景。日曆佈局暫不套用分組，切換回其他佈局時保留原有分組設定。佈局設定中的項目顯示行數可選 3、5、10 或全部，預設為 3，儲存在目前日曆視圖中。此設定僅控制月視圖摺疊，週視圖顯示全部項目，日期範圍內的資料仍完整載入"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
 			"ID": "20260613164228-rrw0f53",
 			"Type": "NodeHeading",
 			"HeadingLevel": 3,
@@ -779,7 +1337,7 @@
 			"HeadingLevel": 3,
 			"Properties": {
 				"id": "20260613164228-jqu76ou",
-				"updated": "20260613171246"
+				"updated": "20260927112821"
 			},
 			"Children": [
 				{
@@ -979,12 +1537,120 @@
 			]
 		},
 		{
+			"ID": "20260927112821-431ln3h",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260927112821-431ln3h",
+				"updated": "20261012014930"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "條件顏色"
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-rxehtxz",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-rxehtxz",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "開啟資料庫視圖設定，選擇 "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "條件顏色"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " 後新增規則。選擇一個欄位並設定條件，再選擇背景顏色及其套用目標。修改立即生效，支援復原和重做。"
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-s0848z1",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-s0848z1",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "規則儲存在目前視圖中。表格、列表、日曆、看板和卡片視圖皆支援整個項目的背景顏色；表格視圖還支援只為條件所屬的屬性著色。屬性規則在其他佈局中保留，但不生效。"
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-er6zp67",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-er6zp67",
+				"updated": "20260927123058"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "每條規則獨立判斷一個欄位的條件，多條規則不是「且」的關係。拖曳規則左側的把手調整優先順序，觸控裝置也可使用，每個屬性採用首個符合規則的顏色。整個項目的規則符合後會為其餘區域著色，並停止後續判斷；先前已符合的屬性顏色會保留。預設背景也會占據符合條件的優先順序。"
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-qzdsdet",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-qzdsdet",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "例如，第一條規則將某個屬性設為藍色，第二條規則將整個項目設為綠色。兩條都符合時，該屬性保持藍色，其餘區域為綠色；把綠色整個項目的規則移到最前面後，整個項目都顯示綠色。"
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-bocp51w",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-bocp51w",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "單選、多選欄位可選擇符合第一個選項，依項目內已選選項的順序取得第一個選項的顏色，包括預設顏色，不依欄位的選項定義順序取色。也可選擇固定的內建顏色或自訂顏色。條件沿用既有篩選運算子，支援的欄位還可依顯示範本的結果判斷。"
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-66iv1yc",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-66iv1yc",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "條件顏色不修改欄位值，也不會篩除項目。隱藏的欄位仍可作為判斷依據。尚未填寫完整的條件和引用已刪除欄位的規則不生效。複製視圖會複製規則，此後各視圖獨立設定。既有日曆的選項取色會相容顯示為一條規則，刪除全部規則後清除顏色。"
+				}
+			]
+		},
+		{
 			"ID": "20260613171246-whfdkq8",
 			"Type": "NodeHeading",
 			"HeadingLevel": 3,
 			"Properties": {
 				"id": "20260613171246-whfdkq8",
-				"updated": "20260904121106"
+				"updated": "20261012014930"
 			},
 			"Children": [
 				{
@@ -1013,7 +1679,7 @@
 			"HeadingLevel": 4,
 			"Properties": {
 				"id": "20260613171246-qovn46w",
-				"updated": "20260904121106"
+				"updated": "20261012014859"
 			},
 			"Children": [
 				{
@@ -1042,7 +1708,7 @@
 			"ListData": {},
 			"Properties": {
 				"id": "20260613171246-frygk48",
-				"updated": "20260904121106"
+				"updated": "20261012014859"
 			},
 			"Children": [
 				{
@@ -1327,34 +1993,20 @@
 					},
 					"Properties": {
 						"id": "20260904022100-5x68nm2",
-						"updated": "20260904121106"
+						"updated": "20261012014859"
 					},
 					"Children": [
 						{
-							"ID": "20260904022100-ivb080o",
+							"ID": "20261012014537-q4cjhuu",
 							"Type": "NodeParagraph",
 							"Properties": {
-								"id": "20260904022100-ivb080o",
-								"updated": "20260904121106"
+								"id": "20261012014537-q4cjhuu",
+								"updated": "20261012014859"
 							},
 							"Children": [
 								{
-									"Type": "NodeTextMark",
-									"TextMarkType": "strong",
-									"TextMarkTextContent": "情境篩選"
-								},
-								{
 									"Type": "NodeText",
-									"Data": "：從資料庫區塊工具列開啟 "
-								},
-								{
-									"Type": "NodeTextMark",
-									"TextMarkType": "kbd",
-									"TextMarkTextContent": "情境篩選"
-								},
-								{
-									"Type": "NodeText",
-									"Data": "，並選取一個已設定的關聯欄位。面板會列出資料庫中所有已設定的關聯欄位，但一次只能啟用一個。選取其他欄位即可切換；再次選取目前已勾選的欄位即可關閉情境篩選。啟用後，固定條件「包含任一項 - 目前文件」會套用於此資料庫區塊的所有檢視；各檢視原有篩選仍保持獨立，並與情境篩選以「且」組合。從此資料庫區塊新增項目時，系統會自動將目前文件加入所選的關聯欄位。若要正常篩選與新增項目，目前文件必須已綁定為所選關聯欄位所指向之資料庫中的項目；否則不會顯示相符項目，也無法從此資料庫區塊新增項目"
+									"Data": "彙總：目標為關聯欄位且計算方式為「顯示原始值」或「顯示唯一值」時，支援一般篩選中的「包含任一項」與「不包含任一項」：可搜尋並勾選最終關聯資料庫的項目，依整個彙總項目集合比對，同名項目透過項目 ID 區分；既有關鍵字篩選及其「任一」「所有」「沒有」量詞維持原有行為"
 								}
 							]
 						}
@@ -1458,6 +2110,72 @@
 							]
 						}
 					]
+				}
+			]
+		},
+		{
+			"ID": "20261012014537-260z7cx",
+			"Type": "NodeHeading",
+			"Properties": {
+				"id": "20261012014537-260z7cx",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "情境篩選"
+				}
+			],
+			"HeadingLevel": 4
+		},
+		{
+			"ID": "20260904022100-ivb080o",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260904022100-ivb080o",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "從資料庫區塊工具列開啟 "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "情境篩選"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "，並選取一個已設定的關聯欄位，或目標為關聯欄位且計算方式為「顯示原始值」或「顯示唯一值」的彙總欄位。面板會列出資料庫中所有符合條件的欄位，但一次只能啟用一個。選取其他欄位即可切換；再次選取目前已勾選的欄位即可關閉情境篩選。"
+				}
+			]
+		},
+		{
+			"ID": "20261012014737-cveo3jo",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261012014737-cveo3jo",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "啟用後，固定條件「包含任一項 - 目前文件」會套用於此資料庫區塊的所有檢視；各檢視原有篩選仍保持獨立，並與情境篩選以「且」組合。"
+				}
+			]
+		},
+		{
+			"ID": "20261012014737-tqi9o1j",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261012014737-tqi9o1j",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "目前文件必須已綁定為最終關聯目標資料庫中的項目，否則不會顯示相符項目，也無法從此資料庫區塊新增項目。選取直接關聯欄位時，新增項目會自動關聯目前文件；選取彙總欄位時，新增項目不會回填彙總值，也不會修改中間資料庫的關聯，可能因不符合條件而被隱藏。"
 				}
 			]
 		},
@@ -1951,7 +2669,7 @@
 			"HeadingLevel": 4,
 			"Properties": {
 				"id": "20260613171246-35o76s9",
-				"updated": "20260613171246"
+				"updated": "20260920084445"
 			},
 			"Children": [
 				{
@@ -1980,7 +2698,7 @@
 			"ListData": {},
 			"Properties": {
 				"id": "20260613171246-7c32wem",
-				"updated": "20260613171246"
+				"updated": "20260920084445"
 			},
 			"Children": [
 				{
@@ -2153,7 +2871,7 @@
 					},
 					"Properties": {
 						"id": "20260613171246-3rb2k71",
-						"updated": "20260613171246"
+						"updated": "20260920084445"
 					},
 					"Children": [
 						{
@@ -2181,7 +2899,7 @@
 							"ListData": {},
 							"Properties": {
 								"id": "20260613171246-gfghf2c",
-								"updated": "20260613171246"
+								"updated": "20260920084445"
 							},
 							"Children": [
 								{
@@ -2193,7 +2911,7 @@
 									},
 									"Properties": {
 										"id": "20260613171246-5qgzfeh",
-										"updated": "20260613171246"
+										"updated": "20260920084445"
 									},
 									"Children": [
 										{
@@ -2201,12 +2919,12 @@
 											"Type": "NodeParagraph",
 											"Properties": {
 												"id": "20260613171246-b6yc0id",
-												"updated": "20260613171246"
+												"updated": "20260920084445"
 											},
 											"Children": [
 												{
 													"Type": "NodeText",
-													"Data": "表格視圖：分組後行按分組歸類，每個分組可摺疊展開"
+													"Data": "表格和列表視圖：分組後行按分組歸類，每個分組可摺疊展開"
 												}
 											]
 										}
@@ -2281,7 +2999,7 @@
 					},
 					"Properties": {
 						"id": "20260613171246-2v29lph",
-						"updated": "20260613171246"
+						"updated": "20260920084445"
 					},
 					"Children": [
 						{
@@ -2289,7 +3007,7 @@
 							"Type": "NodeParagraph",
 							"Properties": {
 								"id": "20260613171246-510h6ik",
-								"updated": "20260613171246"
+								"updated": "20260920084445"
 							},
 							"Children": [
 								{
@@ -2299,7 +3017,7 @@
 								},
 								{
 									"Type": "NodeText",
-									"Data": "：表格和卡片視圖中可選擇「無」取消分組；看板視圖不可取消"
+									"Data": "：表格、列表和卡片視圖中可選擇「無」取消分組；看板視圖不可取消"
 								}
 							]
 						}
@@ -2348,6 +3066,20 @@
 				{
 					"Type": "NodeText",
 					"Data": "關聯和匯總"
+				}
+			]
+		},
+		{
+			"ID": "20261007101857-ij3301g",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261007101857-ij3301g",
+				"updated": "20261007101857"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "桌面端和行動端的關聯選擇面板始終提供新增入口，並套用關聯資料庫的預設範本。當輸入名稱與主鍵範本產生的名稱不同時，會顯示兩個入口及各自的實際名稱：依預設範本新增，或使用輸入名稱新增。使用輸入名稱僅覆蓋主鍵，欄位預設值、圖示、內容範本和儲存位置仍依預設範本套用。輸入為空、未設定主鍵範本或名稱相同時，只顯示一個入口。未設定預設範本時新增獨立條目。新增條目與關聯更新可以一起復原"
 				}
 			]
 		},
@@ -3064,7 +3796,142 @@
 			"Children": [
 				{
 					"Type": "NodeText",
-					"Data": "顯示範本讀取各欄位的原始儲存值，不會讀取其他欄位的顯示範本結果。篩選、排序和分組可選擇使用原始值或範本渲染值。清空顯示範本即可還原欄位原本的顯示方式。"
+					"Data": "顯示範本讀取各欄位的原始儲存值，不會讀取其他欄位的顯示範本結果。篩選、排序和分組可選擇使用原始值或範本渲染值。清空顯示範本即可還原欄位原本的顯示方式。關聯欄位會依照目標資料庫主鍵的顯示範本呈現，包括空結果，原始主鍵值和關聯關係保持不變。"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-f9wjtlr",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20261002224707-f9wjtlr",
+				"updated": "20261010222552"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "自動化"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-zvqappp",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-zvqappp",
+				"updated": "20261010222552"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "在資料庫檢視中開啟 "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "設定"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " - "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "自動化"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "，新增規則。修改會自動儲存，文字在失焦或按下 Enter 時儲存。新規則預設停用；設定不完整時會自動停用並提示缺少的項目，完善後手動啟用。規則由整個資料庫共用，在任一檢視或鏡像中的條目修改都可觸發"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "。引用的欄位被刪除或變更類型、目標資料庫被刪除後，後續條目寫入會自動停用受影響規則，並提示規則名稱及失效引用。使用者修改正常儲存，規則設定保留；修復設定後需手動啟用。資料庫鎖定、驗證失敗、資料損毀或寫入失敗時，使用者修改和自動操作仍會一起回復"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-81zsovc",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-81zsovc",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "觸發條件支援新增項目或欄位變更。欄位變更可指定一個欄位，也可觀察任意可編輯欄位；重複寫入相同值不會觸發。可新增篩選條件，只有符合條件的項目才執行動作"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-c2n63q5",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-c2n63q5",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "每條規則可包含多個依序執行的動作：修改觸發項目、修改關聯項目、修改資料庫中符合篩選條件的項目，或在本資料庫及其他資料庫中新增未繫結項目。目標篩選條件為空時符合所有項目"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-vi6feb3",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-vi6feb3",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "動作中的欄位值可以是固定值、類型相容的來源欄位、觸發時間，或關聯至觸發項目。觸發時間適用於日期欄位；關聯至觸發項目適用於指向來源資料庫的關聯欄位。修改主鍵文字會保留原有繫結關係與圖示"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-8iufzoy",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-8iufzoy",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "例如，在任務資料庫與計時資料庫之間建立雙向關聯。任務狀態變為進行中時，在計時資料庫新增項目，將開始時間設為觸發時間並關聯至觸發任務；狀態變為完成時，修改關聯的計時項目，僅篩選結束時間為空的記錄，並將結束時間設為觸發時間"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-chibw3w",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-chibw3w",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "自動動作與原修改一起復原與重做，執行失敗時一起回復。重做保留首次執行時的項目 ID 與時間。自動動作不會繼續觸發其他規則，匯入、同步、歷史還原與復原重放也不會重新觸發規則；一般 API 寫入會觸發規則，但不產生編輯器復原記錄"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-af4txwz",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-af4txwz",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "加密資料庫只能操作同一加密筆記本內的資料庫。請先解鎖相關筆記本；目標資料庫或欄位無法使用時，需要修正或暫停規則。複製資料庫後規則保留但處於暫停狀態，請檢查目標與關聯欄位後再啟用"
 				}
 			]
 		},

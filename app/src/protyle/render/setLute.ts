@@ -1,4 +1,6 @@
 import {applyLuteMarkdownSyntax} from "./luteMarkdownSyntax";
+import {protectLuteInlineElementBoundaries} from "../util/inlineElementBoundary";
+import {protectLuteTableVirtualization} from "../util/tableVirtualizationDOM";
 
 // Lute 配置全部读取全局 window.siyuan.config / window.siyuan.emojis，跨编辑器一致，
 // 因此所有 Protyle 编辑器共用同一个 Lute 实例，将内存与初始化开销从 O(编辑器数) 降为 O(1)。
@@ -79,10 +81,10 @@ export const getAgentLute = (options: ILuteOptions): Lute => {
     lute.SetBlockRef(true);
     lute.SetUnorderedListMarker("-");
     lute.SetDataTask(true);
-    lute.SetExportNormalizeTaskListMarker(true);
+    lute.SetExportNormalizeTaskListMarker(false);
     lute.SetArbitraryTaskListItemMarker(true);
     lute.SetEnsureListItemParagraph(true);
-    return lute;
+    return protectLuteTableVirtualization(protectLuteInlineElementBoundaries(lute));
 };
 
 /**
@@ -133,8 +135,8 @@ const setLute = (options: ILuteOptions) => {
     }
     lute.SetUnorderedListMarker("-");
     lute.SetDataTask(true);
-    lute.SetExportNormalizeTaskListMarker(true);
+    lute.SetExportNormalizeTaskListMarker(false);
     lute.SetArbitraryTaskListItemMarker(true);
     lute.SetEnsureListItemParagraph(true); // 空列表项下创建子列表前补一个空段落
-    return lute;
+    return protectLuteTableVirtualization(protectLuteInlineElementBoundaries(lute));
 };

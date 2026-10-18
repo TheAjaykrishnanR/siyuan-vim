@@ -17,69 +17,113 @@
 package cache
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/dgraph-io/ristretto"
+	"github.com/klauspost/compress/zstd"
 )
 
 type treeCacheEntry struct {
-	raw []byte
+	raw        []byte
+	compressed bool
+	rawSize    int
+	generation uint64
 }
 
+const treeCacheMaxCost = DefaultMaxCostBytes
+
 var (
+	treeCacheEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest),
+		zstd.WithEncoderConcurrency(1), zstd.WithWindowSize(512*1024))
+	treeCacheDecoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1),
+		zstd.WithDecoderMaxMemory(treeCacheMaxCost), zstd.WithDecodeAllCapLimit(true))
 	treeCache, _ = ristretto.NewCache(&ristretto.Config{
-		NumCounters: 100000,
-		MaxCost:     1024 * 1024 * 200,
+		NumCounters: AdmissionCounters,
+		MaxCost:     treeCacheMaxCost,
 		BufferItems: 64,
 	})
-	treeCacheKeys   = map[string]map[string]struct{}{}
-	treeCacheKeysMu sync.Mutex
+	treeCacheKeys       = map[string]map[string]uint64{}
+	treeCacheKeysMu     sync.Mutex
+	treeCacheGeneration uint64
 )
 
 func treeCacheKey(rootID, boxID string) string {
 	return boxID + "\x00" + rootID
 }
 
-func GetTreeData(rootID string) (raw []byte, ok bool) {
-	return GetTreeDataInBox(rootID, "")
-}
-
 func GetTreeDataInBox(rootID, boxID string) (raw []byte, ok bool) {
-	v, _ := treeCache.Get(treeCacheKey(rootID, boxID))
+	treeCacheKeysMu.Lock()
+	key := treeCacheKey(rootID, boxID)
+	v, _ := treeCache.Get(key)
 	if nil == v {
+		treeCacheKeysMu.Unlock()
 		return nil, false
 	}
 	e := v.(*treeCacheEntry)
-	return e.raw, true
-}
-
-func SetTreeData(rootID string, raw []byte) {
-	SetTreeDataInBox(rootID, "", raw)
+	// 异步准入可能保留较早的写入，只接受当前版本，否则交由调用方读取源文件。
+	if e.generation != treeCacheKeys[rootID][key] {
+		treeCacheKeysMu.Unlock()
+		return nil, false
+	}
+	treeCacheKeysMu.Unlock()
+	if e.compressed {
+		var err error
+		raw, err = treeCacheDecoder.DecodeAll(e.raw, make([]byte, 0, e.rawSize))
+		if err != nil || len(raw) != e.rawSize {
+			return nil, false
+		}
+	} else {
+		raw = bytes.Clone(e.raw)
+	}
+	// 解码期间可能发生写入或笔记本锁定，返回前再次检查当前版本。
+	treeCacheKeysMu.Lock()
+	defer treeCacheKeysMu.Unlock()
+	if e.generation != treeCacheKeys[rootID][key] {
+		return nil, false
+	}
+	return raw, true
 }
 
 func SetTreeDataInBox(rootID, boxID string, raw []byte) {
 	if raw == nil {
 		return
 	}
+	if len(raw) >= treeCacheMaxCost {
+		RemoveTreeDataInBox(rootID, boxID)
+		return
+	}
+	entry := &treeCacheEntry{rawSize: len(raw)}
+	// 小文档不压缩；只有实际减少驻留字节时才保存压缩结果。
+	if len(raw) >= 1024 && treeCacheEncoder != nil && treeCacheDecoder != nil {
+		compressed := treeCacheEncoder.EncodeAll(raw, nil)
+		if len(compressed) < len(raw) {
+			entry.raw = bytes.Clone(compressed)
+			entry.compressed = true
+		}
+	}
+	if !entry.compressed {
+		entry.raw = bytes.Clone(raw)
+	}
 	key := treeCacheKey(rootID, boxID)
-	entry := &treeCacheEntry{raw: raw}
-	treeCache.Set(key, entry, int64(len(raw)))
-
 	treeCacheKeysMu.Lock()
 	defer treeCacheKeysMu.Unlock()
+	treeCacheGeneration++
+	entry.generation = treeCacheGeneration
 	keys := treeCacheKeys[rootID]
 	if keys == nil {
-		keys = map[string]struct{}{}
+		keys = map[string]uint64{}
 		treeCacheKeys[rootID] = keys
 	}
-	keys[key] = struct{}{}
+	keys[key] = entry.generation
+	treeCache.Set(key, entry, int64(cap(entry.raw))+64)
 }
 
 func RemoveTreeData(rootID string) {
 	treeCacheKeysMu.Lock()
+	defer treeCacheKeysMu.Unlock()
 	keys := treeCacheKeys[rootID]
 	delete(treeCacheKeys, rootID)
-	treeCacheKeysMu.Unlock()
 
 	treeCache.Del(rootID)
 	treeCache.Del(treeCacheKey(rootID, ""))
@@ -90,10 +134,9 @@ func RemoveTreeData(rootID string) {
 
 func RemoveTreeDataInBox(rootID, boxID string) {
 	key := treeCacheKey(rootID, boxID)
-	treeCache.Del(key)
-
 	treeCacheKeysMu.Lock()
 	defer treeCacheKeysMu.Unlock()
+	treeCache.Del(key)
 	if keys := treeCacheKeys[rootID]; keys != nil {
 		delete(keys, key)
 		if len(keys) == 0 {
@@ -104,7 +147,7 @@ func RemoveTreeDataInBox(rootID, boxID string) {
 
 func ClearTreeCache() {
 	treeCacheKeysMu.Lock()
-	treeCacheKeys = map[string]map[string]struct{}{}
-	treeCacheKeysMu.Unlock()
+	defer treeCacheKeysMu.Unlock()
+	treeCacheKeys = map[string]map[string]uint64{}
 	treeCache.Clear()
 }

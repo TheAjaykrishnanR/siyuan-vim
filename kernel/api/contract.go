@@ -11,6 +11,7 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/apicontract"
 	"github.com/siyuan-note/siyuan/kernel/conf"
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
 func notebookConfContract(value *conf.BoxConf) *apicontract.NotebookConf {
@@ -41,6 +42,21 @@ func notebookConfContract(value *conf.BoxConf) *apicontract.NotebookConf {
 // contractHandler 将请求绑定和响应类型与注册契约关联，业务入口继续使用现有中间件。
 func contractHandler[Request, Data any](endpoint apicontract.Endpoint[Request, Data],
 	handler func(*gin.Context, Request) apicontract.Response[Data], beforeDecode ...func(*gin.Context) *apicontract.Response[Data]) gin.HandlerFunc {
+	// 写配置端点按契约声明串行化并通知；读取完整配置与写入共用互斥，保证读到已提交的配置
+	if setting := endpoint.Definition().Setting; setting.Declared() && setting.Mode == apicontract.SettingNotify {
+		handler = serializeSetting(setting.Namespace, handler)
+	} else if setting.Declared() && setting.Mode == apicontract.SettingSilent || endpoint.Definition().Path == "/api/system/getConf" {
+		serialized := handler
+		handler = func(c *gin.Context, request Request) apicontract.Response[Data] {
+			namespace := setting.Namespace
+			if namespace == "" {
+				namespace = "*"
+			}
+			release := lockSetting(namespace)
+			defer release()
+			return serialized(c, request)
+		}
+	}
 	return func(c *gin.Context) {
 		writeResponse := func(response apicontract.Response[Data]) {
 			if after := response.AfterWrite(); after != nil {
@@ -75,6 +91,16 @@ func contractHandler[Request, Data any](endpoint apicontract.Endpoint[Request, D
 			}
 			c.JSON(status, response)
 		}
+		// 渠道禁用在读取请求体前生效，路由上的身份和权限中间件仍先执行。
+		if apicontract.RequiresAI(endpoint.Definition().Path) && util.IsDisabledFeature("ai") {
+			message := util.I18nTerm(model.Conf.Lang, "agentCapabilitiesUnavailable")
+			if endpoint.Definition().Path == apicontract.AIMCPOAuthCallback.Definition().Path {
+				c.Data(403, "text/plain; charset=utf-8", []byte(message))
+			} else {
+				writeResponse(apicontract.Failure[Data](-1, message))
+			}
+			return
+		}
 		// 保留在读取请求体前完成的角色判断或大小限制，提前响应也使用相同的载荷类型。
 		for _, before := range beforeDecode {
 			if response := before(c); response != nil {
@@ -103,6 +129,10 @@ func contractHandler[Request, Data any](endpoint apicontract.Endpoint[Request, D
 			request, err = endpoint.Decode(c.Request.Body)
 		}
 		if err != nil {
+			writeResponse(endpoint.DecodeFailure(err))
+			return
+		}
+		if err = model.LockRequestAfterDecode(c); err != nil {
 			writeResponse(endpoint.DecodeFailure(err))
 			return
 		}

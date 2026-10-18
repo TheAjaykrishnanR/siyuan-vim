@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"runtime/debug"
 	"sort"
@@ -27,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/88250/lute"
 	"github.com/88250/lute/parse"
 	"github.com/siyuan-note/eventbus"
 	"github.com/siyuan-note/logging"
@@ -56,6 +58,8 @@ type dbQueueOperation struct {
 	id                            string      // index_node
 	removeAssetHashes             []string    // delete_assets
 	beginTxRetries                uint8
+	recoveryEntry                 *indexEntry
+	recoveredIndex                bool
 }
 
 type backlinkIndexChange struct {
@@ -136,6 +140,9 @@ func (change *backlinkIndexChange) data() map[string]any {
 // boxID 从 op 提取目标 boxID，供 beginTxForBox 路由到加密 db 或全局 db。
 // delete_ids/delete_assets 无 box 上下文，返回空串 → 走全局 db。
 func (op *dbQueueOperation) boxID() string {
+	if op.recoveryEntry != nil {
+		return op.recoveryEntry.Box
+	}
 	switch op.action {
 	case "index", "rename", "rename_doc", "move":
 		if op.indexTree != nil {
@@ -209,9 +216,12 @@ func clearQueue() {
 var flushingTx = atomic.Bool{}
 
 func FlushQueue() {
+	diagnostic := util.WatchOperation("flush database index", "wait for index lock")
+	defer diagnostic.Finish()
 	initDatabaseLock.Lock()
 	defer initDatabaseLock.Unlock()
 
+	diagnostic.Stage("take queued operations")
 	ops, indexSnapshot := getOperations()
 	total := len(ops)
 	if 1 > total && !flushingTx.Load() {
@@ -220,9 +230,21 @@ func FlushQueue() {
 
 	flushingTx.Store(true)
 	defer func() {
+		// 中断或恢复失败时保留尚未完成的操作，并排在刷新期间追加的操作之前。
+		dbQueueLock.Lock()
+		var pending []*dbQueueOperation
+		for _, op := range ops {
+			if op != nil {
+				pending = append(pending, op)
+			}
+		}
+		if len(pending) > 0 {
+			operationQueue = append(pending, operationQueue...)
+		}
 		flushingTx.Store(false)
 		// 通知等待的协程队列已刷新完成
 		dbQueueCond.Broadcast()
+		dbQueueLock.Unlock()
 	}()
 
 	start := time.Now()
@@ -242,37 +264,76 @@ func FlushQueue() {
 
 	groupOpsCurrent := map[string]int{}
 	backlinkChange := newBacklinkIndexChange()
+	var recoveryLute *lute.Lute
 	for i, op := range ops {
 		if util.IsExiting.Load() {
 			return
 		}
+		recovered := op.recoveryEntry != nil
+		if recovered {
+			boxID := op.boxID()
+			if IsEncryptedBoxFn != nil && IsEncryptedBoxFn(boxID) && GetEncryptedDB(boxID) == nil {
+				// 锁定笔记本的派生索引由下次解锁挂载后重新建立，旧会话任务不应阻塞普通笔记本。
+				ops[i] = nil
+				continue
+			}
+			if recoveryLute == nil {
+				recoveryLute = lute.New()
+			}
+			var err error
+			op, err = indexEntryToOp(*op.recoveryEntry, recoveryLute, "recover index queue")
+			if err != nil {
+				if os.IsNotExist(err) {
+					ops[i] = nil
+					continue
+				}
+				// 损坏或认证失败的文档保留恢复记录，不能当作已处理而删除。
+				logging.LogErrorf("recover index queue failed: %s", err)
+				return
+			}
+		}
 
+		diagnostic.Stage("begin " + op.action)
 		tx, err := beginTxForBox(op.boxID())
 		if err != nil {
 			logging.LogWarnf("skip queue operation [%s] for box [%s]: %s", op.action, op.boxID(), err)
+			if recovered {
+				return
+			}
 			if op.beginTxRetries < maxBeginTxRetries {
 				op.beginTxRetries++
 				requeueOperation(op)
 			} else {
 				logging.LogErrorf("drop queue operation [%s] for box [%s] after %d retries: %s", op.action, op.boxID(), maxBeginTxRetries, err)
 			}
+			ops[i] = nil
 			continue
 		}
 
 		groupOpsCurrent[op.action]++
 		context["current"] = groupOpsCurrent[op.action]
 		context["total"] = groupOpsTotal[op.action]
+		diagnostic.Stage("execute " + op.action)
 		if err = execOp(op, tx, context); err != nil {
 			tx.Rollback()
 			closeTxPreparedStmts(tx)
 			invalidateRefsCacheForOperation(op)
 			logging.LogErrorf("queue operation [%s] failed: %s", op.action, err)
+			if recovered {
+				return
+			}
+			ops[i] = nil
 			continue
 		}
 
+		diagnostic.Stage("commit " + op.action)
 		if err = commitTx(tx); err != nil {
 			invalidateRefsCacheForOperation(op)
 			logging.LogErrorf("commit tx failed: %s", err)
+			if recovered {
+				return
+			}
+			ops[i] = nil
 			continue
 		}
 		invalidateRefsCacheForOperation(op)
@@ -288,6 +349,9 @@ func FlushQueue() {
 		case "index_node":
 			eventbus.Publish(eventbus.EvtEmbeddingDirty, op.id)
 		}
+		// 切断已完成操作对文档树的引用，使批量处理期间的回收能够释放这些文档。
+		ops[i] = nil
+		op = nil
 
 		if 16 < i && 0 == i%128 {
 			debug.FreeOSMemory()
@@ -304,11 +368,13 @@ func FlushQueue() {
 	}
 
 	// Push database index commit event https://github.com/siyuan-note/siyuan/issues/8814
+	diagnostic.Stage("notify index completion")
 	util.BroadcastByType("main", "databaseIndexCommit", 0, "", backlinkChange.data())
 
 	eventbus.Publish(eventbus.EvtSQLIndexFlushed)
 
 	// 刷新期间追加的操作仍在内存队列中，磁盘队列仅用于进程重启恢复，不能在这里重复执行。
+	diagnostic.Stage("persist index queue completion")
 	clearIndexQueue(indexSnapshot)
 }
 
@@ -341,13 +407,20 @@ func execOp(op *dbQueueOperation, tx *sql.Tx, context map[string]any) (err error
 	}
 	switch op.action {
 	case "index":
+		if op.recoveredIndex {
+			// 提交后、清理队列前发生中断时可能重放同一文档，先移除已有派生索引以保持幂等。
+			if err = deleteByRootID(tx, op.indexTree.ID, context); err != nil {
+				return
+			}
+		}
 		err = indexTree(tx, op.indexTree, context)
 	case "upsert":
 		err = upsertTree(tx, op.upsertTree, context)
 	case "delete":
 		err = batchDeleteByPathPrefix(tx, op.removeTreeBox, op.removeTreePath)
 		if nil == err {
-			tx.Exec("DELETE FROM block_embeddings WHERE box = ? AND path LIKE ?", op.removeTreeBox, op.removeTreePath+"%")
+			condition, args := documentPathPrefixCondition("path", op.removeTreeBox, op.removeTreePath)
+			tx.Exec("DELETE FROM block_embeddings WHERE "+condition, args...)
 		}
 	case "delete_id":
 		err = deleteByRootID(tx, op.removeTreeID, context)
@@ -420,7 +493,7 @@ func IndexNodeQueue(id string) {
 	}
 	newOp := &dbQueueOperation{id: id, box: boxID, inQueueTime: time.Now(), action: "index_node"}
 	for i, op := range operationQueue {
-		if "index_node" == op.action && op.id == id {
+		if "index_node" == op.action && op.recoveryEntry == nil && op.id == id {
 			operationQueue[i] = newOp
 			return
 		}
@@ -446,7 +519,7 @@ func UpdateBlockContentQueue(block *Block) {
 
 	newOp := &dbQueueOperation{block: block, inQueueTime: time.Now(), action: "update_block_content"}
 	for i, op := range operationQueue {
-		if "update_block_content" == op.action && op.block.ID == block.ID {
+		if "update_block_content" == op.action && op.recoveryEntry == nil && op.block.ID == block.ID && op.block.Box == block.Box {
 			operationQueue[i] = newOp
 			return
 		}
@@ -460,7 +533,7 @@ func DeleteRefsTreeQueue(tree *parse.Tree) {
 
 	newOp := &dbQueueOperation{upsertTree: tree, inQueueTime: time.Now(), action: "delete_refs"}
 	for i, op := range operationQueue {
-		if "delete_refs" == op.action && op.upsertTree.ID == tree.ID {
+		if "delete_refs" == op.action && op.upsertTree != nil && op.upsertTree.ID == tree.ID {
 			operationQueue[i] = newOp
 			return
 		}
@@ -474,7 +547,7 @@ func UpdateRefsTreeQueue(tree *parse.Tree) {
 
 	newOp := &dbQueueOperation{upsertTree: tree, inQueueTime: time.Now(), action: "update_refs"}
 	for i, op := range operationQueue {
-		if "update_refs" == op.action && op.upsertTree.ID == tree.ID {
+		if "update_refs" == op.action && op.upsertTree != nil && op.upsertTree.ID == tree.ID {
 			operationQueue[i] = newOp
 			return
 		}
@@ -488,7 +561,7 @@ func DeleteBoxRefsQueue(boxID string) {
 
 	newOp := &dbQueueOperation{box: boxID, inQueueTime: time.Now(), action: "delete_box_refs"}
 	for i, op := range operationQueue {
-		if "delete_box_refs" == op.action && op.box == boxID {
+		if "delete_box_refs" == op.action && op.recoveryEntry == nil && op.box == boxID {
 			operationQueue[i] = newOp
 			return
 		}
@@ -502,7 +575,7 @@ func DeleteBoxQueue(boxID string) {
 
 	newOp := &dbQueueOperation{box: boxID, inQueueTime: time.Now(), action: "delete_box"}
 	for i, op := range operationQueue {
-		if "delete_box" == op.action && op.box == boxID {
+		if "delete_box" == op.action && op.recoveryEntry == nil && op.box == boxID {
 			operationQueue[i] = newOp
 			return
 		}
@@ -516,7 +589,7 @@ func IndexTreeQueue(tree *parse.Tree) {
 
 	newOp := &dbQueueOperation{indexTree: tree, inQueueTime: time.Now(), action: "index"}
 	for i, op := range operationQueue {
-		if "index" == op.action && op.indexTree.ID == tree.ID { // 相同树则覆盖
+		if "index" == op.action && op.indexTree != nil && op.indexTree.ID == tree.ID { // 相同树则覆盖
 			operationQueue[i] = newOp
 			return
 		}
@@ -530,16 +603,12 @@ func UpsertTreeQueue(tree *parse.Tree) {
 
 	newOp := &dbQueueOperation{upsertTree: tree, inQueueTime: time.Now(), action: "upsert"}
 	for i, op := range operationQueue {
-		if "upsert" == op.action && op.upsertTree.ID == tree.ID { // 相同树则覆盖
+		if "upsert" == op.action && op.upsertTree != nil && op.upsertTree.ID == tree.ID { // 相同树则覆盖
 			operationQueue[i] = newOp
 			return
 		}
 	}
 	appendOperation(newOp)
-}
-
-func RenameTreeQueue(tree *parse.Tree) {
-	renameTreeQueue(tree, "rename")
 }
 
 // RenameDocQueue 及时更新文档标题，内容块的路径副本由独立后台任务补齐。
@@ -557,7 +626,7 @@ func renameTreeQueue(tree *parse.Tree, action string) {
 		action:      action,
 	}
 	for i, op := range operationQueue {
-		if action == op.action && op.indexTree.Box == tree.Box && op.indexTree.ID == tree.ID { // 相同树则覆盖
+		if action == op.action && op.indexTree != nil && op.indexTree.Box == tree.Box && op.indexTree.ID == tree.ID {
 			operationQueue[i] = newOp
 			return
 		}
@@ -575,7 +644,7 @@ func MoveTreeQueue(tree *parse.Tree) {
 		action:      "move",
 	}
 	for i, op := range operationQueue {
-		if "move" == op.action && op.indexTree.ID == tree.ID { // 相同树则覆盖
+		if "move" == op.action && op.indexTree != nil && op.indexTree.ID == tree.ID { // 相同树则覆盖
 			operationQueue[i] = newOp
 			return
 		}
@@ -641,8 +710,8 @@ func appendOperation(op *dbQueueOperation) {
 
 func requeueOperation(op *dbQueueOperation) {
 	dbQueueLock.Lock()
+	defer dbQueueLock.Unlock()
 	operationQueue = append(operationQueue, op)
-	dbQueueLock.Unlock()
 	appendToIndexQueue(op)
 	eventbus.Publish(eventbus.EvtSQLIndexChanged)
 }

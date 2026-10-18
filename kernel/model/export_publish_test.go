@@ -36,9 +36,10 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
-// TestExportEmbedFilteredByPublishAccess 验证发布读者导出公共文档时，查询嵌入块匹配到的
-// 发布禁用文档内容会被访问检查过滤，而管理员导出不受影响。
-func TestExportEmbedFilteredByPublishAccess(t *testing.T) {
+// setupExportPublishTest 为发布访问导出用例准备独立的临时工作空间和数据库连接。
+func setupExportPublishTest(t *testing.T) {
+	t.Helper()
+
 	oldConf := Conf
 	oldWorkspaceDir := util.WorkspaceDir
 	oldConfDir := util.ConfDir
@@ -69,16 +70,16 @@ func TestExportEmbedFilteredByPublishAccess(t *testing.T) {
 	sql.InitHistoryDatabase(true)
 	sql.InitAssetContentDatabase(true)
 	Conf = NewAppConf()
-	Conf.Editor = conf.NewEditor()
-	Conf.FileTree = conf.NewFileTree()
-	Conf.Search = conf.NewSearch()
-	Conf.Export = conf.NewExport()
+	Conf.Editor.Store(conf.NewEditor())
+	Conf.FileTree.Store(conf.NewFileTree())
+	Conf.Search.Store(conf.NewSearch())
+	Conf.Export.Store(conf.NewExport())
 	treenode.InitBlockTree(true)
 	invalidateEncryptedPublishAccessCache()
 
 	t.Cleanup(func() {
+		closeModelTestDatabases()
 		treenode.CloseDatabase()
-		sql.CloseDatabase()
 		Conf = oldConf
 		util.WorkspaceDir = oldWorkspaceDir
 		util.ConfDir = oldConfDir
@@ -94,6 +95,12 @@ func TestExportEmbedFilteredByPublishAccess(t *testing.T) {
 			treenode.InitBlockTree(false)
 		}
 	})
+}
+
+// TestExportEmbedFilteredByPublishAccess 验证发布读者导出公共文档时，查询嵌入块匹配到的
+// 发布禁用文档内容会被访问检查过滤，而管理员导出不受影响。
+func TestExportEmbedFilteredByPublishAccess(t *testing.T) {
+	setupExportPublishTest(t)
 
 	const (
 		boxID     = "20260826000000-box0001"
@@ -140,16 +147,33 @@ func TestExportEmbedFilteredByPublishAccess(t *testing.T) {
 		return checkBlockTreeAccessableByPublishAccess(c, publishAccess, bt)
 	}
 
-	markdown := ExportStdMarkdown(publicID, false, false, false, false, accessChecker)
+	markdown := ExportStdMarkdown(publicID, &ExportOptions{
+		Render: ExportRenderOptions{
+			AssetsDestSpace2Underscore: false,
+			FillCSSVar:                 false,
+			AdjustHeadingLevel:         false,
+			ImgTag:                     false,
+			AVPublishFilter:            nil,
+			AccessCheckers:             []EmbedBlockAccessChecker{accessChecker},
+		},
+	})
 	if strings.Contains(markdown, canary) {
 		t.Fatalf("publish reader received private embed content: %s", markdown)
 	}
-	stdHTML := ExportPreview(publicID, false, accessChecker)
+	stdHTML := ExportPreview(publicID, false, nil, accessChecker)
 	if strings.Contains(stdHTML, canary) {
 		t.Fatalf("publish reader received private embed content in preview: %s", stdHTML)
 	}
 
-	adminMarkdown := ExportStdMarkdown(publicID, false, false, false, false)
+	adminMarkdown := ExportStdMarkdown(publicID, &ExportOptions{
+		Render: ExportRenderOptions{
+			AssetsDestSpace2Underscore: false,
+			FillCSSVar:                 false,
+			AdjustHeadingLevel:         false,
+			ImgTag:                     false,
+			AVPublishFilter:            nil,
+		},
+	})
 	if !strings.Contains(adminMarkdown, canary) {
 		t.Fatalf("administrator export should include embed content: %s", adminMarkdown)
 	}

@@ -352,34 +352,9 @@ func containsAny(value string, candidates ...string) bool {
 	return false
 }
 
-// createImageCompatibleStream 在上游明确拒绝图片且尚未产生输出时，使用纯文本请求投影兼容重试一次。
-func createImageCompatibleStream(
-	ctx context.Context,
-	client *openai.Client,
-	req openai.ChatCompletionRequest,
-	capabilityKey string,
-	forceDowngrade bool,
-	maxRetries int,
-	requestTimeout time.Duration,
-	streamIdleTimeout time.Duration,
-	retryDelay func(string, int) time.Duration,
-	ch chan<- AgentEvent,
-) (
-	stream *util.OpenAICompletionStream,
-	firstResponse openai.ChatCompletionStreamResponse,
-	cancel context.CancelFunc,
-	requestMessages []openai.ChatCompletionMessage,
-	downgraded bool,
-	unsupportedDetected bool,
-	err error,
-) {
-	return createProtocolImageCompatibleStream(ctx, client, util.OpenAIProtocolChatCompletions, req, nil, capabilityKey,
-		forceDowngrade, maxRetries, requestTimeout, streamIdleTimeout, retryDelay, ch)
-}
-
 func createProtocolImageCompatibleStream(
 	ctx context.Context,
-	client *openai.Client,
+	client *util.AIClient,
 	protocol string,
 	req openai.ChatCompletionRequest,
 	responseInput func(downgradeImages bool) []any,

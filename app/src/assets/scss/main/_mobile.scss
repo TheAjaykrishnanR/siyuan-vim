@@ -10,7 +10,8 @@ body {
   --mobile-bottom-bar-gap: 8px;
   --mobile-status-height: 24px;
   --mobile-bottom-bar-safe-area: env(safe-area-inset-bottom);
-  --mobile-bottom-bar-bottom: calc(var(--mobile-status-height) + var(--mobile-bottom-bar-gap) + var(--mobile-bottom-bar-safe-area));
+  // 底部安全区与状态提示预留空间取较大值，避免导航栏被重复抬高。
+  --mobile-bottom-bar-bottom: calc(max(var(--mobile-status-height), var(--mobile-bottom-bar-safe-area)) + var(--mobile-bottom-bar-gap));
   --mobile-bottom-bar-offset: calc(var(--mobile-bottom-bar-height) + var(--mobile-bottom-bar-bottom));
 }
 
@@ -161,6 +162,12 @@ body.mobile-keyboard--open {
   line-height: 24px;
   height: 24px;
   font-size: 16px;
+
+  &.counter--compact {
+    font-size: 12px;
+    height: 22px;
+    line-height: 22px;
+  }
 }
 
 .toolbar {
@@ -271,6 +278,12 @@ body.mobile-keyboard--open {
     display: flex;
     align-items: center;
     height: 48px;
+
+    &--sql {
+      height: auto;
+      min-height: 48px;
+      align-items: flex-start;
+    }
   }
 
   &__text {
@@ -286,6 +299,10 @@ body.mobile-keyboard--open {
       min-width: 0;
       height: 48px;
       -webkit-line-clamp: unset;
+    }
+
+    &--search-sql {
+      height: auto;
     }
   }
 
@@ -329,7 +346,13 @@ body.mobile-keyboard--open {
 
 #sidebar,
 #sidebarRight {
+  background-color: var(--b3-theme-background);
+
   .toolbar {
+    &--dark {
+      background-color: var(--b3-theme-background);
+    }
+
     &__icon {
       width: 18px;
       height: 18px;
@@ -422,9 +445,13 @@ body.mobile-keyboard--open {
   box-sizing: border-box;
   height: var(--mobile-topbar-height);
   min-height: var(--mobile-topbar-height);
-  padding: 0 max(4px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+  padding: 0 max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left));
   transform: translate3d(0, var(--mobile-bar-translate-y, 0), 0);
   will-change: transform;
+
+  .toolbar__title {
+    margin-left: 8px;
+  }
 }
 
 .mobile-bottom-bar {
@@ -512,7 +539,7 @@ body.mobile-keyboard--open {
     min-width: 18px;
     height: 18px;
     padding: 0 2px;
-    border: 1.25px solid currentColor;
+    border: 1.5px solid currentColor;
     border-radius: 4px;
     color: var(--b3-theme-on-surface-light);
     font-size: 10px;
@@ -548,6 +575,10 @@ body.mobile-topbar--merged {
     top: 0;
     transform: none;
   }
+}
+
+.protyle-wysiwyg video {
+  max-height: var(--mobile-video-max-height, 90vh);
 }
 
 .mobile-keyboard--open .mobile-bottom-bar,
@@ -600,8 +631,16 @@ body.mobile-topbar--merged {
   position: absolute;
   inset: var(--mobile-top-safe-area) 0 0;
   box-sizing: border-box;
+  // 外壳不创建 iOS 滚动层叠上下文，使固定定位工具栏能覆盖标题栏。
+  -webkit-overflow-scrolling: auto;
   // 绝对定位的主编辑器需继承键盘占位，保持软键盘与工具栏菜单切换时的滚动视口高度。
   padding-bottom: inherit;
+
+  &.protyle--database-row-navigation > .protyle-breadcrumb > .protyle-breadcrumb__icon {
+    min-width: 24px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   > .protyle-breadcrumb {
     position: absolute;
@@ -612,9 +651,8 @@ body.mobile-topbar--merged {
     z-index: 5;
     height: var(--mobile-breadcrumb-height);
     border-radius: 0;
-    opacity: var(--mobile-bar-opacity, 1);
     transform: translate3d(0, var(--mobile-bar-translate-y, 0), 0);
-    will-change: opacity, transform;
+    will-change: transform;
   }
 
   > .protyle-content {
@@ -638,6 +676,8 @@ body.mobile-topbar--merged {
 
   > .protyle-content,
   > .protyle-preview {
+    // 实际滚动区域保留触摸滚动及其后代的继承行为。
+    -webkit-overflow-scrolling: touch;
     margin-left: env(safe-area-inset-left);
     margin-right: env(safe-area-inset-right);
   }
@@ -789,6 +829,10 @@ body.mobile-topbar--merged {
 
 #model > .toolbar > .toolbar__icon.fn__none + .toolbar__text {
   padding-left: 12px;
+}
+
+.file-tree__pins {
+  border-bottom: 0;
 }
 
 .side-panel {
@@ -1090,31 +1134,20 @@ body.mobile-topbar--merged {
         }
       }
 
+      // 移动端已下载卡片：操作区跨整行铺满、图标只占第一行，两行网格结构见 business/_config.scss
       &__panel[data-type="downloaded"] .config-bazaar__content .b3-card {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr);
-
         > .b3-card__img {
-          grid-column: 1;
+          align-self: auto;
           grid-row: 1;
-        }
-
-        > .fn__flex-1 {
-          grid-column: 2;
-          grid-row: 1;
+          margin: 12px 0 12px 12px;
         }
 
         > .b3-card__actions--right {
           grid-column: 1 / -1;
-          grid-row: 2;
           max-width: none;
           min-height: 36px;
           padding: 4px 8px 8px 12px;
           width: 100%;
-
-          > .config-bazaar__publish-controls {
-            margin-right: auto;
-          }
         }
       }
 
@@ -1142,7 +1175,7 @@ body.mobile-topbar--merged {
             height: auto;
             margin: 0;
             min-height: 44px;
-            padding: max(8px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+            padding: max(8px, var(--mobile-top-safe-area)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
             position: sticky;
             top: 0;
             width: 100%;
@@ -1190,6 +1223,11 @@ body.mobile-topbar--merged {
             width: 100%;
           }
 
+          &__desc {
+            // 移动端信息区在描述上方，无需与信息栏对齐
+            margin-top: 0;
+          }
+
           &__preview {
             height: min(50vw, 180px);
             margin-bottom: 16px;
@@ -1221,7 +1259,7 @@ body.mobile-topbar--merged {
     font-weight: normal;
     line-height: 20px;
     margin: 0;
-    padding: 8px;
+    padding: 8px 16px;
   }
 
   .config-items {
@@ -1231,6 +1269,21 @@ body.mobile-topbar--merged {
       margin: 0 16px;
       padding: 16px 0;
     }
+  }
+
+  #syncProviderConfig .b3-label--inner,
+  .config-account__payment-status,
+  .config-account__payment-remaining,
+  .config-cloud-space {
+    font-size: 14px;
+  }
+
+  .config-cloud-space .b3-list-item__meta {
+    font-size: inherit;
+  }
+
+  .config-cloud-space__title {
+    font-size: 15px;
   }
 
   .config-assets {
@@ -1243,6 +1296,7 @@ body.mobile-topbar--merged {
     &__list {
       overflow: auto;
       flex: 1;
+      position: relative;
     }
 
     &__preview {
@@ -1254,6 +1308,7 @@ body.mobile-topbar--merged {
       flex: 1;
       padding: 8px;
       background-color: var(--b3-theme-background);
+      border-top: 1px solid var(--b3-border-color);
     }
   }
 }
@@ -1263,12 +1318,27 @@ body.mobile-topbar--merged {
   top: 0;
   transform: translateX(100vw);
 
+  > .toolbar {
+    flex-shrink: 0;
+    padding-left: max(5px, env(safe-area-inset-left));
+    padding-right: max(5px, env(safe-area-inset-right));
+  }
+
   .mobile-main-menu {
+    &__collapse {
+      // 将按钮超出标题行高的部分放入标题留白，保持分组间距
+      margin: -2px 0;
+      align-self: center;
+    }
+
+    // 搜索框与返回按钮同处顶栏，占满返回按钮右侧的剩余宽度
     &__search {
-      background-color: var(--b3-theme-surface);
       display: flex;
-      flex-shrink: 0;
-      padding: 8px 16px;
+      flex: 1;
+      min-width: 0;
+      padding-right: 11px;
+      -webkit-user-select: text;
+      user-select: text;
     }
 
     &__groups {
@@ -1324,6 +1394,23 @@ body.mobile-topbar--merged {
     flex: 1;
     overflow: auto;
     background-color: var(--b3-theme-surface);
+
+    > .protyle-hint {
+      position: static;
+      width: auto !important;
+      min-width: 0;
+      max-width: none;
+      max-height: none !important;
+      box-shadow: none;
+      border: 0;
+      padding: 0;
+      background-color: transparent;
+
+      .keyboard__slash-text {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+    }
   }
 
   &__split {
@@ -1340,6 +1427,7 @@ body.mobile-topbar--merged {
     border: 0;
     color: var(--b3-theme-on-surface);
 
+    &[data-type="block-type"],
     &[data-type="font-family"],
     &[data-type="font-size"] {
       padding: 0 8px;
@@ -1411,6 +1499,10 @@ body.mobile-topbar--merged {
       color: var(--b3-theme-on-background);
       min-height: 50px;
       text-align: left;
+
+      &--full {
+        width: calc(100% - 8px);
+      }
     }
 
     &-icon {
@@ -1426,6 +1518,12 @@ body.mobile-topbar--merged {
 
     &-text {
       margin-left: 6px;
+    }
+
+    &-description {
+      display: block;
+      color: var(--b3-theme-on-surface);
+      font-size: .75rem;
     }
   }
 
@@ -1473,6 +1571,11 @@ body.mobile-topbar--merged {
 }
 
 .b3-menu {
+  &__item {
+    min-height: 40px;
+    align-items: center;
+  }
+
   &__scrim {
     background-color: transparent;
   }
@@ -1649,13 +1752,13 @@ body.mobile-topbar--merged {
 
 .status {
   position: fixed;
-  bottom: calc(0px - var(--mobile-status-height) - var(--mobile-bottom-bar-safe-area));
-  height: calc(var(--mobile-status-height) + var(--mobile-bottom-bar-safe-area));
+  bottom: calc(0px - var(--mobile-status-height));
+  height: var(--mobile-status-height);
   line-height: 16px;
   transition: var(--b3-transition);
   font-size: 12px;
   color: var(--b3-theme-on-surface);
-  padding: 4px 4px calc(4px + var(--mobile-bottom-bar-safe-area));
+  padding: 4px;
   white-space: nowrap;
   width: 100%;
   box-sizing: border-box;
@@ -1719,6 +1822,8 @@ body.mobile-topbar--merged {
   }
 
   .mobile-bottom-sheet {
+    // 退出时保持可见，由位移动画将面板移出可视区域。
+    opacity: 1;
     max-height: min(60vh, 100%);
     border: 0;
     border-radius: var(--b3-border-radius-b) var(--b3-border-radius-b) 0 0;
@@ -1755,6 +1860,26 @@ body.mobile-topbar--merged {
   .b3-dialog__body {
     min-height: 0;
     overflow: hidden;
+  }
+}
+
+.mobile-reference-dialog {
+  .mobile-reference-sheet {
+    // 按键盘上方的可见视口保留原文区域，不随键盘自动扩展到全屏。
+    max-height: 60%;
+  }
+
+  .b3-dialog__body {
+    box-sizing: border-box;
+  }
+
+  .mobile-reference-editor {
+    min-height: 0;
+  }
+
+  &--compact .b3-dialog__header {
+    // 窄小视口中将空间留给正文，标题仍为对话框提供无障碍名称。
+    display: none;
   }
 }
 
@@ -1925,20 +2050,24 @@ body.mobile-topbar--merged {
 }
 
 .av__cell[data-dtype="block"]:not(.av__cell--header) {
-  padding-right: 77px;
+  // 按钮留白放在内容内层，避免外层内边距撑大窄列，导致表头与正文错位。
+  & > .av__cellprimary {
+    display: block;
+    padding-right: 69px;
+  }
 
   & > .av__row-actions {
     opacity: 1;
     pointer-events: auto;
   }
 
-  &[data-align="center"] {
-    padding-left: 77px;
+  &[data-align="center"] > .av__cellprimary {
+    padding-left: 69px;
   }
 
-  &[data-align="right"] {
-    padding-left: 77px;
-    padding-right: 8px;
+  &[data-align="right"] > .av__cellprimary {
+    padding-left: 69px;
+    padding-right: 0;
   }
 }
 

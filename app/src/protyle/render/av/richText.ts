@@ -1,6 +1,9 @@
 import {escapeHtml} from "../../../util/escape";
+import {Constants} from "../../../constants";
+import {CODE_TAB_SPACE_VALUES} from "../../wysiwyg/codeBlockUtil";
 import {highlightRender} from "../highlightRender";
 import {getAgentLute} from "../setLute";
+import {restoreInlineElementBoundaries} from "../../util/inlineElementBoundary";
 import {mathRender} from "../mathRender";
 import {
     createAVRichTextStyleBackslashEncoding,
@@ -74,6 +77,8 @@ const ALLOWED_INLINE_TYPES = new Set([
     "text",
     "u",
 ]);
+const TABLE_CELL_CUSTOM_INLINE_TYPE = /^custom_[A-Za-z0-9_-]{1,128}$/;
+const TABLE_CELL_CUSTOM_STYLE_PROPERTY = /^--custom-[a-z0-9-]{1,128}$/;
 const previewCache = new Map<string, string>();
 const PREVIEW_CACHE_LIMIT = 256;
 let richTextLute: Lute | undefined;
@@ -98,8 +103,43 @@ const replaceWithText = (element: Element) => {
     element.replaceWith(document.createTextNode(element.textContent || ""));
 };
 
-const removeUnsupportedBlockAttributes = (element: HTMLElement) => {
+const sanitizeTableCellCustomStyle = (style: string) => {
+    if (style.length > 2048) {
+        return "";
+    }
+    const declarations: string[] = [];
+    style.split(";").forEach(declaration => {
+        const separator = declaration.indexOf(":");
+        if (separator < 0) {
+            return;
+        }
+        const property = declaration.slice(0, separator).trim();
+        const value = declaration.slice(separator + 1).trim();
+        if (!TABLE_CELL_CUSTOM_STYLE_PROPERTY.test(property)) {
+            return;
+        }
+        if (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value)) {
+            declarations.push(`${property}: ${value};`);
+            return;
+        }
+        if (/^var\(--b3-font-(?:color|background)(?:[1-9]|1[0-3])\)$/.test(value)) {
+            declarations.push(`${property}: ${value};`);
+            return;
+        }
+        const rgb = value.match(/^rgba?\(\s*(\d{1,3})(?:,\s*|\s+)(\d{1,3})(?:,\s*|\s+)(\d{1,3})(?:\s*[,/]\s*(0(?:\.\d+)?|1(?:\.0+)?))?\s*\)$/i);
+        if (rgb && [rgb[1], rgb[2], rgb[3]].every(channel => Number(channel) <= 255)) {
+            declarations.push(`${property}: ${value};`);
+        }
+    });
+    return declarations.join(" ");
+};
+
+const removeUnsupportedBlockAttributes = (element: HTMLElement, codeSettings: boolean) => {
     Array.from(element.attributes).forEach((attribute) => {
+        if (codeSettings && element.dataset.type === "NodeCodeBlock" &&
+            attribute.name === Constants.CUSTOM_SY_CODE_TAB_SPACES) {
+            return;
+        }
         if (attribute.name.startsWith("custom-") || attribute.name === "bookmark" ||
             attribute.name === "memo" || attribute.name === "name" || attribute.name === "style") {
             element.removeAttribute(attribute.name);
@@ -139,9 +179,11 @@ export const getAVRichTextUnsupportedPasteBlocks = (blockDOM: string, images = f
     return Array.from(names);
 };
 
-export const sanitizeAVRichTextBlockDOM = (blockDOM: string, images = false) => {
+export const sanitizeAVRichTextBlockDOM = (blockDOM: string, images = false, tableCellCustomInline = false) => {
     const template = document.createElement("template");
     template.innerHTML = blockDOM;
+    // 在过滤临时属性前恢复边界，避免把显示占位符当成富文本内容保存。
+    restoreInlineElementBoundaries(template.content);
     template.content.querySelectorAll<HTMLElement>('[data-type^="Node"]').forEach((element) => {
         const type = element.dataset.type;
         if (!isSupportedAVRichTextBlock(element)) {
@@ -151,7 +193,7 @@ export const sanitizeAVRichTextBlockDOM = (blockDOM: string, images = false) => 
         if (type === "NodeHeading") {
             element.className = element.dataset.subtype;
         }
-        removeUnsupportedBlockAttributes(element);
+        removeUnsupportedBlockAttributes(element, images);
     });
     template.content.querySelectorAll(
         (images ? "" : ".img, img, ") +
@@ -169,11 +211,15 @@ export const sanitizeAVRichTextBlockDOM = (blockDOM: string, images = false) => 
         if (images && types.length === 1 && types[0] === "img") {
             return;
         }
-        if (types.some((type) => !ALLOWED_INLINE_TYPES.has(type))) {
+        if (types.some((type) => !ALLOWED_INLINE_TYPES.has(type) &&
+            !(tableCellCustomInline && TABLE_CELL_CUSTOM_INLINE_TYPE.test(type)))) {
             replaceWithText(element);
             return;
         }
-        const style = types.includes("text") ? sanitizeAVRichTextInlineStyle(element.getAttribute("style")) : "";
+        const hasCustomType = tableCellCustomInline && types.some(type => TABLE_CELL_CUSTOM_INLINE_TYPE.test(type));
+        const sourceStyle = element.getAttribute("style") || "";
+        const style = [types.includes("text") || hasCustomType ? sanitizeAVRichTextInlineStyle(sourceStyle) : "",
+            hasCustomType ? sanitizeTableCellCustomStyle(sourceStyle) : ""].filter(Boolean).join(" ");
         if (style) {
             element.setAttribute("style", style);
         } else {
@@ -187,16 +233,22 @@ export const sanitizeAVRichTextBlockDOM = (blockDOM: string, images = false) => 
     template.content.querySelectorAll<HTMLElement>("*").forEach((element) => {
         Array.from(element.attributes).forEach((attribute) => {
             const name = attribute.name.toLowerCase();
-            const imageAttribute = images && ["src", "data-src", "alt", "title", "loading"].includes(name) &&
+            const imageAttribute = images && ["src", "data-src", "alt", "title", "data-title", "loading"].includes(name) &&
                 (element.tagName === "IMG" || element.classList.contains("img"));
-            if ((!AV_RICH_TEXT_EDITOR_ALLOWED_ATTRIBUTES.includes(name) && !imageAttribute) ||
+            const linkTitleAttribute = tableCellCustomInline && name === "data-title" &&
+                (element.dataset.type || "").split(" ").includes("a");
+            const codeAttribute = images && element.dataset.type === "NodeCodeBlock" &&
+                (["linewrap", "ligatures", "linenumber"].includes(name) && ["true", "false"].includes(attribute.value) ||
+                    name === Constants.CUSTOM_SY_CODE_TAB_SPACES &&
+                    CODE_TAB_SPACE_VALUES.some(value => value.toString() === attribute.value));
+            if ((!AV_RICH_TEXT_EDITOR_ALLOWED_ATTRIBUTES.includes(name) && !imageAttribute && !linkTitleAttribute && !codeAttribute) ||
                 name === "xlink:href" && !attribute.value.startsWith("#icon")) {
                 element.removeAttribute(attribute.name);
             }
         });
     });
     template.content.querySelectorAll<HTMLElement>('[data-type~="a"][data-href]').forEach((element) => {
-        const href = getAVRichTextSafeURL(element.dataset.href);
+        const href = getAVRichTextSafeURL(element.dataset.href, tableCellCustomInline);
         if (href) {
             element.dataset.href = href;
         } else {
@@ -239,14 +291,17 @@ export const sanitizeAVRichTextBlockDOM = (blockDOM: string, images = false) => 
     return (template.innerHTML || "").trim();
 };
 
-const cleanAVRichTextBlockDOMStructure = (blockDOM: string) => {
+const cleanAVRichTextBlockDOMStructure = (blockDOM: string, preserveBlockIDs = false) => {
     const template = document.createElement("template");
     template.innerHTML = blockDOM;
     template.content.querySelectorAll(".protyle-attr, .protyle-icons").forEach((element) => element.remove());
     template.content.querySelectorAll<HTMLElement>("*").forEach((element) => {
-        ["data-node-id", "data-node-index", "updated"].forEach((attribute) => {
+        (preserveBlockIDs ? ["data-node-index", "updated"] : ["data-node-id", "data-node-index", "updated"]).forEach((attribute) => {
             element.removeAttribute(attribute);
         });
+        if (preserveBlockIDs && ALLOWED_BLOCK_TYPES.has(element.dataset.type) && !element.dataset.nodeId) {
+            element.dataset.nodeId = Lute.NewNodeID();
+        }
     });
     return (template.innerHTML || "").trim();
 };
@@ -319,14 +374,28 @@ const getAVRichTextPlainContent = (blockDOM: string, lute: Lute) => {
     return projectAVRichTextPlainBlocks(blocks, lute.BlockDOM2Content(blockDOM));
 };
 
-export const serializeAVRichTextBlockDOM = (blockDOM: string, lute = getAVRichTextLute(), images = false) => {
-    const sanitizedBlockDOM = sanitizeAVRichTextBlockDOM(blockDOM, images);
-    const cleanBlockDOM = cleanAVRichTextBlockDOMStructure(sanitizedBlockDOM);
+export const serializeAVRichTextBlockDOM = (blockDOM: string, lute = getAVRichTextLute(), images = false,
+                                          tableCellCustomInline = false) => {
+    const sanitizedBlockDOM = sanitizeAVRichTextBlockDOM(blockDOM, images, tableCellCustomInline);
+    let cleanBlockDOM = cleanAVRichTextBlockDOMStructure(sanitizedBlockDOM);
+    const template = document.createElement("template");
+    template.innerHTML = cleanBlockDOM;
+    const paragraphs = Array.from(template.content.querySelectorAll<HTMLElement>('[data-type="NodeParagraph"]'));
+    const hasEmptyParagraph = paragraphs.some(element => lute.BlockDOM2Md(element.outerHTML).trim() === "");
+    const singleEmptyParagraph = template.content.children.length === 1 &&
+        template.content.firstElementChild === paragraphs[0] && hasEmptyParagraph;
+    const hasCodeSettings = images && !!template.content.querySelector(
+        `[data-type="NodeCodeBlock"]:is([linewrap], [ligatures], [linenumber], [${Constants.CUSTOM_SY_CODE_TAB_SPACES}])`);
+    // 空段落和代码设置依靠块属性列表保留，同时保留相邻块的标识，避免属性被合并到前一段。
+    if ((hasEmptyParagraph && !singleEmptyParagraph) || hasCodeSettings) {
+        cleanBlockDOM = cleanAVRichTextBlockDOMStructure(sanitizedBlockDOM, true);
+    }
     const styleBackslashEncoding = createAVRichTextStyleBackslashEncoding(cleanBlockDOM);
     const protectedBlockDOM = protectAVRichTextStyleBackslashes(cleanBlockDOM, styleBackslashEncoding);
     const markdown = protectedBlockDOM ?
         styleBackslashEncoding.encodeMarkdown(lute.BlockDOM2Md(protectedBlockDOM).trim()) : "";
-    const normalizedBlockDOM = markdown ? sanitizeAVRichTextBlockDOM(parseAVRichTextKramdown(markdown, lute), images) : "";
+    const normalizedBlockDOM = markdown ?
+        sanitizeAVRichTextBlockDOM(parseAVRichTextKramdown(markdown, lute), images, tableCellCustomInline) : "";
     return {
         blockDOM: normalizedBlockDOM,
         markdown,
@@ -334,12 +403,13 @@ export const serializeAVRichTextBlockDOM = (blockDOM: string, lute = getAVRichTe
     };
 };
 
-export const getAVRichTextBlockDOM = (markdown: string, images = false) => markdown ?
-    sanitizeAVRichTextBlockDOM(parseAVRichTextKramdown(markdown), images) : "";
+export const getAVRichTextBlockDOM = (markdown: string, images = false, tableCellCustomInline = false) => markdown ?
+    sanitizeAVRichTextBlockDOM(parseAVRichTextKramdown(markdown), images, tableCellCustomInline) : "";
 
 const getAVRichTextPreviewBlockDOM = (blockDOM: string) => {
     const template = document.createElement("template");
-    template.innerHTML = cleanAVRichTextBlockDOMStructure(blockDOM);
+    // 转换为 HTML 前保留块标识，以保留空段落，预览净化时再移除标识。
+    template.innerHTML = cleanAVRichTextBlockDOMStructure(blockDOM, true);
     // 代码块操作节点和待办操作节点参与内容解析，需要保留到 HTML 转换完成。
     return (template.innerHTML || "").trim();
 };

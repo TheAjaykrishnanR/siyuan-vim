@@ -1,3 +1,6 @@
+import {createImageOCRMenu} from "./imageOCRMenu";
+import {toggleMenu, IMenuSession} from "./menuToggle";
+import {escapeHtmlTextAndAttr} from "../util/escape";
 import type {FileTreeGetDocRequestInput} from "../types/api";
 import {
     hasClosestBlock,
@@ -9,7 +12,8 @@ import {
 } from "../protyle/util/hasClosest";
 import {MenuItem} from "./Menu";
 import {getTableCellVerticalAlignmentMenus, setTableCellStyle} from "../protyle/util/tableControl";
-import {focusBlock, focusByOffset, focusByRange, focusByWbr, getEditorRange, selectAll,} from "../protyle/util/selection";
+import {focusBlock, focusByOffset, focusByWbr, getEditorRange, selectAll} from "../protyle/util/selection";
+import {focusByRange} from "../protyle/util/selectionOffsets";
 import {getViewFoldOccurrenceID, hasViewFoldContext, setViewFoldTransient} from "../protyle/util/viewFold";
 import {
     deleteColumn,
@@ -48,6 +52,9 @@ import {getSearch, isMobile} from "../util/functions";
 import * as dayjs from "dayjs";
 import {blockRender} from "../protyle/render/blockRender";
 import {renameAsset} from "../editor/rename";
+import {renderImageDisplay} from "../protyle/render/imageDisplay";
+import {renderImageActions} from "../protyle/render/imageActions";
+import {getImageTitle, setImageTitle} from "../protyle/render/imageTitle";
 import {electronUndo} from "../protyle/undo";
 import {pushBack} from "../mobile/util/MobileBackFoward";
 import {copyPNGByLink, exportAsset, writeAssetToClipboard} from "./util";
@@ -57,7 +64,11 @@ import {checkFold, genTagList, renameTag} from "../util/noRelyPCFunction";
 import {hideElements} from "../protyle/ui/hideElements";
 import {emitOpenMenu} from "../plugin/EventBus";
 import {openMobileFileById} from "../mobile/editor";
-import {renderAssetsPreview} from "../asset/renderAssets";
+/// #if MOBILE
+import {openMobileReference} from "../mobile/util/openReference";
+/// #endif
+import {genAssetHTML, renderAssetsPreview} from "../asset/renderAssets";
+import {insertHTML} from "../protyle/util/insertHTML";
 import {upDownHint} from "../util/upDownHint";
 import {hintRenderAssets} from "../protyle/hint/extend";
 import {Menu} from "../plugin/Menu";
@@ -70,7 +81,7 @@ import {base64ToURL, showBase64ImageSizeLimit} from "../protyle/upload/base64";
 import {setPosition} from "../util/setPosition";
 import {setFold} from "../protyle/util/blockFold";
 import {isEncryptedBox} from "../util/pathName";
-import {getHTMLAssetIFrameSrc} from "../asset/html";
+import {getHTMLAssetIFrameSrc, isLocalHTMLAssetPath} from "../asset/html";
 import {getHostCapabilities, sanitizeKernelHTML} from "../util/hostCapabilities";
 import {
     getDistributedTableColumnWidth,
@@ -78,18 +89,25 @@ import {
     TABLE_DEFAULT_COLUMN_WIDTH,
 } from "../protyle/util/tableColumnWidth";
 import {getParentDocumentID} from "../protyle/util/parentDocument";
+import {prepareInlineElementBoundaryMutation} from "../protyle/util/inlineElementBoundary";
 import {getZoomFocusScrollAttr, shouldFocusAfterZoom} from "../protyle/util/focusRestore";
 import {scrollCenter} from "../util/highlightById";
 import {
     getSemanticInlineVisibleText,
-    normalizeSemanticInlineElement
+    normalizeSemanticInlineElement,
+    removeSemanticInlineExternalBoundaries,
+    stripSemanticMarkersFromRangeText,
 } from "../protyle/util/inlineElementMarker";
 
-const renderAssetList = (element: Element, k: string, position: IPosition, exts: string[] = []) => {
+const renderAssetList = (element: Element, k: string, position: IPosition, exts: string[] = [], session?: IMenuSession) => {
     fetchPost("/api/search/searchAsset", {
         k,
-        exts
+        exts,
+        includeMetadata: true
     }, (response) => {
+        if (session && !session.isCurrent()) {
+            return;
+        }
         let searchHTML = "";
         response.data.forEach((item: { path: string, hName: string }, index: number) => {
             searchHTML += `<div data-value="${item.path}" class="b3-list-item${index === 0 ? " b3-list-item--focus" : ""}"><div class="b3-list-item__text">${item.hName}</div></div>`;
@@ -104,11 +122,18 @@ const renderAssetList = (element: Element, k: string, position: IPosition, exts:
         } else {
             previewElement.innerHTML = window.siyuan.languages.emptyContent;
         }
-        /// #if MOBILE
-        window.siyuan.menus.menu.fullscreen();
-        /// #else
-        window.siyuan.menus.menu.popup(position);
-        /// #endif
+        const show = () => {
+            /// #if MOBILE
+            window.siyuan.menus.menu.fullscreen();
+            /// #else
+            window.siyuan.menus.menu.popup(position);
+            /// #endif
+        };
+        if (session) {
+            session.show(show);
+        } else {
+            show();
+        }
         if (!k) {
             inputElement.select();
         }
@@ -117,6 +142,18 @@ const renderAssetList = (element: Element, k: string, position: IPosition, exts:
 
 export const assetMenu = (protyle: IProtyle, position: IPosition, callback?: (url: string, name: string) => void,
                           exts?: string[], independent = false) => {
+    if (independent || !position.target) {
+        buildAssetMenu(protyle, position, callback, exts, independent);
+        return;
+    }
+    toggleMenu({
+        target: position.target,
+        build: (_menu, session) => buildAssetMenu(protyle, position, callback, exts, false, session),
+    });
+};
+
+const buildAssetMenu = (protyle: IProtyle, position: IPosition, callback?: (url: string, name: string) => void,
+                        exts?: string[], independent = false, session?: IMenuSession) => {
     const menu = new Menu(Constants.MENU_BACKGROUND_ASSET, undefined, independent);
     if (menu.isOpen) {
         return;
@@ -193,11 +230,11 @@ export const assetMenu = (protyle: IProtyle, position: IPosition, callback?: (ur
                     return;
                 }
                 event.stopPropagation();
-                renderAssetList(element, inputElement.value, position, exts);
+                renderAssetList(element, inputElement.value, position, exts, session);
             });
             inputElement.addEventListener("compositionend", (event: InputEvent) => {
                 event.stopPropagation();
-                renderAssetList(element, inputElement.value, position, exts);
+                renderAssetList(element, inputElement.value, position, exts, session);
             });
             element.lastElementChild.addEventListener("click", (event) => {
                 const target = event.target as HTMLElement;
@@ -228,7 +265,7 @@ export const assetMenu = (protyle: IProtyle, position: IPosition, callback?: (ur
                     }
                 }
             });
-            renderAssetList(element, "", position, exts);
+            renderAssetList(element, "", position, exts, session);
         }
     });
 };
@@ -254,7 +291,7 @@ export const fileAnnotationRefMenu = (protyle: IProtyle, refElement: HTMLElement
             anchorElement.value = refElement.textContent;
             const inputEvent = () => {
                 if (anchorElement.value) {
-                    refElement.innerHTML = Lute.EscapeHTMLStr(anchorElement.value);
+                    refElement.innerHTML = escapeHtmlTextAndAttr(anchorElement.value);
                 } else {
                     refElement.innerHTML = "*";
                 }
@@ -388,7 +425,7 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
                 inputElement.addEventListener("input", () => {
                     if (inputElement.value) {
                         // 不能使用 textContent，否则 < 会变为 &lt;
-                        element.innerHTML = Lute.EscapeHTMLStr(inputElement.value).trim() || refBlockId;
+                        element.innerHTML = escapeHtmlTextAndAttr(inputElement.value).trim() || refBlockId;
                     } else {
                         fetchPost("/api/block/getRefText", {id: refBlockId}, (response) => {
                             element.innerHTML = sanitizeKernelHTML(response.data);
@@ -670,6 +707,16 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
             writeText(protyle.lute.BlockDOM2StdMd(element.outerHTML).trim());
         }
     }).element);
+    /// #if MOBILE
+    window.siyuan.menus.menu.append(new MenuItem({
+        id: "viewRefContent",
+        label: window.siyuan.languages.viewRefContent,
+        icon: "iconPreview",
+        click: () => {
+            void openMobileReference(protyle, refBlockId);
+        }
+    }).element);
+    /// #endif
     if (!protyle.disabled) {
         window.siyuan.menus.menu.append(new MenuItem({
             id: "cut",
@@ -725,7 +772,9 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
     window.siyuan.menus.menu.data = element;
     window.siyuan.menus.menu.element.setAttribute("data-from", popoverElement ? popoverElement.dataset.level + "popover" : "app");
     if (!protyle.disabled) {
-        window.siyuan.menus.menu.element.querySelector("input").select();
+        if (!isMobile()) {
+            window.siyuan.menus.menu.element.querySelector("input").select();
+        }
         window.siyuan.menus.menu.removeCB = () => {
             if (nodeElement.outerHTML !== oldHTML) {
                 nodeElement.setAttribute("updated", dayjs().format("YYYYMMDDHHmmss"));
@@ -775,7 +824,7 @@ export const contentMenu = (protyle: IProtyle, nodeElement: Element) => {
             accelerator: window.siyuan.config.keymap.editor.general.copyPlainText.custom,
             click() {
                 focusByRange(getEditorRange(nodeElement));
-                copyPlainText(getSelection().getRangeAt(0).toString());
+                copyPlainText(stripSemanticMarkersFromRangeText(getSelection().getRangeAt(0)));
             }
         }).element);
         if (protyle.disabled || captionElement) {
@@ -798,6 +847,7 @@ export const contentMenu = (protyle: IProtyle, nodeElement: Element) => {
             label: window.siyuan.languages.delete,
             click() {
                 const currentRange = getEditorRange(nodeElement);
+                prepareInlineElementBoundaryMutation(currentRange);
                 currentRange.insertNode(document.createElement("wbr"));
                 currentRange.extractContents();
                 focusByWbr(nodeElement, currentRange);
@@ -823,7 +873,7 @@ export const contentMenu = (protyle: IProtyle, nodeElement: Element) => {
                     id: "copyPlainText",
                     label: window.siyuan.languages.copyPlainText,
                     click() {
-                        copyPlainText(inlineElement.textContent);
+                        copyPlainText(getSemanticInlineVisibleText(inlineElement));
                     }
                 }).element);
                 if (!protyle.disabled) {
@@ -1081,6 +1131,15 @@ export const zoomOut = (options: {
         getDocParam.notebook = options.protyle.notebookId;
     }
     fetchPost("/api/filetree/getDoc", getDocParam, async (getResponse) => {
+        // 退出聚焦时先确定可见的折叠祖先，使滚动和延迟恢复光标使用同一目标。
+        if (options.focusId && options.id === options.protyle.block.rootID) {
+            const unfoldResponse = await fetchSyncPost("/api/block/getUnfoldedParentID", {id: options.focusId});
+            if (unfoldResponse.code === 0 && unfoldResponse.data.parentID &&
+                unfoldResponse.data.parentID !== options.focusId) {
+                options.focusId = unfoldResponse.data.parentID;
+                options.focusPosition = undefined;
+            }
+        }
         const action: TProtyleAction[] = [Constants.CB_GET_HTML];
         if (!options.isPushBack) {
             action.push(Constants.CB_GET_UNUNDO);
@@ -1103,7 +1162,14 @@ export const zoomOut = (options: {
             action,
             scrollAttr: getZoomFocusScrollAttr(options.id, options.focusId, options.focusPosition),
             scrollPosition: options.focusId ? "start" : undefined,
-            afterCB: options.callback,
+            afterCB: () => {
+                /// #if MOBILE
+                if (window.siyuan.mobile?.editor?.protyle === options.protyle) {
+                    window.siyuan.mobile.docks.backlink?.update();
+                }
+                /// #endif
+                options.callback?.();
+            },
             dataDocType: options.dataDocType,
             focusAfterZoom,
             suppressFocus,
@@ -1231,19 +1297,19 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
     <span class="fn__space"></span>
     <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
         <svg><use xlink:href="#iconCopy"></use></svg>
-    </span>   
+    </span>
 </div><textarea spellcheck="false" style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" rows="1" class="b3-text-field">${src}</textarea><div class="fn__hr"></div><div class="fn__flex">
     <span class="fn__flex-center">${window.siyuan.languages.title}</span>
     <span class="fn__space"></span>
     <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
         <svg><use xlink:href="#iconCopy"></use></svg>
-    </span>   
+    </span>
 </div><textarea style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" rows="1" class="b3-text-field"></textarea><div class="fn__hr"></div><div class="fn__flex">
     <span class="fn__flex-center">${window.siyuan.languages.tooltipText}</span>
     <span class="fn__space"></span>
     <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
         <svg><use xlink:href="#iconCopy"></use></svg>
-    </span>   
+    </span>
 </div><textarea style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" rows="1" class="b3-text-field"></textarea>`,
             bind(element) {
                 element.style.maxWidth = "none";
@@ -1261,10 +1327,10 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
                         assetElement.querySelector(".protyle-action__drag").insertAdjacentHTML("afterend", '<span class="img__net"><svg><use xlink:href="#iconGlobe"></use></svg></span>');
                     }
                 });
-                textElements[1].value = titleElement.innerText;
+                textElements[1].value = getImageTitle(imgElement);
                 textElements[1].addEventListener("input", (event) => {
                     const value = (event.target as HTMLInputElement).value;
-                    imgElement.setAttribute("title", value);
+                    setImageTitle(imgElement, value);
                     titleElement.innerText = value;
                     mathRender(titleElement);
                 });
@@ -1348,38 +1414,7 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
                 }
             }).element);
         }
-        window.siyuan.menus.menu.append(new MenuItem({
-            id: "ocr",
-            label: "OCR",
-            submenu: [{
-                id: "ocrResult",
-                iconHTML: "",
-                type: "readonly",
-                label: `<textarea spellcheck="false" data-type="ocr" style="margin: 4px 0" rows="1" class="b3-text-field fn__block" placeholder="${window.siyuan.languages.ocrResult}"></textarea>`,
-                bind(element) {
-                    element.style.maxWidth = "none";
-                    fetchPost("/api/asset/getImageOCRText", {
-                        path: imgElement.getAttribute("src")
-                    }, (response) => {
-                        const textarea = element.querySelector("textarea");
-                        textarea.value = response.data.text;
-                        textarea.dataset.ocrText = response.data.text;
-                    });
-                }
-            }, {
-                id: "separator_reOCR",
-                type: "separator"
-            }, {
-                id: "reOCR",
-                iconHTML: "",
-                label: window.siyuan.languages.reOCR,
-                click() {
-                    fetchPost("/api/asset/ocr", {
-                        path: imgElement.getAttribute("src"),
-                    });
-                }
-            }],
-        }).element);
+        window.siyuan.menus.menu.append(new MenuItem(createImageOCRMenu(imgElement, protyle.notebookId)).element);
         window.siyuan.menus.menu.append(new MenuItem({
             id: "alignCenter",
             icon: "iconAlignCenter",
@@ -1401,6 +1436,7 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
         let rangeElement: HTMLInputElement;
         window.siyuan.menus.menu.append(new MenuItem({
             id: "width",
+            icon: "iconWidth",
             label: window.siyuan.languages.width,
             submenu: [{
                 id: "widthInput",
@@ -1466,6 +1502,7 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
         let rangeHeightElement: HTMLInputElement;
         window.siyuan.menus.menu.append(new MenuItem({
             id: "height",
+            icon: "iconHeight",
             label: window.siyuan.languages.height,
             submenu: [{
                 id: "heightInput",
@@ -1483,9 +1520,6 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
                         imgElement.parentElement.style.width = "";
                     });
                     inputElement.addEventListener("blur", () => {
-                        if (inputElement.value === imgElement.style.height.replace("px", "")) {
-                            return;
-                        }
                         nodeElement.setAttribute("updated", dayjs().format("YYYYMMDDHHmmss"));
                         updateTransaction(protyle, nodeElement, html);
                         window.siyuan.menus.menu.remove();
@@ -1594,14 +1628,9 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
                 }
             }
 
-            const ocrElement = window.siyuan.menus.menu.element.querySelector('[data-type="ocr"]') as HTMLTextAreaElement;
-            if (ocrElement && ocrElement.dataset.ocrText !== ocrElement.value) {
-                fetchPost("/api/asset/setImageOCRText", {
-                    path: imgElement.getAttribute("src"),
-                    text: ocrElement.value
-                });
-            }
             imgElement.setAttribute("alt", textElements[2].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, ""));
+            renderImageDisplay(assetElement);
+            renderImageActions(assetElement);
             nodeElement.setAttribute("updated", dayjs().format("YYYYMMDDHHmmss"));
             updateTransaction(protyle, nodeElement, html);
         };
@@ -1618,7 +1647,7 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
     hideTooltip();
     hideElements(["util", "toolbar", "hint"], protyle);
     let html = nodeElement.outerHTML;
-    const linkAddress = linkElement.getAttribute("data-href");
+    const linkAddress = linkElement.getAttribute("data-href") || "";
     let inputElements: NodeListOf<HTMLTextAreaElement>;
     if (!protyle.disabled) {
         window.siyuan.menus.menu.append(new MenuItem({
@@ -1630,20 +1659,20 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
     <span class="fn__space"></span>
     <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
         <svg><use xlink:href="#iconCopy"></use></svg>
-    </span>   
-</div><textarea spellcheck="false" rows="1" 
+    </span>
+</div><textarea spellcheck="false" rows="1"
 style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-field"></textarea><div class="fn__hr"></div><div class="fn__flex">
     <span class="fn__flex-center">${window.siyuan.languages.anchor}</span>
     <span class="fn__space"></span>
     <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
         <svg><use xlink:href="#iconCopy"></use></svg>
-    </span>   
+    </span>
 </div><textarea style="width: ${isMobile() ? "100%" : "360px"};margin: 4px 0;" rows="1" class="b3-text-field"></textarea><div class="fn__hr"></div><div class="fn__flex">
     <span class="fn__flex-center">${window.siyuan.languages.title}</span>
     <span class="fn__space"></span>
     <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
         <svg><use xlink:href="#iconCopy"></use></svg>
-    </span>   
+    </span>
 </div><textarea style="width: ${isMobile() ? "100%" : "360px"};margin: 4px 0;" rows="1" class="b3-text-field"></textarea>`,
             bind(element) {
                 element.style.maxWidth = "none";
@@ -1670,16 +1699,16 @@ style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-fiel
                     if (anchor.length > Constants.SIZE_LINK_TEXT_MAX) {
                         anchor = anchor.substring(0, Constants.SIZE_LINK_TEXT_MAX) + "...";
                     }
-                    linkElement.innerHTML = Lute.EscapeHTMLStr(anchor);
+                    linkElement.innerHTML = escapeHtmlTextAndAttr(anchor);
                 }
                 inputElements[1].value = anchor;
                 inputElements[1].addEventListener("compositionend", () => {
-                    linkElement.innerHTML = Lute.EscapeHTMLStr(inputElements[1].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, "").trim() || "*");
+                    linkElement.innerHTML = escapeHtmlTextAndAttr(inputElements[1].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, "").trim() || "*");
                 });
                 inputElements[1].addEventListener("input", (event: KeyboardEvent) => {
                     if (!event.isComposing) {
                         // https://github.com/siyuan-note/siyuan/issues/4511
-                        linkElement.innerHTML = Lute.EscapeHTMLStr(inputElements[1].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, "").trim()) || "*";
+                        linkElement.innerHTML = escapeHtmlTextAndAttr(inputElements[1].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, "").trim()) || "*";
                     }
                 });
                 inputElements[1].addEventListener("keydown", (event) => {
@@ -1786,6 +1815,22 @@ style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-fiel
                 }
             }).element);
         }
+        if (linkAddress && isLocalHTMLAssetPath(linkAddress)) {
+            window.siyuan.menus.menu.append(new MenuItem({
+                id: "embedHTMLFileBelow",
+                label: window.siyuan.languages.embedHTMLFileBelow,
+                icon: "iconHTML5",
+                click() {
+                    window.siyuan.menus.menu.remove();
+                    const range = document.createRange();
+                    range.selectNodeContents(linkElement);
+                    range.collapse(false);
+                    protyle.toolbar.range = range;
+                    insertHTML(genAssetHTML("", linkAddress, "", linkAddress, true),
+                        protyle, true, true, false, "after");
+                }
+            }).element);
+        }
         if (linkAddress?.startsWith("siyuan://blocks/")) {
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "turnIntoRef",
@@ -1868,12 +1913,12 @@ style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-fiel
     }
     window.siyuan.menus.menu.removeCB = () => {
         if (inputElements[2].value) {
-            linkElement.setAttribute("data-title", Lute.EscapeHTMLStr(inputElements[2].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, "")));
+            linkElement.setAttribute("data-title", escapeHtmlTextAndAttr(inputElements[2].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, "")));
         } else {
             linkElement.removeAttribute("data-title");
         }
         if (linkElement.getAttribute("data-type").indexOf("a") > -1) {
-            linkElement.setAttribute("data-href", Lute.EscapeHTMLStr(inputElements[0].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, "")));
+            linkElement.setAttribute("data-href", escapeHtmlTextAndAttr(inputElements[0].value.replace(/\n|\r\n|\r|\u2028|\u2029/g, "")));
         } else {
             linkElement.removeAttribute("data-href");
         }
@@ -1908,6 +1953,7 @@ export const tagMenu = (protyle: IProtyle, tagElement: HTMLElement) => {
     window.siyuan.menus.menu.removeCB = () => {
         tagElement.textContent = Constants.WORD_JOINER + (inputElement.value || "");
         if (!inputElement.value) {
+            removeSemanticInlineExternalBoundaries(tagElement);
             tagElement.insertAdjacentHTML("afterend", "<wbr>");
             tagElement.remove();
             focusByWbr(nodeElement, protyle.toolbar.range);
@@ -2047,6 +2093,7 @@ export const tagMenu = (protyle: IProtyle, tagElement: HTMLElement) => {
         icon: "iconTrashcan",
         label: window.siyuan.languages.remove,
         click() {
+            removeSemanticInlineExternalBoundaries(tagElement);
             tagElement.insertAdjacentHTML("afterend", "<wbr>");
             tagElement.remove();
             nodeElement.setAttribute("updated", dayjs().format("YYYYMMDDHHmmss"));
@@ -2242,8 +2289,12 @@ export const iframeMenu = (protyle: IProtyle, nodeElement: Element) => {
     return subMenus;
 };
 
-export const videoMenu = (protyle: IProtyle, nodeElement: Element, type: string) => {
+export const videoMenu = (protyle: IProtyle, nodeElement: Element, type: string): IMenu[] => {
     const videoElement = nodeElement.querySelector(type === "NodeVideo" ? "video" : "audio");
+    const src = videoElement.getAttribute("src");
+    if (protyle.disabled) {
+        return src && src.startsWith("assets/") ? [exportAsset(src)] : [];
+    }
     let html = nodeElement.outerHTML;
     const subMenus: IMenu[] = [{
         id: "asset",
@@ -2260,7 +2311,6 @@ export const videoMenu = (protyle: IProtyle, nodeElement: Element, type: string)
             });
         }
     }];
-    const src = videoElement.getAttribute("src");
     if (src && src.startsWith("assets/")) {
         subMenus.push({
             id: "separator_rename",
@@ -2452,7 +2502,7 @@ export const tableMenu = (protyle: IProtyle, nodeElement: Element, cellElement: 
         });
     }
     otherMenus.push({id: "separator_1", type: "separator"});
-    const horizontalCells = alignWholeTable ? Array.from(tableElement.rows[0].cells) : [cellElement];
+    const horizontalCells = [cellElement];
     const alignmentMenus: IMenu[] = [{
         id: "alignLeft",
         icon: "iconAlignLeft",
@@ -2596,6 +2646,8 @@ export const tableMenu = (protyle: IProtyle, nodeElement: Element, cellElement: 
             });
             inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
                 if (!event.isComposing && event.key === "Enter") {
+                    event.preventDefault();
+                    event.stopPropagation();
                     insertRowAbove(protyle, range, cellElement, nodeElement, parseInt(element.querySelector("input").value));
                     window.siyuan.menus.menu.remove();
                 }
@@ -2620,6 +2672,8 @@ export const tableMenu = (protyle: IProtyle, nodeElement: Element, cellElement: 
                 });
                 inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
                     if (!event.isComposing && event.key === "Enter") {
+                        event.preventDefault();
+                        event.stopPropagation();
                         insertRow(protyle, range, cellElement, nodeElement, parseInt(element.querySelector("input").value));
                         window.siyuan.menus.menu.remove();
                     }
@@ -2645,6 +2699,8 @@ export const tableMenu = (protyle: IProtyle, nodeElement: Element, cellElement: 
                 });
                 inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
                     if (!event.isComposing && event.key === "Enter") {
+                        event.preventDefault();
+                        event.stopPropagation();
                         insertColumn(protyle, nodeElement, cellElement, "beforebegin", range, parseInt(element.querySelector("input").value));
                         window.siyuan.menus.menu.remove();
                     }
@@ -2670,6 +2726,8 @@ export const tableMenu = (protyle: IProtyle, nodeElement: Element, cellElement: 
                 });
                 inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
                     if (!event.isComposing && event.key === "Enter") {
+                        event.preventDefault();
+                        event.stopPropagation();
                         insertColumn(protyle, nodeElement, cellElement, "afterend", range, parseInt(element.querySelector("input").value));
                         window.siyuan.menus.menu.remove();
                     }
@@ -2772,7 +2830,7 @@ export const setFoldById = (data: {
 }, protyle: IProtyle) => {
     Array.from(protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${data.id}"]`)).find((item: Element) => {
         if (!isInEmbedBlock(item)) {
-            const operations = setFold(protyle, item, true, false, true, true);
+            const operations = setFold(protyle, item, true, false, true);
             if (hasViewFoldContext(protyle)) {
                 const occurrenceID = getViewFoldOccurrenceID(protyle, item);
                 void setViewFoldTransient(protyle, item, false, undefined, true).then(() => {

@@ -40,6 +40,9 @@ type FileTreeHeadingDocRequest struct {
 	FileTreeBlockDocOptions
 	fields fileTreeFields
 }
+
+// FileTreeListItemDocRequest 将完整列表项移为文档，保留列表类型、任务状态、嵌套内容和列表项属性。
+// 原列表项 ID 用作文档 ID，正文列表和列表项使用新 ID，内部块 ID 保持不变。
 type FileTreeListItemDocRequest struct {
 	SrcListItemID  string `json:"srcListItemID"`
 	TargetNotebook string `json:"targetNoteBook"`
@@ -82,7 +85,12 @@ type FileTreeCreateRequest struct {
 type FileTreeDailyNoteRequest struct {
 	Notebook string `json:"notebook"`
 	App      string `json:"app" api:"optional,nullable"`
-	fields   fileTreeFields
+	// Date 为本地公历日期 YYYY-MM-DD；省略、空串或 null 时使用当天。
+	// 指定日期时复用同笔记本的日记日期属性，路径和正文模板中的 now 使用目标日期。
+	// 日期无效返回 -1；多个匹配优先选择模板路径对应的文档，否则按文档 ID 升序选择。
+	// 返回文档 ID，已有文档不重新应用正文模板；加密笔记本的响应保留解锁租约。
+	Date   string `json:"date" api:"optional,nullable"`
+	fields fileTreeFields
 }
 type FileTreeCreateMarkdownRequest struct {
 	FileTreePathRequest

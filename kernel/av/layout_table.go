@@ -71,9 +71,12 @@ type ViewTableColumn struct {
 type Table struct {
 	*BaseInstance
 
-	Columns  []*TableColumn `json:"columns"`  // 表格列
-	Rows     []*TableRow    `json:"rows"`     // 表格行
-	RowCount int            `json:"rowCount"` // 表格总行数
+	Calendar           *CalendarSettings `json:"calendar,omitempty"`
+	CalendarRange      *CalendarRange    `json:"calendarRange,omitempty"`
+	CalendarTargetDate *int64            `json:"calendarTargetDate,omitempty"`
+	Columns            []*TableColumn    `json:"columns"`  // 表格列
+	Rows               []*TableRow       `json:"rows"`     // 表格行
+	RowCount           int               `json:"rowCount"` // 表格总行数
 }
 
 // TableColumn 描述了表格实例列的结构。
@@ -87,8 +90,9 @@ type TableColumn struct {
 
 // TableRow 描述了表格实例行的结构。
 type TableRow struct {
-	ID    string       `json:"id"`    // 行 ID
-	Cells []*TableCell `json:"cells"` // 行单元格
+	ConditionalColors *ItemConditionalColors `json:"conditionalColors,omitempty"`
+	ID                string                 `json:"id"`    // 行 ID
+	Cells             []*TableCell           `json:"cells"` // 行单元格
 }
 
 // TableCell 描述了表格实例单元格的结构。
@@ -172,9 +176,9 @@ func (table *Table) GetFields() (ret []Field) {
 }
 
 func (table *Table) GetField(id string) (ret Field, fieldIndex int) {
-	for _, column := range table.Columns {
+	for i, column := range table.Columns {
 		if column.ID == id {
-			return column, fieldIndex
+			return column, i
 		}
 	}
 	return nil, -1

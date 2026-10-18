@@ -1,7 +1,12 @@
 import {describe, it} from "node:test";
 import * as assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {resolve} from "node:path";
+import {runInNewContext} from "node:vm";
+import {ModuleKind, transpileModule} from "typescript";
 import {bindMobileBarsScroll, clearMobileBarsScroll} from "./mobileBars";
 import {MOBILE_BARS_CONFIG_KEY} from "./mobileBarsConfig";
+import * as mobileBarsState from "./mobileBarsState";
 
 class TestClassList {
     public toggle(): boolean {
@@ -56,6 +61,114 @@ class TestScrollElement {
 }
 
 describe("mobile bars", () => {
+    for (const keyboardAlreadyOpen of [false, true]) {
+        it(`keeps the title editable when focused with the keyboard ${keyboardAlreadyOpen ? "open" : "closed"}`, () => {
+            const windowListeners = new Map<string, (event: {detail: boolean}) => void>();
+            const documentListeners = new Map<string, () => void>();
+            const classes = new Set<string>();
+            const topbarElement = new TestBreadcrumbElement();
+            const breadcrumbElement = new TestBreadcrumbElement();
+            const bottomBarElement = new TestBreadcrumbElement();
+            const scrollElement = new TestScrollElement();
+            let frame: FrameRequestCallback;
+            let finishScroll: () => void;
+            const mockDocument = {
+                activeElement: {id: "body"},
+                body: {classList: {toggle: (name: string, active: boolean) => {
+                    if (active) {
+                        classes.add(name);
+                    } else {
+                        classes.delete(name);
+                    }
+                }}},
+                getElementById: (id: string) => {
+                    if (id === "mobileTopBar") {
+                        return topbarElement;
+                    }
+                    return id === "mobileBottomBar" ? bottomBarElement : undefined;
+                },
+                querySelector: () => breadcrumbElement,
+                addEventListener: (name: string, callback: () => void) => documentListeners.set(name, callback),
+            };
+            const moduleExports: Partial<typeof import("./mobileBars")> = {};
+            const source = readFileSync(resolve(process.cwd(), "src/mobile/util/mobileBars.ts"), "utf8");
+            runInNewContext(transpileModule(source, {compilerOptions: {module: ModuleKind.CommonJS}}).outputText, {
+                exports: moduleExports,
+                require: (name: string) => name === "./mobileBarsState" ? mobileBarsState :
+                    {isMobileBarsAutoHide: () => true},
+                document: mockDocument,
+                window: {
+                    addEventListener: (name: string, callback: (event: {detail: boolean}) => void) =>
+                        windowListeners.set(name, callback),
+                    setTimeout: (callback: () => void) => {
+                        finishScroll = callback;
+                        return 1;
+                    },
+                },
+                clearTimeout: () => {},
+                requestAnimationFrame: (callback: FrameRequestCallback) => {
+                    frame = callback;
+                    return 1;
+                },
+                cancelAnimationFrame: () => {},
+                getSelection: (): undefined => undefined,
+                MutationObserver: class {
+                    observe(): void {}
+                    disconnect(): void {}
+                },
+            });
+            moduleExports.initMobileBars();
+            moduleExports.bindMobileBarsScroll(scrollElement as unknown as HTMLElement);
+            const changeKeyboard = (open: boolean) => windowListeners.get("siyuan-mobile-keyboard-change")({detail: open});
+            const assertTitleVisible = () => {
+                assert.equal(topbarElement.style.getPropertyValue("--mobile-bar-translate-y"),
+                    "calc(0 * (var(--mobile-topbar-height) + var(--mobile-breadcrumb-height)))");
+                assert.equal(topbarElement.attributes.has("inert"), false);
+                assert.equal(topbarElement.attributes.get("aria-hidden"), "false");
+                assert.equal(classes.has("mobile-chrome--hidden"), false);
+                assert.equal(breadcrumbElement.attributes.has("inert"), false);
+                assert.equal(breadcrumbElement.attributes.get("aria-hidden"), "false");
+            };
+            const scrollTo = (top: number) => {
+                scrollElement.scrollTop = top;
+                scrollElement.onScroll();
+                frame(0);
+            };
+            if (keyboardAlreadyOpen) {
+                changeKeyboard(true);
+                assertTitleVisible();
+                finishScroll();
+                scrollTo(48);
+                assert.equal(topbarElement.attributes.has("inert"), true);
+            }
+            mockDocument.activeElement = {id: "toolbarName"};
+            documentListeners.get("focusin")();
+            assertTitleVisible();
+            changeKeyboard(true);
+            assertTitleVisible();
+            assert.equal(bottomBarElement.attributes.has("inert"), true);
+            finishScroll();
+            scrollElement.scrollTop = 100;
+            scrollElement.onScroll();
+            frame(0);
+            assertTitleVisible();
+            mockDocument.activeElement = {id: "body"};
+            changeKeyboard(false);
+            finishScroll();
+            assertTitleVisible();
+            assert.equal(bottomBarElement.attributes.has("inert"), false);
+            changeKeyboard(true);
+            assertTitleVisible();
+            assert.equal(bottomBarElement.attributes.has("inert"), true);
+            finishScroll();
+            scrollTo(148);
+            assert.equal(topbarElement.attributes.has("inert"), true);
+            assert.equal(breadcrumbElement.attributes.has("inert"), true);
+            scrollTo(100);
+            assertTitleVisible();
+        });
+    }
+
     it("notifies after applying the breadcrumb position", () => {
         const originalDocument = globalThis.document;
         const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
@@ -73,12 +186,14 @@ describe("mobile bars", () => {
             },
         });
         const breadcrumbElement = new TestBreadcrumbElement();
+        const topbarElement = new TestBreadcrumbElement();
         const scrollElement = new TestScrollElement();
         Object.defineProperty(globalThis, "document", {
             configurable: true,
             value: {
                 body: {classList: new TestClassList()},
-                getElementById: (): undefined => undefined,
+                getElementById: (id: string): TestBreadcrumbElement | undefined =>
+                    id === "mobileTopBar" ? topbarElement : undefined,
                 querySelector: (): TestBreadcrumbElement => breadcrumbElement,
             },
         });
@@ -97,8 +212,13 @@ describe("mobile bars", () => {
                 notified++;
             });
             assert.equal(notified, 1);
-            assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-translate-y"), "0px");
-            assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-opacity"), "1");
+            const assertPosition = (progress: number) => {
+                const translation = `calc(${0 - progress} * (var(--mobile-topbar-height) + var(--mobile-breadcrumb-height)))`;
+                assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-translate-y"), translation);
+                assert.equal(topbarElement.style.getPropertyValue("--mobile-bar-translate-y"), translation);
+                assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-opacity"), "");
+            };
+            assertPosition(0);
             assert.equal(breadcrumbElement.attributes.has("inert"), false);
             assert.equal(breadcrumbElement.attributes.get("aria-hidden"), "false");
             const scrollTo = (top: number) => {
@@ -107,21 +227,26 @@ describe("mobile bars", () => {
                 frame(0);
             };
             scrollTo(24);
-            assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-opacity"), "0.5");
+            assertPosition(0.5);
+            scrollTo(47);
+            assertPosition(47 / 48);
             scrollTo(48);
-            assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-opacity"), "0");
+            assertPosition(1);
             assert.equal(breadcrumbElement.attributes.has("inert"), true);
             assert.equal(breadcrumbElement.attributes.get("aria-hidden"), "true");
+            scrollTo(47);
+            assertPosition(47 / 48);
+            assert.equal(breadcrumbElement.attributes.get("aria-hidden"), "false");
             scrollTo(0);
-            assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-opacity"), "1");
+            assertPosition(0);
             assert.equal(breadcrumbElement.attributes.has("inert"), false);
             storage[MOBILE_BARS_CONFIG_KEY].autoHide = false;
             scrollTo(100);
-            assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-opacity"), "1");
+            assertPosition(0);
             assert.equal(breadcrumbElement.attributes.get("aria-hidden"), "false");
             storage[MOBILE_BARS_CONFIG_KEY].autoHide = true;
             scrollTo(148);
-            assert.equal(breadcrumbElement.style.getPropertyValue("--mobile-bar-opacity"), "0");
+            assertPosition(1);
         } finally {
             clearMobileBarsScroll();
             Object.defineProperty(globalThis, "document", {configurable: true, value: originalDocument});

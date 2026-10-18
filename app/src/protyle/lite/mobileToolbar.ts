@@ -8,6 +8,17 @@ export const setMobileToolbarUndo = (protyle: IProtyle, owner: IProtyle, run: (r
 
 export const getMobileToolbarUndo = (protyle: IProtyle) => undoContexts.get(protyle);
 
+export const getMobileToolbarPaddingElement = (protyle: IProtyle) => {
+    // 单元格的键盘占位放在所属编辑器上，避免撑高表格行。
+    const owner = undoContexts.get(protyle)?.owner || protyle;
+    // 智能体输入框有高度上限，键盘占位由整个页面承担，保持输入区位于面板上方。
+    const agentPanel = owner.element.closest<HTMLElement>(".sy__agentChat--mobile");
+    if (agentPanel) {
+        return agentPanel;
+    }
+    return owner.lite ? owner.contentElement : owner.element.parentElement;
+};
+
 export const getMobileToolbarProtyle = () => {
     const root = document.activeElement?.closest(".protyle-wysiwyg");
     if (root) {
@@ -23,7 +34,14 @@ export const bindMobileToolbar = (protyle: IProtyle) => {
     const element = protyle.wysiwyg.element;
     editors.set(element, protyle);
     const activate = (event: Event) => {
-        if ((event.target as Element).closest(".protyle-wysiwyg") !== element || activeEditor === protyle) {
+        if ((event.target as Element).closest(".protyle-wysiwyg") !== element) {
+            return;
+        }
+        if (activeEditor === protyle) {
+            // 重新获得焦点时刷新工具栏，同时保留当前编辑器已经展开的菜单。
+            if (event.type === "focusin") {
+                window.dispatchEvent(new Event("siyuan-mobile-toolbar-focus"));
+            }
             return;
         }
         const previous = activeEditor;

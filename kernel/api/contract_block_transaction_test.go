@@ -81,8 +81,18 @@ func TestAPIContractHeadingTransactions(t *testing.T) {
 		t.Fatal(err)
 	}
 	util.TimeLangs[model.Conf.Lang] = language.Time
-	model.Conf.FileTree, model.Conf.Sync, model.Conf.NotebookCrypto = conf.NewFileTree(), conf.NewSync(), conf.NewNotebookCrypto()
-	model.Conf.Search, model.Conf.Editor, model.Conf.Export = conf.NewSearch(), conf.NewEditor(), conf.NewExport()
+	{
+		confSectionValue0, confSectionValue1, confSectionValue2 := conf.NewFileTree(), conf.NewSync(), conf.NewNotebookCrypto()
+		model.Conf.FileTree.Store(confSectionValue0)
+		model.Conf.Sync.Store(confSectionValue1)
+		model.Conf.NotebookCrypto = confSectionValue2
+	}
+	{
+		confSectionValue0, confSectionValue1, confSectionValue2 := conf.NewSearch(), conf.NewEditor(), conf.NewExport()
+		model.Conf.Search.Store(confSectionValue0)
+		model.Conf.Editor.Store(confSectionValue1)
+		model.Conf.Export.Store(confSectionValue2)
+	}
 	box := &model.Box{ID: ast.NewNodeID()}
 	boxConf := conf.NewBoxConf()
 	boxConf.Closed = false
@@ -97,16 +107,45 @@ func TestAPIContractHeadingTransactions(t *testing.T) {
 	tree := treenode.NewTree(box.ID, "/"+docID+".sy", "/Contract", "Contract")
 	paragraphID := tree.Root.FirstChild.ID
 	heading := &ast.Node{Type: ast.NodeHeading, ID: ast.NewNodeID(), HeadingLevel: 1}
+	heading.SetIALAttr("id", heading.ID)
 	heading.AppendChild(&ast.Node{Type: ast.NodeText, Tokens: []byte("Contract heading")})
 	tree.Root.AppendChild(heading)
 	child := &ast.Node{Type: ast.NodeHeading, ID: ast.NewNodeID(), HeadingLevel: 2}
+	child.SetIALAttr("id", child.ID)
 	child.AppendChild(&ast.Node{Type: ast.NodeText, Tokens: []byte("Contract child")})
 	tree.Root.AppendChild(child)
 	if _, err := filesys.WriteTree(tree); err != nil {
 		t.Fatal(err)
 	}
 	treenode.UpsertBlockTree(tree)
+	testAPIContractInsertBlockAnchors(t, box.ID, docID, paragraphID)
+	testAPIContractNativeContainers(t, box.ID)
 	engine := gin.New()
+	engine.POST("/api/block/getBlockTreeInfos", getBlockTreeInfos)
+	infoRecorder := httptest.NewRecorder()
+	infoBody, _ := json.Marshal(map[string]any{"ids": []string{heading.ID, child.ID, paragraphID}})
+	engine.ServeHTTP(infoRecorder, httptest.NewRequest("POST", "/api/block/getBlockTreeInfos", strings.NewReader(string(infoBody))))
+	requireAPIContract(t, "POST", "/api/block/getBlockTreeInfos", infoRecorder)
+	var infoResponse struct {
+		Code int                                   `json:"code"`
+		Data map[string]*apicontract.BlockTreeInfo `json:"data"`
+	}
+	if err := json.Unmarshal(infoRecorder.Body.Bytes(), &infoResponse); err != nil {
+		t.Fatal(err)
+	}
+	if infoResponse.Code != 0 || infoResponse.Data[heading.ID] == nil || infoResponse.Data[child.ID] == nil ||
+		infoResponse.Data[paragraphID] == nil {
+		t.Fatalf("missing block tree info: %s", infoRecorder.Body.String())
+	}
+	if children := infoResponse.Data[heading.ID].HeadingChildren; children == nil || !*children {
+		t.Fatal("parent heading must have children")
+	}
+	if children := infoResponse.Data[child.ID].HeadingChildren; children == nil || *children {
+		t.Fatal("empty heading must explicitly report false")
+	}
+	if infoResponse.Data[paragraphID].HeadingChildren != nil {
+		t.Fatal("non-heading must omit heading children")
+	}
 	engine.POST("/api/block/foldBlock", foldBlock)
 	engine.POST("/api/block/unfoldBlock", unfoldBlock)
 	engine.POST("/api/block/moveBlock", moveBlock)
@@ -114,6 +153,9 @@ func TestAPIContractHeadingTransactions(t *testing.T) {
 	engine.POST("/api/block/getHeadingInsertTransaction", getHeadingInsertTransaction)
 	engine.POST("/api/block/getHeadingFoldTransaction", getHeadingFoldTransaction)
 	testAPIContractRemainingBlockQueries(t, engine, box.ID, docID, heading.ID)
+	testAPIContractMindmapMigration(t, engine, box.ID, docID)
+	testAPIContractListConversion(t, engine, docID)
+	testAPIContractTransactionCompletion(t, engine, docID, paragraphID)
 	for _, entry := range []struct {
 		path, id, scope string
 		code            int
@@ -181,6 +223,7 @@ func TestAPIContractHeadingTransactions(t *testing.T) {
 		}
 	}
 	testAPIContractBlockEdits(t, engine, box.ID, docID, heading.ID)
+	testAPIContractMoveBlock(t, engine, box.ID)
 }
 
 func testAPIContractBlockEdits(t *testing.T, engine *gin.Engine, boxID, docID, headingID string) {

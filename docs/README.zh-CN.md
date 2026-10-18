@@ -7,8 +7,10 @@
 | 文档 | English | 中文 |
 |---|---|---|
 | 内核接口类型契约 | [API-CONTRACTS.md](API-CONTRACTS.md) | [API-CONTRACTS.zh-CN.md](API-CONTRACTS.zh-CN.md) |
+| 主题和图标同步 | [APPEARANCE-SYNC.md](APPEARANCE-SYNC.md) | [APPEARANCE-SYNC.zh-CN.md](APPEARANCE-SYNC.zh-CN.md) |
 | 资源文件按需下载 | [ASSET-DOWNLOAD.md](ASSET-DOWNLOAD.md) | [ASSET-DOWNLOAD.zh-CN.md](ASSET-DOWNLOAD.zh-CN.md) |
 | 加密笔记本 | [ENCRYPTED-NOTEBOOK.md](ENCRYPTED-NOTEBOOK.md) | [ENCRYPTED-NOTEBOOK.zh-CN.md](ENCRYPTED-NOTEBOOK.zh-CN.md) |
+| 文档标题与寻址（设计草案） | [DOCUMENT-ADDRESSING.md](DOCUMENT-ADDRESSING.md) | [DOCUMENT-ADDRESSING.zh-CN.md](DOCUMENT-ADDRESSING.zh-CN.md) |
 | 文档树面板置顶区 | [PINNED-DOCUMENTS.md](PINNED-DOCUMENTS.md) | [PINNED-DOCUMENTS.zh-CN.md](PINNED-DOCUMENTS.zh-CN.md) |
 | 页签块 | [TAB-BLOCK.md](TAB-BLOCK.md) | [TAB-BLOCK.zh-CN.md](TAB-BLOCK.zh-CN.md) |
 | 模板管理 | [TEMPLATE-MANAGER.md](TEMPLATE-MANAGER.md) | [TEMPLATE-MANAGER.zh-CN.md](TEMPLATE-MANAGER.zh-CN.md) |
@@ -23,7 +25,7 @@
 
 ## 功能设计文档结构
 
-资源按需下载、加密笔记本、文档置顶、页签块和模板管理使用以下二级章节，专题细节置于对应章节的三级标题下。
+主题和图标同步、资源按需下载、加密笔记本、文档置顶、页签块和模板管理使用以下二级章节，专题细节置于对应章节的三级标题下。
 
 | 章节 | 内容 |
 |---|---|

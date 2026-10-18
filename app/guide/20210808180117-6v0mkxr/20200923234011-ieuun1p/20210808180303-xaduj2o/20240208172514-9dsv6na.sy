@@ -7,7 +7,7 @@
 		"id": "20240208172514-9dsv6na",
 		"title": "Database",
 		"type": "doc",
-		"updated": "20260904121106"
+		"updated": "20261012014930"
 	},
 	"Children": [
 		{
@@ -16,7 +16,7 @@
 			"HeadingLevel": 2,
 			"Properties": {
 				"id": "20251224101749-fnv59m7",
-				"updated": "20251224101813"
+				"updated": "20261012014930"
 			},
 			"Children": [
 				{
@@ -30,12 +30,109 @@
 			"Type": "NodeParagraph",
 			"Properties": {
 				"id": "20251224101749-zd1sdj7",
-				"updated": "20251224101813"
+				"updated": "20260920225154"
 			},
 			"Children": [
 				{
 					"Type": "NodeText",
-					"Data": "Databases consist of content blocks or non-content block data, and are presented in different views, such as table view, kanban view, and card view."
+					"Data": "Databases consist of content blocks or non-content block data, and are presented in different views, such as table view, list view, calendar view, kanban view, and card view."
+				}
+			]
+		},
+		{
+			"ID": "20261012014537-bs9zanm",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261012014537-bs9zanm",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "See "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "block-ref",
+					"TextMarkBlockRefID": "20261009034010-6kd9rk5",
+					"TextMarkBlockRefSubtype": "s",
+					"TextMarkTextContent": "Location field"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "."
+				}
+			]
+		},
+		{
+			"ID": "20260930175958-jgqkczm",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20260930175958-jgqkczm",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Database panel field visibility"
+				}
+			]
+		},
+		{
+			"ID": "20260930175958-sqtxjcl",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260930175958-sqtxjcl",
+				"updated": "20261001060000"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "In a database attribute panel at the top of a document, on a database entry page, or in a block attribute dialog, click a field name to set Database panel field visibility to Always show, Hide when empty, or Always hide. Default preserves the panel's existing display settings; the panel at the top of a document follows the global setting for hiding empty fields. Rules apply to attribute panels of that database and do not change field visibility in its views. Click the panel's edit button to temporarily reveal hidden fields and edit their values or visibility rules."
+				}
+			]
+		},
+		{
+			"ID": "20260929105001-jav2qb7",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20260929105001-jav2qb7",
+				"updated": "20260929105001"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Entry icons"
+				}
+			]
+		},
+		{
+			"ID": "20260929105001-d3q9qik",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260929105001-d3q9qik",
+				"updated": "20260930140000"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Unbound entries can have their own icons. Click the icon beside the primary-key value, in the entry details, or in a relation field to change or remove it. Item templates can preset icons for both unbound and document entries. Unbound entries without a custom icon show a short horizontal line, and the view's icon visibility setting still applies."
+				}
+			]
+		},
+		{
+			"ID": "20260929105001-pdids8d",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260929105001-pdids8d",
+				"updated": "20260930140000"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "When binding or rebinding to a regular block without a custom icon, the block inherits the entry's icon. If the block already has an icon, or is an existing document, its own icon is used. A document created during binding inherits the entry's custom icon; if none is set, the document template's icon is used. Bound entries share icons with their bound blocks. Unbinding preserves the last displayed icon, which can then be changed independently."
 				}
 			]
 		},
@@ -45,7 +142,7 @@
 			"HeadingLevel": 2,
 			"Properties": {
 				"id": "20251224101749-zybcbjk",
-				"updated": "20260904121106"
+				"updated": "20261012014930"
 			},
 			"Children": [
 				{
@@ -503,6 +600,467 @@
 			]
 		},
 		{
+			"ID": "20260920084445-xgbteah",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260920084445-xgbteah",
+				"updated": "20260920084445"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "List View"
+				}
+			]
+		},
+		{
+			"ID": "20260920084445-92ydsjz",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260920084445-92ydsjz",
+				"updated": "20260920084445"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Displays each entry on one line, without column headers or a table grid. A newly created list view shows only the primary key field; all other fields are hidden by default."
+				}
+			]
+		},
+		{
+			"ID": "20260920084445-56ro8a2",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260920084445-56ro8a2",
+				"updated": "20260920084445"
+			},
+			"Children": [
+				{
+					"ID": "20260920084445-bjzjg8s",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920084445-bjzjg8s",
+						"updated": "20260920084445"
+					},
+					"Children": [
+						{
+							"ID": "20260920084445-25ekao7",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920084445-25ekao7",
+								"updated": "20260920084445"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Switching: Open the view settings and select "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "Layout"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " - "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "List"
+								},
+								{
+									"Type": "NodeText",
+									"Data": ", or insert a database list view from the slash menu"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920084445-39ih6ur",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920084445-39ih6ur",
+						"updated": "20260920084445"
+					},
+					"Children": [
+						{
+							"ID": "20260920084445-i33u60f",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920084445-i33u60f",
+								"updated": "20260920084445"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Fields: Open "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "Fields"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " to show the fields you need. Visible fields appear alongside the primary key on the same line, and their values can be edited"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920084445-4dpfqq3",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920084445-4dpfqq3",
+						"updated": "20260920084445"
+					},
+					"Children": [
+						{
+							"ID": "20260920084445-38pz053",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920084445-38pz053",
+								"updated": "20260920084445"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "View settings: Duplicating a list view or switching back to its list layout preserves the field visibility you configured"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920084445-q8nlr4p",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920084445-q8nlr4p",
+						"updated": "20260920084445"
+					},
+					"Children": [
+						{
+							"ID": "20260920084445-6lh2jh4",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920084445-6lh2jh4",
+								"updated": "20260920084445"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Filtering, sorting, and grouping: Shares data with other views of the same database and supports independent filter, sort, and group settings"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
+			"ID": "20260920225154-tz8a00o",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260920225154-tz8a00o",
+				"updated": "20260929123717"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Calendar View"
+				}
+			]
+		},
+		{
+			"ID": "20260920225154-vz01ydx",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260920225154-vz01ydx",
+				"updated": "20260923103343"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Displays dated entries by month or week. The week view has seven date columns; entries spanning multiple days continue across those days. Each editor keeps its current mode and browsing date independently. The month/week choice is saved for each calendar view in this workspace and restored when opening it in a new editor or restarting SiYuan. A new editor starts browsing from today."
+				}
+			]
+		},
+		{
+			"ID": "20260920225154-qqxdh7e",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260920225154-qqxdh7e",
+				"updated": "20260929123717"
+			},
+			"Children": [
+				{
+					"ID": "20260920225154-hengjf1",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-hengjf1",
+						"updated": "20260920225154"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-j4v2piu",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-j4v2piu",
+								"updated": "20260920225154"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Switching: Open the view settings and select "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "Layout"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " - "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "Calendar"
+								},
+								{
+									"Type": "NodeText",
+									"Data": ", or insert a database calendar view from the slash menu"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-mk883o7",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-mk883o7",
+						"updated": "20260920225154"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-5g31u7h",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-5g31u7h",
+								"updated": "20260920225154"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Date field: Choose one date, created time, or updated time field in the layout settings. If no suitable field exists, the calendar prompts you to choose or create one. It does not fill ordinary dates for existing entries; entries without a date stay out of the grid. With an ordinary date field, they remain available in the undated list"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260929122307-2ixnrxo",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260929122307-2ixnrxo",
+						"updated": "20260929123717"
+					},
+					"Children": [
+						{
+							"ID": "20260929122307-ftq006m",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260929122307-ftq006m",
+								"updated": "20260929123717"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Template dates: When a date field has a display template, the calendar places entries on the calculated date without changing the stored date. Output a plain text date in YYYY-MM-DD, the field's selected numeric date format, or the current language's local date format (such as October 2, 2026). An optional HH:mm or HH:mm:ss time can follow a space or T. Dates use the current device's local time zone; slash-separated dates follow the field format without guessing the month/day order. Empty results, invalid dates, and other formats appear neither on the calendar nor in the undated list. Calculated dates cannot be dragged, cleared, or assigned when creating an entry on a day; change the source field or template to adjust the date. Use YYYY-MM-DD for templates shared across languages"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-vblms0p",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-vblms0p",
+						"updated": "20260923095432"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-4wsrq3z",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-4wsrq3z",
+								"updated": "20260923095432"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Browsing: Use the previous/next buttons, Today, or the date picker. Month view collapses crowded dates; use the more button to expand that week. Dates follow your local time zone. Month view shows four, five, or six weeks as needed. Both views show ISO week numbers at the start of each row. Use the calendar button to jump by date or by ISO week year and number. When a week starts on a day other than Monday, its row number is determined by that row's Thursday"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-ronkl9y",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-ronkl9y",
+						"updated": "20260924110133"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-3lkyx9g",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-3lkyx9g",
+								"updated": "20260924110133"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Editing: Click an entry to open its existing database entry editor. With an ordinary date field, use the plus button on a day to create an entry, drag an entry to move its dates, or drag its end handles to adjust its range. Use No date beside the view filter to search undated entries, then drag one onto a day or select it and choose a day, including on touch screens. This assigns an all-day date; clearing it returns the entry to the undated list. Date changes support undo. On touch screens, use the move handle on an existing calendar entry to drag it. Opening or creating an entry automatically focuses the primary field. Dragging previews the resulting dates and highlights their cells; changes are saved on release. The context menu also offers copying, creating and binding documents, adding to another database, editing fields, and creating an entry on the selected date"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-uqgqpna",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-uqgqpna",
+						"updated": "20260920225154"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-ql3yigi",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-ql3yigi",
+								"updated": "20260920225154"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "System times: Created time and updated time follow the original entry or bound block. They cannot be changed by dragging, and their calendar has no per-day creation button"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-lnjbogg",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-lnjbogg",
+						"updated": "20260920225154"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-l8by5pi",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-l8by5pi",
+								"updated": "20260920225154"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "Date ranges: All-day ranges include the ending day. A timed range ending at midnight stops on the previous day. An entry with only one endpoint is shown on that date; a reversed range is marked without changing the stored value"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260920225154-3w6c98i",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260920225154-3w6c98i",
+						"updated": "20260927113016"
+					},
+					"Children": [
+						{
+							"ID": "20260920225154-8p9e3ov",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260920225154-8p9e3ov",
+								"updated": "20260927113016"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "View settings: Filtering, sorting, field visibility, and new-entry templates use the existing database settings. Conditional colors can set entry backgrounds. Grouping is suspended in calendar layout, and its settings are retained when switching back. Visible item rows can be set to 3, 5, 10, or all in the layout settings, with 3 as the default. This setting is saved per calendar view and only controls folding in month view; week view displays all entries, and the complete date range is still loaded"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
 			"ID": "20260613162855-cdeorum",
 			"Type": "NodeHeading",
 			"HeadingLevel": 3,
@@ -779,7 +1337,7 @@
 			"HeadingLevel": 3,
 			"Properties": {
 				"id": "20260613162855-sxaxx5x",
-				"updated": "20260613171129"
+				"updated": "20260927112821"
 			},
 			"Children": [
 				{
@@ -979,12 +1537,120 @@
 			]
 		},
 		{
+			"ID": "20260927112821-dmce6cp",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260927112821-dmce6cp",
+				"updated": "20261012014930"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Conditional colors"
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-u18f0d0",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-u18f0d0",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Open the database view settings and choose "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Conditional colors"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " to add a rule. Select one field and a condition, then choose a background color and its target. Changes take effect immediately and support undo and redo."
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-xoxibjc",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-xoxibjc",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Rules belong to the current view. Table, list, calendar, kanban, and gallery views support entry backgrounds. Table views also support coloring the property used by the condition. Property rules remain stored but do not apply in other layouts."
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-7hfkus2",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-7hfkus2",
+				"updated": "20260927123058"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Each rule evaluates its own single-field condition; rules are not combined with AND. Drag a rule by its handle to change priority, including on touch screens. The first matching rule for each property wins. A matching entry rule colors the remaining area and stops evaluation; earlier property colors are retained. Default background also counts as a match."
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-qw0iuyn",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-qw0iuyn",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "For example, place a blue property rule first and a green entry rule second. An entry matching both keeps that property blue and uses green elsewhere. Move the green entry rule first to make the whole entry green."
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-e6uldts",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-e6uldts",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "For select and multi-select fields, Match first option uses the first selected option in the entry, including its default color; it does not use the order of option definitions. You can also choose a fixed built-in or custom color. Conditions use the existing filter operators and can use rendered values when available."
+				}
+			]
+		},
+		{
+			"ID": "20260927112821-ks3ham9",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927112821-ks3ham9",
+				"updated": "20260927112821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Colors do not change field values or filter out entries. Hidden fields can still drive rules. Incomplete conditions and rules referring to deleted fields do not apply. Copying a view copies its rules; editing one view does not change the other. Existing calendar option colors remain available as a compatible rule, and deleting all rules clears the colors."
+				}
+			]
+		},
+		{
 			"ID": "20260613171129-edm1pru",
 			"Type": "NodeHeading",
 			"HeadingLevel": 3,
 			"Properties": {
 				"id": "20260613171129-edm1pru",
-				"updated": "20260904121106"
+				"updated": "20261012014930"
 			},
 			"Children": [
 				{
@@ -1013,7 +1679,7 @@
 			"HeadingLevel": 4,
 			"Properties": {
 				"id": "20260613171129-5zjv62o",
-				"updated": "20260904121106"
+				"updated": "20261012014859"
 			},
 			"Children": [
 				{
@@ -1042,7 +1708,7 @@
 			"ListData": {},
 			"Properties": {
 				"id": "20260613171129-438l9c3",
-				"updated": "20260904121106"
+				"updated": "20261012014859"
 			},
 			"Children": [
 				{
@@ -1168,7 +1834,7 @@
 											"Children": [
 												{
 													"Type": "NodeText",
-													"Data": "Number: =, ≠, \u003e, ≥, \u003c, ≤, Is empty, Is not empty"
+													"Data": "Number: =, ≠, >, ≥, <, ≤, Is empty, Is not empty"
 												}
 											]
 										}
@@ -1327,34 +1993,20 @@
 					},
 					"Properties": {
 						"id": "20260904022100-t3p2t45",
-						"updated": "20260904121106"
+						"updated": "20261012014859"
 					},
 					"Children": [
 						{
-							"ID": "20260904022100-h1drat7",
+							"ID": "20261012014537-jjsv2yc",
 							"Type": "NodeParagraph",
 							"Properties": {
-								"id": "20260904022100-h1drat7",
-								"updated": "20260904121106"
+								"id": "20261012014537-jjsv2yc",
+								"updated": "20261012014859"
 							},
 							"Children": [
 								{
-									"Type": "NodeTextMark",
-									"TextMarkType": "strong",
-									"TextMarkTextContent": "Context filter"
-								},
-								{
 									"Type": "NodeText",
-									"Data": ": Open "
-								},
-								{
-									"Type": "NodeTextMark",
-									"TextMarkType": "kbd",
-									"TextMarkTextContent": "Context filter"
-								},
-								{
-									"Type": "NodeText",
-									"Data": " from the database block toolbar and select a configured Relation field. The panel lists all configured Relation fields in the database, but only one can be enabled at a time. Select another field to switch to it; select the checked field again to turn off the context filter. Once enabled, the fixed condition “Contains any item - Current document” applies to every view in this database block. Each view’s ordinary filters remain independent and are combined with the context filter using AND. When you add an item from this database block, the current document is automatically added to the selected Relation field. For filtering and adding items to work, the current document must already be bound to an item in the selected Relation field’s target database; otherwise, no matching items are shown and you cannot add items from this database block"
+									"Data": "Rollup: When targeting a Relation field with Show original values or Show unique values, ordinary filters support Contains any item and Does not contain any item: search and select items from the final related database to match the entire rolled-up item set. Items with identical names are distinguished by item ID. Existing keyword filters and their Any, All, and None quantifiers keep their existing behavior"
 								}
 							]
 						}
@@ -1458,6 +2110,72 @@
 							]
 						}
 					]
+				}
+			]
+		},
+		{
+			"ID": "20261012014537-jtpgxzc",
+			"Type": "NodeHeading",
+			"Properties": {
+				"id": "20261012014537-jtpgxzc",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Context filter"
+				}
+			],
+			"HeadingLevel": 4
+		},
+		{
+			"ID": "20260904022100-h1drat7",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260904022100-h1drat7",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Open "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Context filter"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " from the database block toolbar and select a configured Relation field, or a Rollup targeting a Relation field with Show original values or Show unique values. The panel lists all eligible fields in the database, but only one can be enabled at a time. Select another field to switch to it; select the checked field again to turn off the context filter. "
+				}
+			]
+		},
+		{
+			"ID": "20261012014737-oo845s9",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261012014737-oo845s9",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Once enabled, the fixed condition “Contains any item - Current document” applies to every view in this database block. Each view’s ordinary filters remain independent and are combined with the context filter using AND. "
+				}
+			]
+		},
+		{
+			"ID": "20261012014737-507hutv",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261012014737-507hutv",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "The current document must already be bound to an item in the final related database; otherwise, no matching items are shown and you cannot add items from this database block. With a direct Relation field, new items automatically relate to the current document. With a Rollup, new items do not fill the computed value or change relations in the intermediate database, and may be hidden by the filter. "
 				}
 			]
 		},
@@ -1951,7 +2669,7 @@
 			"HeadingLevel": 4,
 			"Properties": {
 				"id": "20260613171129-y8inb0t",
-				"updated": "20260613171129"
+				"updated": "20260920084445"
 			},
 			"Children": [
 				{
@@ -1980,7 +2698,7 @@
 			"ListData": {},
 			"Properties": {
 				"id": "20260613171129-y221wzt",
-				"updated": "20260613171129"
+				"updated": "20260920084445"
 			},
 			"Children": [
 				{
@@ -2153,7 +2871,7 @@
 					},
 					"Properties": {
 						"id": "20260613171129-ravjist",
-						"updated": "20260613171129"
+						"updated": "20260920084445"
 					},
 					"Children": [
 						{
@@ -2181,7 +2899,7 @@
 							"ListData": {},
 							"Properties": {
 								"id": "20260613171129-qfcbary",
-								"updated": "20260613171129"
+								"updated": "20260920084445"
 							},
 							"Children": [
 								{
@@ -2193,7 +2911,7 @@
 									},
 									"Properties": {
 										"id": "20260613171129-e2s3vqd",
-										"updated": "20260613171129"
+										"updated": "20260920084445"
 									},
 									"Children": [
 										{
@@ -2201,12 +2919,12 @@
 											"Type": "NodeParagraph",
 											"Properties": {
 												"id": "20260613171129-wrv369s",
-												"updated": "20260613171129"
+												"updated": "20260920084445"
 											},
 											"Children": [
 												{
 													"Type": "NodeText",
-													"Data": "Table View: Rows are categorized by group, each group can be collapsed/expanded"
+													"Data": "Table and List Views: Rows are categorized by group, each group can be collapsed/expanded"
 												}
 											]
 										}
@@ -2281,7 +2999,7 @@
 					},
 					"Properties": {
 						"id": "20260613171129-ksd0v5v",
-						"updated": "20260613171129"
+						"updated": "20260920084445"
 					},
 					"Children": [
 						{
@@ -2289,7 +3007,7 @@
 							"Type": "NodeParagraph",
 							"Properties": {
 								"id": "20260613171129-l092i7g",
-								"updated": "20260613171129"
+								"updated": "20260920084445"
 							},
 							"Children": [
 								{
@@ -2299,7 +3017,7 @@
 								},
 								{
 									"Type": "NodeText",
-									"Data": ": In table and gallery views, select \"None\" to remove grouping; kanban view cannot remove grouping"
+									"Data": ": In table, list, and gallery views, select \"None\" to remove grouping; kanban view cannot remove grouping"
 								}
 							]
 						}
@@ -2348,6 +3066,20 @@
 				{
 					"Type": "NodeText",
 					"Data": "Relation and Rollup"
+				}
+			]
+		},
+		{
+			"ID": "20261007101857-8yrn5q5",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261007101857-8yrn5q5",
+				"updated": "20261007101857"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "The desktop and mobile relation selection panels always offer a new-item action using the related database’s default template. When the input differs from the name generated by the primary key template, two actions show the actual names: create with the default template, or create with the input name. The input-name action overrides only the primary key; field defaults, icon, content template and save location still apply. Empty input, no primary key template, or identical names produce only one action. Without a default template, creation produces a detached item. Creating the item and updating the relation can be undone together"
 				}
 			]
 		},
@@ -3064,7 +3796,142 @@
 			"Children": [
 				{
 					"Type": "NodeText",
-					"Data": "A display template reads each field's original stored value, not the display result produced by another display template. Filters, sorts, and groups can use either the original value or the template-rendered value. Clear the display template to restore the field's original display."
+					"Data": "A display template reads each field's original stored value, not the display result produced by another display template. Filters, sorts, and groups can use either the original value or the template-rendered value. Clear the display template to restore the field's original display. Relation fields follow the display template of the target database's primary key, including empty results, while preserving the original primary key value and relation."
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-n5wvv5s",
+			"Type": "NodeHeading",
+			"HeadingLevel": 2,
+			"Properties": {
+				"id": "20261002224707-n5wvv5s",
+				"updated": "20261010222552"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Automations"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-5by05dc",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-5by05dc",
+				"updated": "20261010222552"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "In a database view, open "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Settings"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " - "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Automations"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " to add a rule. Changes are saved automatically; text is saved when the field loses focus or Enter is pressed. New rules are disabled by default. Incomplete rules are automatically disabled and show what is missing; enable them manually after completing the configuration. Rules are shared by the entire database and can be triggered by item changes in any view or mirror"
+				},
+				{
+					"Type": "NodeText",
+					"Data": ". If a referenced field is deleted or its type changes, or a target database is deleted, the next item write automatically pauses the affected rule and identifies the rule and missing reference. The source edit is saved and the rule configuration is retained; repair it and enable the rule manually. Locked databases, authentication failures, corrupt data, and write failures still roll back the edit and automatic actions"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-ayryj7q",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-ayryj7q",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Triggers support added items and changed fields. A field-change trigger can watch one field or any editable field; writing the same value again does not trigger it. Add filter conditions to run actions only for matching items"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-hrqksxn",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-hrqksxn",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Each rule can run several actions in order: edit the triggering item, edit related items, edit items matching filters in a database, or add an unbound item to this or another database. Empty target filters match all items"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-x0qa1o9",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-x0qa1o9",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Action values can use a fixed value, a source field of a compatible type, the trigger time, or a relation to the triggering item. Trigger time applies to date fields; triggering-item relations require a relation field pointing to the source database. Editing primary text preserves the existing binding and icon"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-s9ne4gk",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-s9ne4gk",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "For example, create a two-way relation between a task database and a time-log database. When a task status changes to In progress, add a log with its start date set to the trigger time and its relation set to the triggering task. When the status changes to Done, edit related logs whose end date is empty and set that date to the trigger time"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-ri3sf0d",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-ri3sf0d",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Automatic actions and the original edit are undone and redone together, and both roll back if execution fails. Redo retains the original item IDs and timestamps. Automatic actions do not trigger other rules. Imports, sync, history restoration, and undo replay do not trigger rules again; ordinary API writes trigger rules but do not create editor undo entries"
+				}
+			]
+		},
+		{
+			"ID": "20261002224707-cvkf5jx",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261002224707-cvkf5jx",
+				"updated": "20261002224707"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Encrypted databases can only act on databases in the same encrypted notebook. Unlock the notebook first. If a target database or field is unavailable, correct or pause the rule. Copying a database preserves its rules in a paused state; check their targets and relation fields before enabling them"
 				}
 			]
 		},

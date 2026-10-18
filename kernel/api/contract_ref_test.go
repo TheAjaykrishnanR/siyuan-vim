@@ -39,7 +39,7 @@ func testBacklinkContextPublishedEncryptedNotebook(t *testing.T, path string) {
 	t.Helper()
 	previousConf, previousData := model.Conf, util.DataDir
 	model.Conf, util.DataDir = model.NewAppConf(), t.TempDir()
-	model.Conf.Editor = conf.NewEditor()
+	model.Conf.Editor.Store(conf.NewEditor())
 	t.Cleanup(func() { model.Conf, util.DataDir = previousConf, previousData })
 	boxID := "20260726000003-encrypt"
 	boxConf := conf.NewBoxConf()
@@ -52,8 +52,17 @@ func testBacklinkContextPublishedEncryptedNotebook(t *testing.T, path string) {
 	engine.POST("/api/ref/getBackmentionDoc", getBackmentionDoc)
 	engine.POST("/api/ref/getBacklinkDoc", getBacklinkDoc)
 	revision := ""
-	for _, unchanged := range []bool{false, true} {
-		body := `{"defID":"def","refTreeID":"ref","keyword":"","notebook":"` + boxID + `","knownRevision":"` + revision + `"}`
+	type sortCase struct {
+		sort      string
+		unchanged bool
+	}
+	cases := []sortCase{{"", false}, {"", true}}
+	if path == "/api/ref/getBacklinkDoc" {
+		cases = append(cases, sortCase{`,"blockSort":1`, false}, sortCase{`,"blockSort":1`, true}, sortCase{`,"blockSort":2`, false})
+	}
+	for _, test := range cases {
+		unchanged := test.unchanged
+		body := `{"defID":"def","refTreeID":"ref","keyword":"","notebook":"` + boxID + `","knownRevision":"` + revision + `"` + test.sort + `}`
 		recorder := httptest.NewRecorder()
 		engine.ServeHTTP(recorder, httptest.NewRequest("POST", path, strings.NewReader(body)))
 		requireAPIContract(t, "POST", path, recorder)

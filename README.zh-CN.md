@@ -115,7 +115,7 @@
 
 ## 🏗️ 架构和生态
 
-![思源笔记架构设计](screenshots/SiYuan_Arch.png "思源笔记架构设计")
+![思源笔记架构设计](screenshots/SiYuan_Arch.svg "思源笔记架构设计")
 
 | Project                                                  | Description  | Forks                                                                           | Stars                                                                                | 
 |----------------------------------------------------------|--------------|---------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
@@ -283,6 +283,7 @@ chown -R 1001:1002 /siyuan/workspace
 使用 NGINX 反向代理可以隐藏 6806 端口，请注意：
 
 - 配置 WebSocket 反代 `/ws`
+- 普通请求和 `/ws` 的反向代理都需要保留原始 `Host` 请求头及端口，在 NGINX 的两处代理配置中均设置 `proxy_set_header Host $http_host;`。使用 `$host` 会丢失非标准端口（如 `8443`），可能导致来源校验失败，表现为登录后停留在 LOGO 并反复刷新、接口返回 `401` 或 WebSocket 连接失败
 
 #### 注意
 
@@ -523,24 +524,17 @@ siyuan export md --id <block-id> -w ~/SiYuan
 
 CLI 可执行文件为 `<安装目录>/resources/kernel/SiYuan-Kernel`，可通过 `siyuan` 命令调用。
 
-- **Windows**：安装程序自动将内核目录加入 `PATH`，可直接使用 `siyuan`。微软商店版运行在 MSIX 沙箱中，无法自动修改 `PATH`；可部署一个 `siyuan.cmd` 转发器（一次性，商店版更新后依然有效）：
+- **Windows**：安装程序自动将内核目录加入 `PATH`，可直接使用 `siyuan`。微软商店版（3.8.7 及以上）在 Windows 10 1607（内部版本 14393）及以上系统中注册 `siyuan.exe` 应用执行别名。安装或更新后，打开新的终端并运行 `siyuan --help`
   ```powershell
-  # 仅适用于微软商店版 —— 在 PowerShell 中运行一次
-  $shimDir = "$env:LOCALAPPDATA\Microsoft\WindowsApps"   # 该目录默认已在 PATH 中
-  @(
-      '@echo off'
-      'setlocal'
-      'set "ROOT="'
-      'for /f "delims=" %%i in (''powershell -NoProfile -Command "(Get-AppxPackage *SiYuan*).InstallLocation"'') do set "ROOT=%%i"'
-      'if not defined ROOT goto :noshim'
-      '"%ROOT%\app\resources\kernel\SiYuan-Kernel.exe" %*'
-      'exit /b %ERRORLEVEL%'
-      ':noshim'
-      '1>&2 echo siyuan: 未找到微软商店版'
-      'exit /b 1'
-  ) | Set-Content "$shimDir\siyuan.cmd"
+  siyuan --help
+
+  # 检查实际使用的命令
+  Get-Command siyuan -All
+  where.exe siyuan
   ```
-  卸载商店版时如需清理：`Remove-Item "$env:LOCALAPPDATA\Microsoft\WindowsApps\siyuan.cmd"`。
+  如果找不到命令，请检查 Windows 中思源的应用执行别名是否已启用，以及 `%LOCALAPPDATA%\Microsoft\WindowsApps` 是否在 `PATH` 中。上述命令可检查命令解析结果；同时安装多个思源版本或 `PATH` 顺序可能导致调用其他可执行文件
+
+  如果曾创建旧的 `siyuan.cmd` 转发器，请先运行 `& "$env:LOCALAPPDATA\Microsoft\WindowsApps\siyuan.exe" --help` 确认商店版别名可用，再按需删除转发器：`Remove-Item "$env:LOCALAPPDATA\Microsoft\WindowsApps\siyuan.cmd"`
 - **macOS**：安装后创建软链接：
   ```bash
   ln -s /Applications/SiYuan.app/Contents/Resources/kernel/SiYuan-Kernel /usr/local/bin/siyuan

@@ -26,10 +26,11 @@ import (
 	"github.com/samber/lo"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
+	"github.com/siyuan-note/siyuan/kernel/model"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
-// injectStorage adds siyuan.storage.* methods for scoped file CRUD.
+// injectStorage 向沙箱安装限定存储目录的文件操作与监听 API。
 func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -48,6 +49,38 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 	watcher := rt.NewObject()
 
 	// siyuan.storage.watcher.add(path) -> Promise<void>
+	bindStorageWatcherAdd(p, rt, watcher, resolvePath)
+
+	// siyuan.storage.watcher.remove(path) -> void
+	bindStorageWatcherRemove(p, rt, watcher, resolvePath)
+
+	lo.Must0(ObjectFreeze(rt, watcher))
+
+	storage := rt.NewObject()
+
+	// siyuan.storage.get(path) -> Promise<{text, json, buffer, arrayBuffer, bytes, blob}>
+	bindStorageGet(p, rt, storage, resolvePath)
+
+	// siyuan.storage.put(path, content) -> Promise<void>
+	bindStoragePut(p, rt, storage, resolvePath)
+
+	// siyuan.storage.remove(path) -> Promise<void>
+	bindStorageRemove(p, rt, storage, resolvePath)
+
+	// siyuan.storage.list(path) -> Promise<Entry[]>
+	bindStorageList(p, rt, storage, resolvePath)
+
+	// siyuan.storage.watcher
+	lo.Must0(storage.Set("watcher", watcher))
+
+	lo.Must0(ObjectFreeze(rt, storage))
+
+	lo.Must0(siyuan.Set("storage", storage))
+	return
+}
+
+// bindStorageWatcherAdd 安装对应的沙箱方法，异步操作仍通过插件工作线程执行。
+func bindStorageWatcherAdd(p *KernelPlugin, rt *goja.Runtime, watcher *goja.Object, resolvePath func(string) (string, error)) {
 	lo.Must0(watcher.Set("add", rt.ToValue(func(call goja.FunctionCall, rt *goja.Runtime) goja.Value {
 		promise, resolve, reject := rt.NewPromise()
 
@@ -93,8 +126,10 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 
 		return rt.ToValue(promise)
 	})))
+}
 
-	// siyuan.storage.watcher.remove(path) -> void
+// bindStorageWatcherRemove 安装对应的沙箱方法，异步操作仍通过插件工作线程执行。
+func bindStorageWatcherRemove(p *KernelPlugin, rt *goja.Runtime, watcher *goja.Object, resolvePath func(string) (string, error)) {
 	lo.Must0(watcher.Set("remove", rt.ToValue(func(call goja.FunctionCall, rt *goja.Runtime) goja.Value {
 		promise, resolve, reject := rt.NewPromise()
 
@@ -140,12 +175,10 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 
 		return rt.ToValue(promise)
 	})))
+}
 
-	lo.Must0(ObjectFreeze(rt, watcher))
-
-	storage := rt.NewObject()
-
-	// siyuan.storage.get(path) -> Promise<{text, json, arrayBuffer}>
+// bindStorageGet 安装对应的沙箱方法，异步操作仍通过插件工作线程执行。
+func bindStorageGet(p *KernelPlugin, rt *goja.Runtime, storage *goja.Object, resolvePath func(string) (string, error)) {
 	lo.Must0(storage.Set("get", rt.ToValue(func(call goja.FunctionCall, rt *goja.Runtime) goja.Value {
 		promise, resolve, reject := rt.NewPromise()
 
@@ -178,9 +211,11 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 							return nil, err
 						}
 
+						// 存储文件没有媒体类型，blob() 返回的 Blob 的 type 为空串。
+						// 错误存入局部变量而不是外层的 err：外层 goroutine 返回时会读取 err，在事件循环上写入它会构成数据竞争。
 						content := rt.NewObject()
-						if err = ObjectSetDataMethods(p, rt, content, result); err != nil {
-							return nil, err
+						if setErr := ObjectSetDataMethods(p, rt, content, result, ""); setErr != nil {
+							return nil, setErr
 						}
 
 						return content, nil
@@ -224,8 +259,10 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 
 		return rt.ToValue(promise)
 	})))
+}
 
-	// siyuan.storage.put(path, content) -> Promise<void>
+// bindStoragePut 安装对应的沙箱方法，异步操作仍通过插件工作线程执行。
+func bindStoragePut(p *KernelPlugin, rt *goja.Runtime, storage *goja.Object, resolvePath func(string) (string, error)) {
 	lo.Must0(storage.Set("put", rt.ToValue(func(call goja.FunctionCall, rt *goja.Runtime) goja.Value {
 		promise, resolve, reject := rt.NewPromise()
 
@@ -282,6 +319,7 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 					err = fmt.Errorf("failed to write file: %w", writeErr)
 					return
 				}
+				model.IncSyncIfNeeded(abs)
 				return
 			}()
 
@@ -302,8 +340,10 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 
 		return rt.ToValue(promise)
 	})))
+}
 
-	// siyuan.storage.remove(path) -> Promise<void>
+// bindStorageRemove 安装对应的沙箱方法，异步操作仍通过插件工作线程执行。
+func bindStorageRemove(p *KernelPlugin, rt *goja.Runtime, storage *goja.Object, resolvePath func(string) (string, error)) {
 	lo.Must0(storage.Set("remove", rt.ToValue(func(call goja.FunctionCall, rt *goja.Runtime) goja.Value {
 		promise, resolve, reject := rt.NewPromise()
 
@@ -355,6 +395,14 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 					}, nil)
 				}()
 
+				_, statErr := os.Lstat(abs)
+				affectsSync := !os.IsNotExist(statErr) && model.PathsAffectSync(abs)
+				// 删除可能部分成功，提前记录目录内是否存在参与同步的文件。
+				defer func() {
+					if affectsSync {
+						model.IncSync()
+					}
+				}()
 				if removeErr := os.RemoveAll(abs); removeErr != nil {
 					err = fmt.Errorf("failed to remove: %w", removeErr)
 					return
@@ -379,8 +427,10 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 
 		return rt.ToValue(promise)
 	})))
+}
 
-	// siyuan.storage.list(path) -> Promise<Entry[]>
+// bindStorageList 安装对应的沙箱方法，异步操作仍通过插件工作线程执行。
+func bindStorageList(p *KernelPlugin, rt *goja.Runtime, storage *goja.Object, resolvePath func(string) (string, error)) {
 	lo.Must0(storage.Set("list", rt.ToValue(func(call goja.FunctionCall, rt *goja.Runtime) goja.Value {
 		promise, resolve, reject := rt.NewPromise()
 
@@ -463,12 +513,4 @@ func injectStorage(p *KernelPlugin, rt *goja.Runtime, siyuan *goja.Object) (err 
 
 		return rt.ToValue(promise)
 	})))
-
-	// siyuan.storage.watcher
-	lo.Must0(storage.Set("watcher", watcher))
-
-	lo.Must0(ObjectFreeze(rt, storage))
-
-	lo.Must0(siyuan.Set("storage", storage))
-	return
 }

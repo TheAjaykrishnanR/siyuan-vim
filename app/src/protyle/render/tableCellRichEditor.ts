@@ -1,6 +1,6 @@
 import {isMobile} from "../../util/functions";
 import {showMessage} from "../../dialog/message";
-import {hintRef, hintSlash} from "../hint/extend";
+import {hintRef, hintSlash, hintTag} from "../hint/extend";
 import {registerBuiltinSlashHint} from "../hint/builtinSlash";
 import {mountProtyleLiteFragment} from "../lite/fragmentEditor";
 import {setMobileToolbarUndo} from "../lite/mobileToolbar";
@@ -10,23 +10,40 @@ import {updateTransaction} from "../wysiwyg/transaction";
 import {configureAVRichTextLute, getAVRichTextLute, getAVRichTextUnsupportedPasteBlocks, sanitizeAVRichTextBlockDOM} from "./av/richText";
 import {highlightRender} from "./highlightRender";
 import {mathRender} from "./mathRender";
+import {imgMenu} from "../../menus/protyle";
 import {renderTableCellRichElements} from "./tableCellRich";
-import {cleanTableCellRichHTML, getTableCellInlineHTML, getTableCellRichBlockDOM, renderTableCellRich, serializeTableCellRich, setTableCellRich, TABLE_CELL_INLINE_ATTRIBUTE, updateTableCellEditingValue} from "../util/tableCellRich";
+import {getTableBlockHTML, getTableCellInlineHTML, getTableCellRichBlockDOM, renderTableCellRich, serializeTableCellRich, setTableCellRich, TABLE_CELL_INLINE_ATTRIBUTE, updateTableCellEditingValue} from "../util/tableCellRich";
 import {TABLE_CELL_RICH_ATTRIBUTE} from "../util/tableCellRichValue";
-import {focusByOffset, focusByRange, getSelectionOffset, getUndoFocusContext} from "../util/selection";
-import {getAdjacentRichTableCell, isTableCellCaretAtBoundary} from "../util/tableCellRichNavigation";
+import {focusByOffset, getUndoFocusContext} from "../util/selection";
+import {focusByRange, getSelectionOffset} from "../util/selectionOffsets";
+import {getAdjacentRichTableCell, isTableCellCaretAtBoundary, leaveRichTableCell} from "../util/tableCellRichNavigation";
 import {focusEditableAtGoalX, getCaretGoalX} from "../wysiwyg/verticalCaret";
 import {fixTable} from "../util/table";
 import {updateTableCellContentLayout} from "../util/tableCellRich";
 import {TABLE_CELL_SLASH_IDS} from "../util/tableCellRichMenu";
-import {captureRichCellSelection, restoreRichCellSelection} from "../util/tableCellRichSelection";
+import {captureRichCellSelection, captureRichCellSelectionAtPoint, restoreRichCellSelection} from "../util/tableCellRichSelection";
 import {matchHotKey} from "../util/hotKey";
 import {bindTableCellRichDrag} from "../util/tableCellRichDrag";
 import {getTableCellEditorLute} from "../util/tableCellRichLute";
-import {setTableCellRichContext} from "../util/tableCellRichContext";
+import {setTableCellRichContext, setTableCellRichEventTarget} from "../util/tableCellRichContext";
 import {updateOutlineCurrentBlock} from "../util/outlineBlock";
+import {bindLiteCodeActions} from "../lite/codeActions";
+import {getTableVirtualCellIndex, getTableVirtualRowIndex, restoreTableVirtualizationDOM} from "../util/tableVirtualizationDOM";
 
-let activeEditor: {cell: Element, finish: () => void} | undefined;
+let activeEditor: {cell: Element, finish: () => void, prepareSwitch: () => boolean} | undefined;
+let openingEditor: object | undefined;
+
+export const enterTableCellRichEditor = async (owner: IProtyle, cell: HTMLTableCellElement) => {
+    const currentCell = await openTableCellRichEditor(owner, cell);
+    const editor = currentCell?.querySelector(".table__cell-editor .protyle-wysiwyg");
+    const selection = getSelection();
+    if (!currentCell || owner.disabled || activeEditor?.cell !== currentCell || !editor?.contains(selection?.anchorNode) ||
+        !editor.contains(selection.focusNode)) {
+        return;
+    }
+    // 单元格挂载完成后，由内部编辑器处理回车和对应的内容结构。
+    editor.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", code: "Enter", bubbles: true, cancelable: true}));
+};
 
 export const applyTableCellRichInlineMark = (owner: IProtyle, cells: HTMLTableCellElement[], type: string,
                                            textObj?: ITextOption) => {
@@ -46,8 +63,9 @@ export const applyTableCellRichInlineMark = (owner: IProtyle, cells: HTMLTableCe
             upload: false, websocket: false, pluginExtensions: false, customBlockRender: false,
             lute: getTableCellEditorLute(getAVRichTextLute(),
                 window.siyuan.config.editor.markdown.blockFullWidthTaskList !== false),
-            sanitizeBlockDOM: html => sanitizeAVRichTextBlockDOM(html, true),
+            sanitizeBlockDOM: html => sanitizeAVRichTextBlockDOM(html, true, true),
             getUnsupportedPasteBlocks: html => getAVRichTextUnsupportedPasteBlocks(html, true),
+            richHTMLPaste: true,
             restoreLuteMarkdownSyntax: configureAVRichTextLute,
         },
     });
@@ -79,18 +97,71 @@ export const applyTableCellRichInlineMark = (owner: IProtyle, cells: HTMLTableCe
     }
 };
 
-export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElement,
-                                       navigation?: {key: string, goalX: number}, point?: {x: number, y: number, target?: Element},
-                                       restoredSelection?: ReturnType<typeof captureRichCellSelection>) => {
-    if (owner.disabled || !cell.isConnected || activeEditor?.cell === cell) {
+export const openTableCellRichEditor = async (owner: IProtyle, cell: HTMLTableCellElement,
+                                             navigation?: {key: string, goalX: number}, point?: {x: number, y: number, target?: Element},
+                                             restoredSelection?: ReturnType<typeof captureRichCellSelection>) => {
+    if (owner.disabled || !cell.isConnected) {
         return;
     }
-    activeEditor?.finish();
-    if (activeEditor) {
-        return;
+    if (activeEditor?.cell === cell) {
+        openingEditor = undefined;
+        return cell;
     }
-    const table = cell.closest<HTMLElement>('[data-type="NodeTable"]');
+    const previousEditor = activeEditor;
+    const preserveFocus = isMobile() && previousEditor?.cell.contains(document.activeElement) &&
+        previousEditor.cell.closest(".protyle-wysiwyg") === owner.wysiwyg.element;
+    let retainedEditor: typeof activeEditor;
+    if (preserveFocus && previousEditor.prepareSwitch()) {
+        retainedEditor = previousEditor;
+    } else {
+        activeEditor?.finish();
+        if (activeEditor) {
+            openingEditor = undefined;
+            return;
+        }
+    }
+    const request = {};
+    openingEditor = request;
+    try {
+        await mountTableCellRichEditor(request, retainedEditor, owner, cell, navigation, point, restoredSelection);
+        return openingEditor === request ? activeEditor?.cell : undefined;
+    } finally {
+        if (retainedEditor && openingEditor === request) {
+            retainedEditor.finish();
+        }
+    }
+};
+
+const mountTableCellRichEditor = async (request: object, previousEditor: typeof activeEditor,
+                                      owner: IProtyle, cell: HTMLTableCellElement,
+                                      navigation?: {key: string, goalX: number}, point?: {x: number, y: number, target?: Element},
+                                      restoredSelection?: ReturnType<typeof captureRichCellSelection>) => {
+    let table = cell.closest<HTMLElement>('[data-type="NodeTable"]');
     if (!table || cell.closest(".protyle-wysiwyg") !== owner.wysiwyg.element) {
+        return;
+    }
+    const tableID = table.dataset.nodeId;
+    const tableParent = table.parentElement;
+    const rowIndex = getTableVirtualRowIndex(cell.parentElement as HTMLTableRowElement);
+    const cellIndex = cell.cellIndex;
+    // 记录预览中被点击的公式位置，在重建单元格后打开对应公式的编辑面板。
+    const clickedMath = point?.target?.closest('[data-subtype="math"]');
+    const clickedMathIndex = clickedMath && cell.contains(clickedMath) ?
+        Array.from(cell.querySelectorAll('[data-subtype="math"]')).indexOf(clickedMath) : -1;
+    const clickedImage = point?.target?.closest(".protyle-action")?.closest('.img[data-type="img"]');
+    const clickedImageIndex = clickedImage && cell.contains(clickedImage) ?
+        Array.from(cell.querySelectorAll('.img[data-type="img"]')).indexOf(clickedImage) : -1;
+    // 外层输入先完成解析和事务，避免把即将挂载的单元格编辑界面当作正文。
+    await owner.wysiwyg.flushPendingInput();
+    if (openingEditor !== request || owner.disabled || !owner.element.isConnected) {
+        return;
+    }
+    if (!table.isConnected) {
+        table = Array.from(tableParent.children).find(element => element.getAttribute("data-node-id") === tableID) as HTMLElement;
+        cell = table?.querySelector("table")?.rows[rowIndex]?.cells[cellIndex];
+    }
+    if (!cell?.isConnected || cell.closest(".protyle-wysiwyg") !== owner.wysiwyg.element ||
+        (activeEditor && activeEditor !== previousEditor)) {
         return;
     }
     let initialBlockHTML: string;
@@ -103,16 +174,14 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
         showMessage(window.siyuan.languages.tableCellRichInvalid);
         return;
     }
-    hideElements(["gutter", "toolbar"], owner);
-    // 记录预览中被点击的公式位置，在重建单元格后打开对应公式的编辑面板。
-    const clickedMath = point?.target?.closest('[data-subtype="math"]');
-    const clickedMathIndex = clickedMath && cell.contains(clickedMath) ?
-        Array.from(cell.querySelectorAll('[data-subtype="math"]')).indexOf(clickedMath) : -1;
+    hideElements(["toolbar"], owner);
     const selection = getSelection();
     const initialRange = selection.rangeCount ? selection.getRangeAt(0) : undefined;
     const richSelection = cell.hasAttribute(TABLE_CELL_RICH_ATTRIBUTE) ? captureRichCellSelection(cell, selection) : undefined;
     const preserveSelection = initialRange && !initialRange.collapsed &&
         cell.contains(initialRange.startContainer) && cell.contains(initialRange.endContainer);
+    // 在预览布局中记录点击位置，避免编辑器重建及行号留白变化影响坐标定位。
+    const clickedSelection = point && !preserveSelection ? captureRichCellSelectionAtPoint(cell, point) : undefined;
     const initialOffset = !cell.hasAttribute(TABLE_CELL_RICH_ATTRIBUTE) && initialRange &&
         cell.contains(initialRange.startContainer) && cell.contains(initialRange.endContainer) ?
         getSelectionOffset(cell, owner.wysiwyg.element, initialRange) : undefined;
@@ -141,20 +210,23 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
             ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey,
             bubbles: true, cancelable: true,
         });
+        setTableCellRichEventTarget(forwarded, host);
         if (!owner.element.dispatchEvent(forwarded)) {
             event.preventDefault();
         }
     }));
     ["mouseover", "pointerover"].forEach(type => host.addEventListener(type, event => {
-        hideElements(["gutter"], owner);
         event.stopPropagation();
+        owner.gutter?.render(owner, table, host);
     }));
+    owner.gutter?.render(owner, table, host);
     const toolbar = getDefaultToolbar(isMobile()).filter(item => typeof item === "string" ? item !== "ai" : item.name !== "ai");
     const safeSlash = registerBuiltinSlashHint((key: string, protyle: IProtyle, hintSource: THintSource) =>
         hintSlash(key, protyle, hintSource).filter(item => TABLE_CELL_SLASH_IDS.has(item.id)));
     const hint: IProtyleOptions["hint"] = {
         extend: [{key: "((", hint: hintRef}, {key: "【【", hint: hintRef}, {key: "（（", hint: hintRef},
-            {key: "[[", hint: hintRef}, {key: "/", hint: safeSlash}, {key: "、", hint: safeSlash}],
+            {key: "[[", hint: hintRef}, {key: "#", hint: hintTag}, {key: "/", hint: safeSlash}, {key: "、", hint: safeSlash},
+            {key: ":"}],
     };
     let finished = false;
     let composing = false;
@@ -173,8 +245,9 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
             lute: getTableCellEditorLute(getAVRichTextLute(),
                 window.siyuan.config.editor.markdown.blockFullWidthTaskList !== false),
             lockedOptions: {toolbar, hint},
-            sanitizeBlockDOM: html => sanitizeAVRichTextBlockDOM(html, true),
+            sanitizeBlockDOM: html => sanitizeAVRichTextBlockDOM(html, true, true),
             getUnsupportedPasteBlocks: html => getAVRichTextUnsupportedPasteBlocks(html, true),
+            richHTMLPaste: true,
             restoreLuteMarkdownSyntax: configureAVRichTextLute,
         },
         afterSetContent: (protyle, element) => {
@@ -193,7 +266,14 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
             }
         },
     });
+    const mobileRenderOverlay = isMobile() ? fragment.protyle.toolbar.subElement : undefined;
+    if (mobileRenderOverlay) {
+        // 移动端正文有独立层叠上下文，源码编辑框需要挂在页面层以覆盖顶栏。
+        document.body.appendChild(mobileRenderOverlay);
+    }
     fragment.protyle.block.rootID = owner.block.rootID;
+    fragment.protyle.block.parentID = table.dataset.nodeId;
+    fragment.protyle.path = owner.path;
     const commit = () => {
         if (!cell.isConnected || !table.isConnected || !host.isConnected || owner.disabled || composing) {
             return;
@@ -204,16 +284,19 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
                 contentChanged = false;
                 return;
             }
-            const oldHTML = cleanTableCellRichHTML(table.outerHTML);
-            const redoSelection = captureRichCellSelection(fragment.wysiwyg, getSelection()) || undoSelection;
+            if (getTableCellInlineHTML(serialized.blockDOM) === null) {
+                restoreTableVirtualizationDOM(table);
+            }
+            const oldHTML = getTableBlockHTML(table);
+            const redoSelection = captureRichCellSelection(fragment.wysiwyg, getSelection(), true) || undoSelection;
             const tableRange = document.createRange();
             tableRange.selectNodeContents(cell);
             tableRange.collapse(true);
             const context = getUndoFocusContext(owner.wysiwyg.element, tableRange, true);
-            const cellIndex = Array.from(table.querySelectorAll("th, td")).indexOf(cell).toString();
+            // 索引以完整表格为参照，读取屏外行计数即可记录撤销位置。
+            context.undoFocusTableCell = getTableVirtualCellIndex(cell).toString();
             const focusContext = (saved: typeof undoSelection) => saved ? {
                 ...context,
-                undoFocusTableCell: cellIndex,
                 undoFocusTableSelection: JSON.stringify(saved),
             } : context;
             source = serialized.markdown;
@@ -247,6 +330,7 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
         controller.abort();
         observer.disconnect();
         fragment.destroy();
+        mobileRenderOverlay?.remove();
         if (cell.isConnected && host.isConnected) {
             renderTableCellRich(cell);
             if (cell.hasAttribute(TABLE_CELL_RICH_ATTRIBUTE)) {
@@ -257,15 +341,23 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
         }
         if (activeEditor?.cell === cell) {
             activeEditor = undefined;
+            openingEditor = undefined;
         }
     };
-    activeEditor = {cell, finish};
+    activeEditor = {cell, finish, prepareSwitch: () => {
+        if (composing) {
+            return false;
+        }
+        commit();
+        return true;
+    }};
     const undoCell = (redo: boolean) => {
         if (composing) {
             return;
         }
         // 先提交当前单元格，再由所属文档撤销，保证切换单元格后仍可连续回退。
         finish();
+        restoreTableVirtualizationDOM(table);
         const range = document.createRange();
         range.selectNodeContents(cell);
         range.collapse(true);
@@ -288,6 +380,12 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
         }
     };
     host.addEventListener("beforeinput", captureBeforeChange, {capture: true, signal});
+    bindLiteCodeActions(host, fragment.protyle, {
+        signal,
+        canEdit: () => !finished && !owner.disabled,
+        beforeChange: captureBeforeChange,
+        onChange: commit,
+    });
     host.addEventListener("pointerdown", event => {
         captureBeforeChange();
         if (fragment.wysiwyg.contains(event.target as Node)) {
@@ -333,8 +431,17 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
         if (belongsToEditor(event.target as Node)) {
             return;
         }
-        // 表格右侧空白由外层编辑器忽略，保持单元格编辑状态，避免销毁编辑器后留下失效光标。
         const target = event.target instanceof Element ? event.target : undefined;
+        const nextCell = target?.closest("td, th");
+        if (isMobile() && nextCell && nextCell !== cell && cell.contains(document.activeElement) &&
+            nextCell.closest(".protyle-wysiwyg") === owner.wysiwyg.element &&
+            !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey &&
+            !target.closest("a, [data-type~='block-ref'], [data-type~='a'], img, input, textarea, button, select")) {
+            // 点击其他单元格时保留输入焦点，由新编辑器接管后再清理当前编辑器。
+            event.preventDefault();
+            return;
+        }
+        // 表格右侧空白由外层编辑器忽略，保持单元格编辑状态，避免销毁编辑器后留下失效光标。
         if (target && owner.wysiwyg.element.contains(target) &&
             (!target.closest("[data-node-id]") || target.closest("[data-node-id]") === table)) {
             const tableRect = table.querySelector("table")?.getBoundingClientRect();
@@ -376,6 +483,7 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
             event.stopImmediatePropagation();
             // 先提交内嵌编辑内容，再以所属单元格执行表格快捷键。
             finish();
+            restoreTableVirtualizationDOM(table);
             const range = document.createRange();
             range.selectNodeContents(cell);
             range.collapse(true);
@@ -407,22 +515,28 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
                 isTableCellCaretAtBoundary(fragment.wysiwyg, range, event.key)) {
                 event.preventDefault();
                 event.stopImmediatePropagation();
+                restoreTableVirtualizationDOM(table);
                 const nextCell = getAdjacentRichTableCell(cell, event.key);
+                const goalX = getCaretGoalX(range);
                 if (nextCell) {
-                    const goalX = getCaretGoalX(range);
                     finish();
                     openTableCellRichEditor(owner, nextCell, {key: event.key, goalX});
+                } else {
+                    commit();
+                    if (leaveRichTableCell(owner, table, event.key, goalX)) {
+                        finish();
+                        owner.toolbar.range = getSelection().getRangeAt(0).cloneRange();
+                    }
                 }
                 return;
             }
             const target = range?.startContainer instanceof Element ? range.startContainer : range?.startContainer.parentElement;
             const inListOrCode = target?.closest('[data-type="NodeList"], [data-type="NodeCodeBlock"]');
-            const navigate = !inListOrCode && (event.key === "Tab" ||
-                (event.key === "Enter" && !event.shiftKey && getTableCellInlineHTML(fragment.getBlockHTML()) !== null));
-            if (navigate) {
+            if (!inListOrCode && event.key === "Tab") {
                 event.preventDefault();
                 event.stopImmediatePropagation();
                 finish();
+                restoreTableVirtualizationDOM(table);
                 const tableRange = document.createRange();
                 tableRange.selectNodeContents(cell);
                 tableRange.collapse(true);
@@ -457,6 +571,14 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
     fragment.focus(true);
     // 进入单元格编辑即按所属表格块同步大纲高亮
     updateOutlineCurrentBlock(owner, cell);
+    // 图片操作使用重建后的节点和内部编辑器，菜单修改随单元格事务保存。
+    if (clickedImageIndex >= 0) {
+        const image = fragment.wysiwyg.querySelectorAll<HTMLElement>('.img[data-type="img"]')[clickedImageIndex];
+        if (image) {
+            imgMenu(fragment.protyle, getSelection().getRangeAt(0), image, {clientX: point.x + 4, clientY: point.y});
+            return;
+        }
+    }
     if (clickedMathIndex >= 0) {
         const mathElement = fragment.wysiwyg.querySelectorAll('[data-subtype="math"]')[clickedMathIndex];
         if (mathElement) {
@@ -482,6 +604,9 @@ export const openTableCellRichEditor = (owner: IProtyle, cell: HTMLTableCellElem
             range.collapse(!backward);
             focusByRange(range);
         }
+        return;
+    }
+    if (clickedSelection && restoreRichCellSelection(fragment.wysiwyg, clickedSelection)) {
         return;
     }
     if (richSelection && (preserveSelection || !point) && restoreRichCellSelection(fragment.wysiwyg, richSelection)) {

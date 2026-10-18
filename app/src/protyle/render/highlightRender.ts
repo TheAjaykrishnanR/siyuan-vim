@@ -1,11 +1,21 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
-import {focusByOffset, getSelectionOffset} from "../util/selection";
+import {createRangeByOffsets, focusByRange, getSelectionOffset} from "../util/selectionOffsets";
+import {getContenteditableElement} from "../wysiwyg/getBlock";
 import {setCodeTheme} from "./util";
 import {escapeHtml} from "../../util/escape";
+import {isFoldedRenderContent} from "./foldedContent";
+
+const focusCodeByOffset = (element: Element, start: number, end: number) => {
+    const range = createRangeByOffsets(getContenteditableElement(element) || element, start, end);
+    if (range) {
+        focusByRange(range);
+    }
+    return range;
+};
 
 export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, zoom = 1) => {
-    let codeElements: NodeListOf<Element>;
+    let codeElements: NodeListOf<Element> | Element[];
     let isPreview = false;
     if (element.classList.contains("code-block")) {
         // 编辑器内代码块编辑渲染
@@ -25,6 +35,7 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
             codeElements = element.querySelectorAll(".code-block .hljs");
         }
     }
+    codeElements = Array.from(codeElements).filter(item => !isFoldedRenderContent(item));
     if (codeElements.length === 0) {
         return;
     }
@@ -44,18 +55,23 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
                     iconElements[1].setAttribute("aria-label", window.siyuan.languages.more);
                 }
                 const wbrElement = block.querySelector("wbr");
+                const editable = block.querySelector<HTMLElement>('[contenteditable="true"]');
+                const selection = getSelection();
+                // 高亮会重建文本节点，需保留已恢复到代码正文中的选区。
+                const codeRange = !wbrElement && editable && selection.rangeCount &&
+                    editable.contains(selection.anchorNode) && editable.contains(selection.focusNode) ?
+                    selection.getRangeAt(0) : undefined;
+                const codeSelection = codeRange ? getSelectionOffset(editable, undefined, codeRange) : undefined;
+                const backward = codeRange && !codeRange.collapsed && selection.anchorNode === codeRange.endContainer &&
+                    selection.anchorOffset === codeRange.endOffset;
                 let startIndex = 0;
                 let hasCaret = false;
                 if (wbrElement) {
-                    let previousSibling = wbrElement.previousSibling;
-                    while (previousSibling) {
-                        startIndex += previousSibling.textContent.length;
-                        while (!previousSibling.previousSibling && previousSibling.parentElement.tagName !== "DIV") {
-                            // 高亮 span 中输入
-                            previousSibling = previousSibling.parentElement;
-                        }
-                        previousSibling = previousSibling.previousSibling;
-                    }
+                    // 从代码正文起点计算偏移，包含高亮嵌套节点之前的所有文本。
+                    const prefixRange = document.createRange();
+                    prefixRange.selectNodeContents(editable || block);
+                    prefixRange.setEndBefore(wbrElement);
+                    startIndex = prefixRange.toString().length;
                     wbrElement.remove();
                     hasCaret = true;
                 } else {
@@ -118,8 +134,15 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
                         language,
                         ignoreIllegals: true
                     }).value;
-                if (hasCaret && getSelection().rangeCount > 0) {
-                    focusByOffset(block, startIndex, startIndex);
+                if (wbrElement && getSelection().rangeCount > 0) {
+                    focusCodeByOffset(block, startIndex, startIndex);
+                } else if (codeSelection) {
+                    const range = focusCodeByOffset(editable, codeSelection.start, codeSelection.end);
+                    if (backward && range) {
+                        selection.setBaseAndExtent(range.endContainer, range.endOffset, range.startContainer, range.startOffset);
+                    }
+                } else if (hasCaret && getSelection().rangeCount > 0) {
+                    focusCodeByOffset(block, startIndex, startIndex);
                 }
             });
         });

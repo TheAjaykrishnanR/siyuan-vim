@@ -1,5 +1,10 @@
 export const CODE_TAB_SPACE_VALUES = [0, 2, 4, 6, 8];
 
+/** 代码块 Tab 空格档位的统一文案：0 档保留制表符，其余显示为 N 个空格 */
+export const getCodeTabSpacesLabel = (spaces: number): string => spaces === 0
+    ? window.siyuan.languages.codeTabSpacesKeepTab
+    : window.siyuan.languages.codeTabSpacesCount.replace("${x}", spaces.toString());
+
 export const resolveCodeTabSpaces = (attributeValue: string | null, globalValue: number) => {
     if (attributeValue !== null && CODE_TAB_SPACE_VALUES.some((value) => value.toString() === attributeValue)) {
         return parseInt(attributeValue);
@@ -8,6 +13,42 @@ export const resolveCodeTabSpaces = (attributeValue: string | null, globalValue:
 };
 
 export const getCodeTabSpace = (spaces: number) => spaces === 0 ? "\t" : "".padStart(spaces, " ");
+
+export const detectCodeTabSpaces = (text: string): number | null => {
+    const spaceIndents: number[] = [];
+    let hasTabs = false;
+    let lineCount = 0;
+    for (const line of text.split("\n")) {
+        if (!line.trim()) {
+            continue;
+        }
+        lineCount++;
+        const indent = line.match(/^[ \t]+/)?.[0];
+        if (!indent) {
+            continue;
+        }
+        if (indent.includes("\t")) {
+            if (indent.includes(" ") || spaceIndents.length > 0) {
+                return null;
+            }
+            hasTabs = true;
+        } else {
+            if (hasTabs) {
+                return null;
+            }
+            spaceIndents.push(indent.length);
+        }
+    }
+    if (lineCount < 2) {
+        return null;
+    }
+    if (hasTabs) {
+        return 0;
+    }
+    // 仅采用受支持的最小空格缩进，且其他缩进必须是它的整数倍。
+    const spaces = spaceIndents.reduce((minimum, value) => Math.min(minimum, value), Infinity);
+    return CODE_TAB_SPACE_VALUES.includes(spaces) && spaceIndents.every(value => value % spaces === 0) ? spaces : null;
+};
 
 export const getCodeBlockLineRange = (text: string, start: number, end: number) => {
     const rangeStart = Math.min(Math.max(start, 0), text.length);
@@ -27,31 +68,24 @@ export const updateCodeBlockLines = (text: string, tabSpace: string, outdent = f
     if (line.startsWith("\t")) {
         return line.substring(1);
     }
-    if (tabSpace === "\t") {
-        return line;
-    }
+    // 制表符模式按代码块默认显示宽度处理行首空格。
+    const spaceLimit = tabSpace === "\t" ? 4 : tabSpace.length;
     let spaceCount = 0;
-    while (spaceCount < tabSpace.length && line[spaceCount] === " ") {
+    while (spaceCount < spaceLimit && line[spaceCount] === " ") {
         spaceCount++;
     }
     return line.substring(spaceCount);
 }).join("\n");
 
-export const getCodeBlockDeleteStart = (text: string, caret: number, tabSpace: string) => {
-    const rangeEnd = Math.min(Math.max(caret, 0), text.length);
-    const lineStart = rangeEnd === 0 ? 0 : text.lastIndexOf("\n", rangeEnd - 1) + 1;
-    if (rangeEnd <= lineStart) {
-        return rangeEnd;
-    }
-    if (text[rangeEnd - 1] === "\t") {
-        return rangeEnd - 1;
-    }
-    if (tabSpace === "\t") {
-        return rangeEnd;
-    }
-    let rangeStart = rangeEnd;
-    while (rangeStart > lineStart && rangeEnd - rangeStart < tabSpace.length && text[rangeStart - 1] === " ") {
-        rangeStart--;
-    }
-    return rangeStart;
+export const getCodeBlockOutdentRange = (text: string, caret: number, tabSpace: string) => {
+    const position = Math.min(Math.max(caret, 0), text.length);
+    const lineStart = getCodeBlockLineRange(text, position, position).start;
+    const lineEnd = text.indexOf("\n", lineStart);
+    const line = text.substring(lineStart, lineEnd < 0 ? text.length : lineEnd);
+    const removed = line.length - updateCodeBlockLines(line, tabSpace, true).length;
+    return {
+        start: lineStart,
+        end: lineStart + removed,
+        caret: Math.max(lineStart, position - removed),
+    };
 };

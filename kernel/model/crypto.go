@@ -318,6 +318,9 @@ func ExportNotebookCryptoBackup() (downloadPath string, err error) {
 func ImportNotebookCryptoBackup(data []byte, password string) error {
 	notebookCryptoMu.Lock()
 	defer notebookCryptoMu.Unlock()
+	if err := checkPendingNotebookArchives(); err != nil {
+		return err
+	}
 
 	Conf.m.RLock()
 	current := *Conf.NotebookCrypto
@@ -1000,6 +1003,9 @@ func EnableEncryptedNotebook(password string) error {
 
 	notebookCryptoMu.Lock()
 	defer notebookCryptoMu.Unlock()
+	if err := checkPendingNotebookArchives(); err != nil {
+		return err
+	}
 
 	Conf.m.RLock()
 	current := *Conf.NotebookCrypto
@@ -1087,8 +1093,13 @@ func EnableEncryptedNotebook(password string) error {
 // 且不能有依赖当前密钥备份的已删除笔记本历史（否则禁用并删除备份会让这些历史永久锁死，违反 §19）。
 // 清除全局加密配置（MasterSalt/KEKVerifier），KEK/DEK 不再可用。
 func DisableEncryptedNotebook() error {
+	lockSync()
+	defer unlockSync()
 	notebookCryptoMu.Lock()
 	defer notebookCryptoMu.Unlock()
+	if err := checkPendingNotebookArchives(); err != nil {
+		return err
+	}
 
 	// 检查是否还有加密笔记本（含 conf 损坏但存在备份的）
 	ids, listErr := listAllEncryptedBoxIDs()
@@ -1107,12 +1118,15 @@ func DisableEncryptedNotebook() error {
 	if hasHistory {
 		return errors.New(Conf.Language(323))
 	}
+	if err := preserveNotebookCryptoBeforeDisable(); err != nil {
+		logging.LogErrorf("preserve notebook crypto before disabling failed: %s", err)
+		return errors.New(Conf.Language(407))
+	}
 
 	Conf.m.Lock()
-	Conf.NotebookCrypto.Enabled = false
-	Conf.NotebookCrypto.MasterSalt = nil
-	Conf.NotebookCrypto.KEKVerifier = nil
-	Conf.NotebookCrypto.VerifierNonce = nil
+	autoLockMinutes := Conf.NotebookCrypto.AutoLockMinutes
+	Conf.NotebookCrypto = conf.NewNotebookCrypto()
+	Conf.NotebookCrypto.AutoLockMinutes = autoLockMinutes
 	Conf.m.Unlock()
 
 	Conf.Save()
@@ -1218,6 +1232,9 @@ func deriveNotebookCryptoBackupCandidate(password string) (backup *conf.Notebook
 
 // deriveKEK 从主密码派生 KEK 并校验。校验失败返回错误。KEK 仅在函数作用域内有效，调用方负责使用。
 func deriveKEK(password string) ([]byte, error) {
+	if err := checkPendingNotebookArchives(); err != nil {
+		return nil, err
+	}
 	Conf.m.RLock()
 	nc := *Conf.NotebookCrypto
 	Conf.m.RUnlock()
@@ -1305,11 +1322,10 @@ func deriveKEK(password string) ([]byte, error) {
 			zeroAndClear(kek)
 			return nil, errMasterPasswordMigrationPending
 		}
-		if err = saveNotebookCryptoBackup(kek); err != nil {
+		if err = finishMasterPasswordMigration(kek); err != nil {
 			zeroAndClear(kek)
 			return nil, fmt.Errorf("%w: %v", errMasterPasswordMigrationPending, err)
 		}
-		removeMasterPasswordMigration()
 	}
 	return kek, nil
 }
@@ -1548,6 +1564,7 @@ func lockBoxHeld(boxID string) {
 	heif.ClearMemoryCache(boxID)
 	RevokeManagedEncryptedExportsForBox(boxID)
 	ClearRichClipboardBox(boxID)
+	ClearGlobalBacklinkSnapshots(boxID)
 
 	cachedDEKsLock.Lock()
 	if dek, ok := cachedDEKs[boxID]; ok {
@@ -1702,7 +1719,7 @@ func ClearDEK(boxID string) {
 //	Phase 1: 写入 migration manifest
 //	Phase 2: 切换全局 verifier
 //	Phase 3: 写入各 box conf + backup
-//	Phase 4: 清除 manifest
+//	Phase 4: 持久化全局备份和配置，清除 manifest
 //
 // 注意：必须在所有加密笔记本都已 Unmount 的状态下调用（DEK 不在内存），否则新旧 KEK 切换会让缓存与磁盘不一致。
 func ChangeMasterPassword(oldPassword, newPassword string) error {
@@ -1843,13 +1860,40 @@ func ChangeMasterPassword(oldPassword, newPassword string) error {
 		}
 	}
 
-	// Phase 4: 先持久化全局备份，再清除 manifest，确保崩溃后可恢复
-	if err = saveNotebookCryptoBackup(newKEK); err != nil {
+	// Phase 4: 持久化全局备份和配置，再清除 manifest，确保崩溃后可恢复。
+	if err = finishMasterPasswordMigration(newKEK); err != nil {
 		return fmt.Errorf("%w: %s", errMasterPasswordMigrationPending,
-			fmt.Sprintf(Conf.Language(320), "save notebook crypto backup failed: "+err.Error()))
+			fmt.Sprintf(Conf.Language(320), err.Error()))
+	}
+	IncSync()
+	return nil
+}
+
+// finishMasterPasswordMigration 在备份和配置均成功落盘后清除迁移清单，写入失败时保留恢复材料。
+func finishMasterPasswordMigration(kek []byte) error {
+	if util.ReadOnly {
+		return errors.New("cannot complete master password migration in read-only mode")
+	}
+	if err := saveNotebookCryptoBackup(kek); err != nil {
+		return err
+	}
+	err := func() error {
+		Conf.m.Lock()
+		defer Conf.m.Unlock()
+		data, err := Conf.marshalForSave()
+		if err != nil {
+			return err
+		}
+		if err = atomicWriteFile(filepath.Join(util.ConfDir, "conf.json"), data); err != nil {
+			return err
+		}
+		recordPersistedConf(data)
+		return nil
+	}()
+	if err != nil {
+		return fmt.Errorf("save notebook crypto configuration failed: %w", err)
 	}
 	removeMasterPasswordMigration()
-	IncSync()
 	return nil
 }
 
@@ -2211,7 +2255,7 @@ func ExtractBoxIDFromHistoryPath(absPath string) string {
 
 // EncryptFile 用 fileKey（DEK 派生子密钥）加密 .sy 文档字节，AAD 绑定 boxID + 稳定文件基名（不含父目录）。
 // relativePath 会先经 filesys.SyAAD 提取稳定文件基名（<rootID>.sy）并校验合法性，
-// 与 filesys.encryptData/decryptData 共用同一 AAD 构造入口，保证加解密一致。
+// 与文件系统读写共用同一 AAD 构造入口，保证加解密一致。
 func EncryptFile(boxID, relativePath string, dek, plaintext []byte) ([]byte, error) {
 	fileKey := util.DeriveSubKey(dek, "siyuan/file")
 	defer zeroAndClear(fileKey)

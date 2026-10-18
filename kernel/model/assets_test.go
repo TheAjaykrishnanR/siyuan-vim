@@ -105,7 +105,7 @@ func TestGenerateImageDoesNotRequireDocument(t *testing.T) {
 	}}
 	ai.ImageGeneration.ModelID = modelID
 	Conf = NewAppConf()
-	Conf.AI = ai
+	Conf.AI.Store(ai)
 
 	result, err := GenerateImage(context.Background(), GenerateImageRequest{Prompt: "draw", OutputFormat: "png"})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestImageGenerationProviderErrorsPreventAutomaticRetry(t *testing.T) {
 	}}
 	ai.ImageGeneration.ModelID = generationModelID
 	Conf = NewAppConf()
-	Conf.AI = ai
+	Conf.AI.Store(ai)
 
 	if _, err := GenerateImage(context.Background(), GenerateImageRequest{Prompt: "draw", OutputFormat: "png"}); !IsImageExecutionUnknown(err) {
 		t.Fatalf("image provider error should prevent automatic retry: %v", err)
@@ -156,7 +156,7 @@ func TestClearWorkspaceTempRemovesImageOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	clearWorkspaceTemp(false)
+	clearWorkspaceTemp("")
 	if _, err := os.Stat(operationDir); !os.IsNotExist(err) {
 		t.Fatalf("image operation directory was not removed: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestClearWorkspaceTempPreservesInstallPackages(t *testing.T) {
 	util.DataDir = filepath.Join(root, "data")
 	util.TempDir = filepath.Join(root, "temp")
 	util.WorkspaceDir = root
-	installPkgPath := filepath.Join(util.TempDir, "install", "siyuan-test-win.exe")
+	installPkgPath := filepath.Join(util.TempDir, "install", "siyuan-0.0.1-win.exe")
 	if err := os.MkdirAll(filepath.Dir(installPkgPath), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +183,11 @@ func TestClearWorkspaceTempPreservesInstallPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	clearWorkspaceTemp(true)
+	clearWorkspaceTemp(installPkgPath)
 	if _, err := os.Stat(installPkgPath); err != nil {
 		t.Fatalf("install package should be preserved during update: %v", err)
 	}
-	clearWorkspaceTemp(false)
+	clearWorkspaceTemp("")
 	if _, err := os.Stat(installPkgPath); !os.IsNotExist(err) {
 		t.Fatalf("old install package should be removed during normal exit: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestUnusedAssetsExcludesAgentSessionImages(t *testing.T) {
 	util.WorkspaceDir = workspaceDir
 	util.DataDir = filepath.Join(workspaceDir, "data")
 	Conf = NewAppConf()
-	Conf.FileTree = conf.NewFileTree()
+	Conf.FileTree.Store(conf.NewFileTree())
 	assetsDir := filepath.Join(util.DataDir, "assets")
 	if err := os.MkdirAll(assetsDir, 0755); err != nil {
 		t.Fatal(err)
@@ -276,7 +276,10 @@ func TestUnusedAssetsExcludesAgentSessionImages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items := UnusedAssets(false)
+	items, err := UnusedAssets(false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	unused := map[string]bool{}
 	for _, item := range items {
 		unused[item.Item] = true
@@ -657,7 +660,7 @@ func TestAllAssetAbsPathsWithAssetsInWorkspacePath(t *testing.T) {
 
 	util.DataDir = filepath.Join(t.TempDir(), "assets", "workspace", "data")
 	Conf = NewAppConf()
-	Conf.FileTree = conf.NewFileTree()
+	Conf.FileTree.Store(conf.NewFileTree())
 	globalAssetPath := filepath.Join(util.DataDir, "assets", "nested", "assets", "image.png")
 	if err := os.MkdirAll(filepath.Dir(globalAssetPath), 0755); err != nil {
 		t.Fatal(err)

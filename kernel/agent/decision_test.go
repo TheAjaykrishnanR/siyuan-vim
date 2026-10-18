@@ -1,0 +1,51 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/siyuan-note/siyuan/kernel/conf"
+	"github.com/siyuan-note/siyuan/kernel/mcp/tools"
+	kernelModel "github.com/siyuan-note/siyuan/kernel/model"
+)
+
+func TestDecisionCapabilityAvailabilityAndApproval(t *testing.T) {
+	original := kernelModel.Conf
+	kernelModel.Conf = kernelModel.NewAppConf()
+	kernelModel.Conf.AI.Store(conf.NewAI())
+	t.Cleanup(func() { kernelModel.Conf = original })
+	check := func(want bool) *capabilitySet {
+		t.Helper()
+		set, err := buildCapabilitySet(nil, capabilityAccessContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (set.registration("decision") != nil) != want {
+			t.Fatalf("decision exposure, want %v", want)
+		}
+		if strings.Contains(buildSystemPrompt("en", set), "## Decision model") != want {
+			t.Fatal("decision prompt did not follow capability exposure")
+		}
+		return set
+	}
+	check(false)
+	kernelModel.Conf.AI.Load().Decision.Enabled = true
+	check(false)
+	kernelModel.Conf.AI.Load().Decision.Profiles["typesafe"].APIKey = "key"
+	set := check(true)
+	registration := set.registration("decision")
+	if required, _ := capabilityConfirmRequirement(registration, "evaluate", nil, false, nil); !tools.DecisionTool.AgentOnly || !required {
+		t.Fatal("decision bypassed data egress/cost confirmation")
+	}
+	kernelModel.Conf.AI.Load().Decision.Enabled = false
+	if capabilityStillExecutable(registration, nil) {
+		t.Fatal("disabled decision remained executable")
+	}
+	check(false)
+	kernelModel.Conf.AI.Load().Decision.Enabled = true
+	kernelModel.Conf.AI.Load().Agent.CapabilityPolicy.Overrides["native/backend/decision"] = "deny"
+	check(false)
+	if capabilityStillExecutable(registration, nil) {
+		t.Fatal("denied decision remained executable")
+	}
+}

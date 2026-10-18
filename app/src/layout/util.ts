@@ -1,3 +1,4 @@
+import {resetUILayout, saveUILayout} from "../config/util/resourceConfig";
 import {Layout} from "./index";
 import {openStandaloneDatabaseItemByURI} from "../protyle/render/av/openStandaloneDatabaseItem";
 import {withFetchTimeout} from "../util/fetchTimeout";
@@ -14,20 +15,21 @@ import {getAllEditor, getAllModels, getAllTabs, getAllWnds} from "./getAll";
 import {Asset} from "../asset";
 import {Search} from "../search";
 import {Dock} from "./dock";
-import {focusByRange} from "../protyle/util/selection";
+import {focusByRange} from "../protyle/util/selectionOffsets";
 import {hideElements} from "../protyle/ui/hideElements";
-import {fetchPost} from "../util/fetch";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {Constants} from "../constants";
 import {saveScroll} from "../protyle/scroll/saveScroll";
 import {Backlink} from "./dock/Backlink";
 import {openFileById} from "../editor/util";
 import {isWindow} from "../util/functions";
+import {getSettingsWindowHost} from "../config/setting/windowContext";
 import {showMessage} from "../dialog/message";
 import {isEncryptedBox, parseUriInfo} from "../util/pathName";
 import {Custom} from "./dock/Custom";
 import {newCardModel} from "../card/newCardTab";
 import {newDatabaseRowModel} from "../editor/databaseRow";
+import {showDatabaseRowPreview} from "../protyle/render/av/openDatabaseRow";
 import type {App} from "../index";
 import {afterLayoutReady} from "../plugin/loader";
 import {newCenterEmptyTab, resizeTabs, setTabPosition} from "./tabUtil";
@@ -42,8 +44,10 @@ import {adjustDockPadding} from "./dock/util";
 import {setTitle} from "../util/processTitle";
 import {activateQueuedAVLocate, queueAVLocateRequest} from "../protyle/render/av/locate";
 import {applyDockEntryVisibility} from "../config/entryVisibility/runtime";
-import {panePercentages, resizePanePercentages} from "./resizePane";
+import {MIN_HORIZONTAL_PANE_SIZE, MIN_VERTICAL_PANE_SIZE, panePercentages, resizePanePercentages} from "./resizePane";
 import {requestResponsiveDockLayout} from "./dock/responsive";
+import {stickyRow} from "../protyle/render/av/row";
+import {flushSettingSaves, settingSaveFailures} from "../config/setting/pending";
 
 const isBuiltInCustomModel = (type: string) => {
     return type === "siyuan-card" || type === "siyuan-database-row";
@@ -51,7 +55,8 @@ const isBuiltInCustomModel = (type: string) => {
 
 export const isSensitiveTab = (tab: Tab) => {
     if (tab.model instanceof Editor) {
-        return isEncryptedBox(tab.model.editor.protyle.notebookId);
+        return isEncryptedBox(tab.model.editor.protyle.notebookId) ||
+            isEncryptedBox(tab.model.databaseRow?.notebookID);
     }
     if (tab.model instanceof Search) {
         return isSensitiveSearchConfig(tab.model.config);
@@ -68,8 +73,9 @@ export const isSensitiveTab = (tab: Tab) => {
 
 export const setPanelFocus = (element: Element, isSaveLayout = true) => {
     if (element.getAttribute("data-type") === "wnd") {
-        const title = element.querySelector('.layout-tab-bar .item--focus[data-type="tab-header"] .item__text')?.textContent || "";
-        setTitle(title, title ? false : true);
+        const tabHeader = element.querySelector('.layout-tab-bar .item--focus[data-type="tab-header"]');
+        const title = tabHeader?.querySelector(".item__text")?.textContent || "";
+        setTitle(title, !title, tabHeader?.querySelector(".item__icon"));
     }
     if (element.classList.contains("layout__tab--active") || element.classList.contains("layout__wnd--active")) {
         return;
@@ -147,23 +153,92 @@ const dockToJSON = (dock: Dock) => {
     };
 };
 
-export const resetLayout = () => {
-    if (window.siyuan.config.readonly) {
-        window.location.reload();
-    } else {
-        fetchPost("/api/system/setUILayout", {layout: {}}, () => {
-            window.siyuan.storage[Constants.LOCAL_FILEPOSITION] = {};
-            setStorageVal(Constants.LOCAL_FILEPOSITION, window.siyuan.storage[Constants.LOCAL_FILEPOSITION]);
-            window.siyuan.storage[Constants.LOCAL_DIALOGPOSITION] = {};
-            setStorageVal(Constants.LOCAL_DIALOGPOSITION, window.siyuan.storage[Constants.LOCAL_DIALOGPOSITION]);
+let reloadingUI = false;
+
+// 重载由持有布局的窗口执行，子窗口不能将自己的重载回调传给宿主。
+export const reloadUI = async () => {
+    const host = getSettingsWindowHost();
+    if (reloadingUI) return;
+    reloadingUI = true;
+    let reloaded = false;
+    try {
+        const failures = settingSaveFailures();
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        await flushSettingSaves(failures);
+        if (host) {
+            await host.reload();
+            return;
+        }
+        await exportLayout({errorExit: false, cb: () => {
+            reloaded = true;
             window.location.reload();
-        });
+        }});
+    } catch (error) {
+        console.error("Could not reload the interface", error);
+        showMessage(window.siyuan.languages.settingsPendingSaveError, 6000, "error");
+    } finally {
+        if (!reloaded) reloadingUI = false;
+    }
+};
+
+export const resetLayout = async () => {
+    const host = getSettingsWindowHost();
+    if (reloadingUI) return;
+    if (!host && window.siyuan.config.readonly) {
+        window.location.reload();
+        return;
+    }
+    reloadingUI = true;
+    let resume: () => void;
+    try {
+        const failures = settingSaveFailures();
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        await flushSettingSaves(failures);
+        if (host) {
+            try {
+                await host.resetLayout();
+            } finally {
+                reloadingUI = false;
+            }
+            return;
+        }
+        resume = await suspendLayoutSaving();
+        const response = await resetUILayout();
+        if (response.code !== 0) throw new Error(response.msg);
+        window.siyuan.storage[Constants.LOCAL_FILEPOSITION] = {};
+        window.siyuan.storage[Constants.LOCAL_DIALOGPOSITION] = {};
+        await Promise.all([
+            setStorageVal(Constants.LOCAL_FILEPOSITION, {}),
+            setStorageVal(Constants.LOCAL_DIALOGPOSITION, {}),
+        ]);
+        await flushSettingSaves(failures);
+        window.location.reload();
+    } catch (error) {
+        resume?.();
+        reloadingUI = false;
+        console.error("Could not reset the layout", error);
+        showMessage(window.siyuan.languages.settingsPendingSaveError, 6000, "error");
     }
 };
 
 let saveCount = 0;
+let saveRetryTimeout = 0;
+let layoutSavingSuspended = false;
+const layoutSaveRequests = new Set<Promise<void>>();
+
+// 切换布局前停止自动保存并等待在途请求，成功后保持暂停直到页面刷新，失败时由调用方恢复。
+export const suspendLayoutSaving = async () => {
+    layoutSavingSuspended = true;
+    window.clearTimeout(saveRetryTimeout);
+    saveCount = 0;
+    await Promise.allSettled(layoutSaveRequests);
+    return () => {
+        layoutSavingSuspended = false;
+    };
+};
+
 export const saveLayout = () => {
-    if (!window.siyuan.layout?.layout) {
+    if (layoutSavingSuspended || !window.siyuan.layout?.layout) {
         return;
     }
     const breakObj = {};
@@ -189,20 +264,19 @@ export const saveLayout = () => {
     }
     if (Object.keys(breakObj).length > 0 && saveCount < 10) {
         saveCount++;
-        setTimeout(() => {
+        saveRetryTimeout = window.setTimeout(() => {
             saveLayout();
         }, Constants.TIMEOUT_LOAD * saveCount);
     } else {
         saveCount = 0;
         if (isWindow()) {
             sessionStorage.setItem("layout", JSON.stringify(layoutJSON));
+            window.dispatchEvent(new Event("siyuan-window-layout"));
         } else {
             if (!window.siyuan.config.readonly) {
-                const request = {
-                    layout: layoutJSON,
-                    errorExit: false    // 后台不接受该参数，用于请求发生错误时退出程序
-                };
-                fetchPost("/api/system/setUILayout", request);
+                const saving = saveUILayout(layoutJSON, false);
+                layoutSaveRequests.add(saving);
+                void saving.then(() => layoutSaveRequests.delete(saving), () => layoutSaveRequests.delete(saving));
             }
         }
     }
@@ -212,6 +286,11 @@ export const exportLayout = async (options: {
     cb: () => void,
     errorExit: boolean
 }) => {
+    const host = getSettingsWindowHost();
+    if (host) {
+        await host.exportLayout(options);
+        return;
+    }
     const editors = getAllEditor();
     await withFetchTimeout(async (signal) => {
         for (let i = 0; i < editors.length; i++) {
@@ -227,12 +306,17 @@ export const exportLayout = async (options: {
         // 关闭时滚动位置保存超时，继续保存布局并执行退出流程。
         console.warn("Save scroll timed out before closing");
     });
+    if (layoutSavingSuspended) {
+        options.cb();
+        return;
+    }
     if (isWindow()) {
         const layoutJSON: any = {
             layout: {},
         };
         layoutToJSON(window.siyuan.layout.layout, layoutJSON.layout);
         sessionStorage.setItem("layout", JSON.stringify(layoutJSON));
+        window.dispatchEvent(new Event("siyuan-window-layout"));
         options.cb();
         return;
     }
@@ -252,12 +336,8 @@ export const exportLayout = async (options: {
     if (window.siyuan.config.readonly) {
         options.cb();
     } else {
-        const request = {
-            layout: layoutJSON,
-            errorExit: options.errorExit    // 后台不接受该参数，用于请求发生错误时退出程序
-        };
-        fetchPost("/api/system/setUILayout", request, () => {
-            options.cb();
+        await saveUILayout(layoutJSON, options.errorExit, (response) => {
+            if (response.code === 0) options.cb();
         });
     }
 };
@@ -328,16 +408,17 @@ const ensureAgentChatDock = (layout: Pick<Config.IUiLayout, "left" | "right" | "
 };
 
 const initInternalDock = (dockItem: Config.IUILayoutDockTab[]) => {
-    dockItem.forEach((existSubItem, index) => {
+    for (let index = dockItem.length - 1; index >= 0; index--) {
+        const existSubItem = dockItem[index];
         if ((window.siyuan.isPublish && (existSubItem.type === "inbox" || existSubItem.type === "agentChat")) ||
             (isDisabledFeature("ai") && existSubItem.type === "agentChat")) {
             dockItem.splice(index, 1);
-            return;
+            continue;
         }
         if (existSubItem.hotkeyLangId) {
             existSubItem.title = window.siyuan.languages[existSubItem.hotkeyLangId];
         }
-    });
+    }
 };
 
 const JSONToDock = (json: any, app: App) => {
@@ -657,10 +738,6 @@ export const JSONToLayout = (app: App, isStart: boolean) => {
         window.siyuan.layout.bottomDock.layout.children[1].element.classList.contains("fn__none")) {
         window.siyuan.layout.bottomDock.layout.element.style.height = "0px";
     }
-    // 等待 dock 面板动画结束
-    setTimeout(() => {
-        setTabPosition();
-    }, Constants.TIMEOUT_TRANSITION);
 };
 
 export const layoutToJSON = (layout: Layout | Wnd | Tab | Model, json: any, breakObj?: IObject) => {
@@ -734,7 +811,15 @@ export const layoutToJSON = (layout: Layout | Wnd | Tab | Model, json: any, brea
         json.mode = layout.editor.protyle.preview.element.classList.contains("fn__none") ? "wysiwyg" : "preview";
         json.action = (layout.editor.protyle.block.showAll && layout.editor.protyle.block.id !== layout.editor.protyle.block.rootID) ? Constants.CB_GET_ALL : Constants.CB_GET_SCROLL;
         json.databaseRowId = layout.editor.protyle.element.dataset.databaseRowId;
+        json.databaseRow = layout.databaseRow;
         json.instance = "Editor";
+        if (isWindow()) {
+            const scrollAttr = saveScroll(layout.editor.protyle, true);
+            if (scrollAttr && "rootId" in scrollAttr) {
+                json.scrollAttr = scrollAttr;
+                json.action = Constants.CB_GET_SCROLL;
+            }
+        }
     } else if (layout instanceof Asset) {
         json.path = layout.path;
         if (layout.pdfObject) {
@@ -940,9 +1025,12 @@ export const newModelByInitData = (app: App, tab: Tab, json: any) => {
             notebookId: json.notebookId,
             mode: json.mode,
             scrollPosition: json.scrollPosition,
+            scrollAttr: json.scrollAttr,
             action,
             afterInitProtyle(editor) {
-                if (json.databaseRowId) {
+                if (json.databaseRow?.navigation) {
+                    showDatabaseRowPreview(editorModel, json.databaseRow, editor.protyle);
+                } else if (json.databaseRowId) {
                     editor.protyle.databaseAttributePanel?.expand();
                     editor.protyle.contentElement.scrollTop = 0;
                 }
@@ -951,6 +1039,7 @@ export const newModelByInitData = (app: App, tab: Tab, json: any) => {
         if (json.databaseRowId) {
             editorModel.editor.protyle.element.dataset.databaseRowId = json.databaseRowId;
         }
+        editorModel.databaseRow = json.databaseRow;
         model = editorModel;
     }
     return model;
@@ -1044,6 +1133,8 @@ export const addResize = (obj: Layout | Wnd, after = true) => {
             documentSelf.body.classList.add("fn__pointer-none");
             const nextElement = resizeElement.nextElementSibling as HTMLElement;
             const previousElement = resizeElement.previousElementSibling as HTMLElement;
+            const resizingProtyles = getAllEditor().map(editor => editor?.protyle).filter(protyle =>
+                protyle && (previousElement.contains(protyle.element) || nextElement.contains(protyle.element)));
             const isCenterResize = !!resizeElement.parentElement.closest(".layout__center");
             const responsiveDock = !isCenterResize && direction === "lr" ?
                 [window.siyuan.layout?.leftDock, window.siyuan.layout?.rightDock].find((dock) =>
@@ -1085,7 +1176,7 @@ export const addResize = (obj: Layout | Wnd, after = true) => {
                 const delta = currentCoordinate - x;
                 const previousNowSize = previousSize + delta;
                 const nextNowSize = nextSize - delta;
-                if (previousNowSize < 8 || nextNowSize < 8) {
+                if (!isCenterResize && (previousNowSize < 8 || nextNowSize < 8)) {
                     return;
                 }
                 if (window.siyuan.layout.leftDock && window.siyuan.layout.leftDock.layout.element === previousElement &&
@@ -1116,6 +1207,7 @@ export const addResize = (obj: Layout | Wnd, after = true) => {
                         previousIndex,
                         nextIndex,
                         delta,
+                        direction === "tb" ? MIN_VERTICAL_PANE_SIZE : MIN_HORIZONTAL_PANE_SIZE,
                     );
                     if (percentages) {
                         setPanePercentages(paneElements, percentages);
@@ -1130,6 +1222,16 @@ export const addResize = (obj: Layout | Wnd, after = true) => {
                 }
             };
 
+            const updateFixedRows = () => {
+                // 分屏拖动不一定改变文档内容尺寸，需在绘制前同步数据库固定栏的坐标和裁剪。
+                resizingProtyles.forEach(protyle => {
+                    hideElements(["gutterOnly"], protyle);
+                    protyle.wysiwyg.element.querySelectorAll<HTMLElement>(".av").forEach(item => {
+                        stickyRow(item, protyle.contentElement, "all");
+                    });
+                });
+            };
+
             documentSelf.onmousemove = (moveEvent: MouseEvent) => {
                 moveEvent.preventDefault();
                 moveEvent.stopPropagation();
@@ -1139,6 +1241,7 @@ export const addResize = (obj: Layout | Wnd, after = true) => {
                         resizeFrame = 0;
                         if (pendingCoordinate !== undefined) {
                             applyResize(pendingCoordinate);
+                            updateFixedRows();
                         }
                         pendingCoordinate = undefined;
                     });
@@ -1152,6 +1255,7 @@ export const addResize = (obj: Layout | Wnd, after = true) => {
                 }
                 if (pendingCoordinate !== undefined) {
                     applyResize(pendingCoordinate);
+                    updateFixedRows();
                 }
                 documentSelf.body.classList.remove("fn__pointer-none");
                 documentSelf.onmousemove = null;
@@ -1250,7 +1354,11 @@ export const addResize = (obj: Layout | Wnd, after = true) => {
     });
 };
 
-export const adjustLayout = (layout: Layout = window.siyuan.layout.centerLayout.parent) => {
+export const adjustLayout = (layout: Layout = window.siyuan.layout.centerLayout?.parent) => {
+    // 启动期间的窗口尺寸变化可能早于中央布局初始化。
+    if (!layout) {
+        return;
+    }
     const sizeProperty = layout.direction === "lr" ? "width" : "height";
     if (layout.element.closest(".layout__center") &&
         layout.children.some((item) => item.element.style[sizeProperty].endsWith("px"))) {

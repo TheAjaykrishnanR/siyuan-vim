@@ -1,8 +1,8 @@
 import {addScript} from "../util/addScript";
+import {isFoldedRenderContent} from "./foldedContent";
 import {Constants} from "../../constants";
 import {genIconHTML} from "./util";
 import {hasClosestByClassName} from "../util/hasClosest";
-import {getHostCapabilities} from "../../util/hostCapabilities";
 
 export const plantumlRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
     let plantumlElements: Element[] | NodeListOf<Element> = [];
@@ -11,6 +11,7 @@ export const plantumlRender = (element: Element, cdn = Constants.PROTYLE_CDN) =>
     } else {
         plantumlElements = element.querySelectorAll('[data-subtype="plantuml"]:not([data-render="true"])');
     }
+    plantumlElements = Array.from(plantumlElements).filter(item => !isFoldedRenderContent(item));
     if (plantumlElements.length === 0) {
         return;
     }
@@ -30,19 +31,9 @@ export const plantumlRender = (element: Element, cdn = Constants.PROTYLE_CDN) =>
                 const url = `${window.siyuan.config.editor.plantUMLServePath}${window.plantumlEncoder.encode(Lute.UnEscapeHTMLStr(e.getAttribute("data-content")))}`;
                 const imageElement = document.createElement("img");
                 imageElement.src = url;
-                if (getHostCapabilities().remoteKernel) {
-                    renderElement.replaceChildren(imageElement);
-                    renderElement.classList.remove("ft__error");
-                    return;
-                }
-                const objectElement = document.createElement("object");
-                objectElement.type = "image/svg+xml";
-                objectElement.data = url;
-                renderElement.replaceChildren(objectElement);
+                // 图片的双击事件由编辑器统一处理，跨域 SVG 不创建独立文档。
+                renderElement.replaceChildren(imageElement);
                 renderElement.classList.remove("ft__error");
-                objectElement.addEventListener("error", () => {
-                    renderElement.replaceChildren(imageElement);
-                });
             } catch (error) {
                 renderElement.classList.add("ft__error");
                 renderElement.textContent = `plantuml render error: ${error}`;

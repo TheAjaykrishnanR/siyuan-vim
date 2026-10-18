@@ -33,6 +33,11 @@ import (
 
 func InitAppearance() {
 	util.SetBootDetails(Conf.Language(302))
+	if err := MigrateAppearancePackages(); err != nil {
+		logging.LogErrorf("migrate appearance packages failed: %s", err)
+		util.ReportFileSysFatalError(err)
+		return
+	}
 	if err := os.Mkdir(util.AppearancePath, 0755); err != nil && !os.IsExist(err) {
 		logging.LogErrorf("create appearance folder [%s] failed: %s", util.AppearancePath, err)
 		util.ReportFileSysFatalError(err)
@@ -46,80 +51,108 @@ func InitAppearance() {
 		return
 	}
 
+	if err := util.CleanupLegacyFonts(util.AppearancePath); err != nil {
+		logging.LogWarnf("clean up legacy fonts failed: %s", err)
+	}
+
+	refreshAppearanceConfig()
+	util.InitEmojiChars()
+}
+
+// refreshAppearanceConfig 按完整可用的包刷新本机外观选择，缺失或不兼容时使用内置资源。
+func refreshAppearanceConfig() {
 	LoadThemes()
 	LoadIcons()
 
+	var reloadThemes, reloadIcons bool
 	Conf.m.Lock()
-	if !containTheme(Conf.Appearance.ThemeDark, Conf.Appearance.DarkThemes) {
-		Conf.Appearance.ThemeDark = "midnight"
-		Conf.Appearance.ThemeJS = false
-	}
-	if !containTheme(Conf.Appearance.ThemeLight, Conf.Appearance.LightThemes) {
-		Conf.Appearance.ThemeLight = "daylight"
-		Conf.Appearance.ThemeJS = false
-	}
-	if !containIcon(Conf.Appearance.Icon, Conf.Appearance.Icons) {
-		Conf.Appearance.Icon = "litheness"
-	}
+	replaceConfSectionLocked(&Conf.Appearance, func(appearance *conf.Appearance) bool {
+		if !containTheme(appearance.ThemeDark, appearance.DarkThemes) {
+			appearance.ThemeDark = "midnight"
+			reloadThemes = true
+		}
+		if !containTheme(appearance.ThemeLight, appearance.LightThemes) {
+			appearance.ThemeLight = "daylight"
+			reloadThemes = true
+		}
+		if !containIcon(appearance.Icon, appearance.Icons) {
+			appearance.Icon = "litheness"
+			reloadIcons = true
+		}
+		return reloadThemes || reloadIcons
+	})
 	Conf.m.Unlock()
-
+	if reloadThemes {
+		LoadThemes()
+	}
+	if reloadIcons {
+		LoadIcons()
+	}
 	Conf.Save()
-
-	util.InitEmojiChars()
 }
 
 func SetIcon(icon string) error {
 	Conf.m.Lock()
 	defer Conf.m.Unlock()
 
-	if !containIcon(icon, Conf.Appearance.Icons) {
+	if !containIcon(icon, Conf.Appearance.Load().Icons) {
 		return fmt.Errorf("icon [%s] not exists or not available", icon)
 	}
-	Conf.Appearance.Icon = icon
+	replaceConfSectionLocked(&Conf.Appearance, func(appearance *conf.Appearance) bool {
+		appearance.Icon = icon
+		return true
+	})
 	return nil
 }
 
-func SetTheme(theme string, modes []int, appearanceMode string) error {
+// SetTheme 校验全部参数后一次性替换外观配置段，任一参数无效时保持原配置不变。
+func SetTheme(theme string, modes []int, appearanceMode string) (err error) {
 	Conf.m.Lock()
 	defer Conf.m.Unlock()
 
-	if theme != "" {
-		for _, mode := range modes {
-			switch mode {
-			case 0:
-				if !containTheme(theme, Conf.Appearance.LightThemes) {
-					return fmt.Errorf("theme [%s] not exists or not available for light mode", theme)
+	replaceConfSectionLocked(&Conf.Appearance, func(appearance *conf.Appearance) bool {
+		if theme != "" {
+			for _, mode := range modes {
+				switch mode {
+				case 0:
+					if !containTheme(theme, appearance.LightThemes) {
+						err = fmt.Errorf("theme [%s] not exists or not available for light mode", theme)
+						return false
+					}
+					appearance.ThemeLight = theme
+				case 1:
+					if !containTheme(theme, appearance.DarkThemes) {
+						err = fmt.Errorf("theme [%s] not exists or not available for dark mode", theme)
+						return false
+					}
+					appearance.ThemeDark = theme
 				}
-				Conf.Appearance.ThemeLight = theme
-			case 1:
-				if !containTheme(theme, Conf.Appearance.DarkThemes) {
-					return fmt.Errorf("theme [%s] not exists or not available for dark mode", theme)
-				}
-				Conf.Appearance.ThemeDark = theme
 			}
 		}
-	}
 
-	if appearanceMode != "" {
-		switch appearanceMode {
-		case "light":
-			Conf.Appearance.ModeOS = false
-			Conf.Appearance.Mode = 0
-		case "dark":
-			Conf.Appearance.ModeOS = false
-			Conf.Appearance.Mode = 1
-		case "system":
-			Conf.Appearance.ModeOS = true
-		default:
-			return fmt.Errorf("invalid appearance mode: %s", appearanceMode)
+		if appearanceMode != "" {
+			switch appearanceMode {
+			case "light":
+				appearance.ModeOS = false
+				appearance.Mode = 0
+			case "dark":
+				appearance.ModeOS = false
+				appearance.Mode = 1
+			case "system":
+				appearance.ModeOS = true
+			default:
+				err = fmt.Errorf("invalid appearance mode: %s", appearanceMode)
+				return false
+			}
 		}
-	}
-	return nil
+		return true
+	})
+	return
 }
 
 func containTheme(name string, themes []*conf.AppearanceTheme) bool {
 	for _, t := range themes {
-		if t.Name == name {
+		if t != nil && t.Name == name {
 			return true
 		}
 	}
@@ -128,15 +161,41 @@ func containTheme(name string, themes []*conf.AppearanceTheme) bool {
 
 func containIcon(name string, icons []*conf.AppearanceIcon) bool {
 	for _, i := range icons {
-		if i.Name == name {
+		if i != nil && i.Name == name {
 			return true
 		}
 	}
 	return false
 }
 
+// appearancePackageNames 保留内置包，并从数据目录读取第三方包，避免同名包覆盖内置资源。
+func appearancePackageNames(kind string) ([]string, error) {
+	root, names := util.ThemesPath, []string{"daylight", "midnight"}
+	if kind == "icons" {
+		root, names = util.IconsPath, []string{"litheness"}
+	}
+	dirs, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return names, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range dirs {
+		name := dir.Name()
+		if !util.IsDirRegularOrSymlink(dir) || !bazaar.IsValidPackageName(name) ||
+			(kind == "themes" && isBuiltInTheme(name)) || (kind == "icons" && isBuiltInIcon(name)) {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
 func LoadThemes() {
-	themeDirs, err := os.ReadDir(util.ThemesPath)
+	confAppearanceSnapshot := Conf.LoadAppearance()
+
+	themeNames, err := appearancePackageNames("themes")
 	if err != nil {
 		logging.LogErrorf("read appearance themes folder failed: %s", err)
 		util.ReportFileSysFatalError(err)
@@ -147,16 +206,14 @@ func LoadThemes() {
 	var daylightTheme, midnightTheme *conf.AppearanceTheme
 	var themeVer string
 	var themeJS bool
-	mode := Conf.Appearance.Mode
-	themeLight := Conf.Appearance.ThemeLight
-	themeDark := Conf.Appearance.ThemeDark
-	for _, themeDir := range themeDirs {
-		if !util.IsDirRegularOrSymlink(themeDir) {
-			continue
-		}
-		name := themeDir.Name()
-		themeConf, parseErr := bazaar.ParsePackageJSON(filepath.Join(util.ThemesPath, name, "theme.json"))
-		if nil != parseErr || !bazaar.IsValidInstalledPackage(themeConf, name) {
+	mode := confAppearanceSnapshot.Mode
+	themeLight := confAppearanceSnapshot.ThemeLight
+	themeDark := confAppearanceSnapshot.ThemeDark
+	for _, name := range themeNames {
+		themePath := util.AppearancePackagePath("themes", name)
+		themeConf, parseErr := bazaar.ParsePackageJSON(filepath.Join(themePath, "theme.json"))
+		if nil != parseErr || !bazaar.IsValidInstalledPackage(themeConf, name) ||
+			bazaar.IsBelowRequiredAppVersion(themeConf) || !gulu.File.IsExist(filepath.Join(themePath, "theme.css")) {
 			continue
 		}
 
@@ -199,29 +256,36 @@ func LoadThemes() {
 		if 0 == mode {
 			if themeLight == name {
 				themeVer = themeConf.Version
-				themeJS = gulu.File.IsExist(filepath.Join(util.ThemesPath, name, "theme.js"))
+				themeJS = gulu.File.IsExist(filepath.Join(themePath, "theme.js"))
 			}
 		} else {
 			if themeDark == name {
 				themeVer = themeConf.Version
-				themeJS = gulu.File.IsExist(filepath.Join(util.ThemesPath, name, "theme.js"))
+				themeJS = gulu.File.IsExist(filepath.Join(themePath, "theme.js"))
 			}
 		}
 	}
 
-	lightThemes = append([]*conf.AppearanceTheme{daylightTheme}, lightThemes...)
-	darkThemes = append([]*conf.AppearanceTheme{midnightTheme}, darkThemes...)
+	if daylightTheme != nil {
+		lightThemes = append([]*conf.AppearanceTheme{daylightTheme}, lightThemes...)
+	}
+	if midnightTheme != nil {
+		darkThemes = append([]*conf.AppearanceTheme{midnightTheme}, darkThemes...)
+	}
 
 	Conf.m.Lock()
-	Conf.Appearance.DarkThemes = darkThemes
-	Conf.Appearance.LightThemes = lightThemes
-	Conf.Appearance.ThemeVer = themeVer
-	Conf.Appearance.ThemeJS = themeJS
+	replaceConfSectionLocked(&Conf.Appearance, func(appearance *conf.Appearance) bool {
+		appearance.DarkThemes = darkThemes
+		appearance.LightThemes = lightThemes
+		appearance.ThemeVer = themeVer
+		appearance.ThemeJS = themeJS
+		return true
+	})
 	Conf.m.Unlock()
 }
 
 func LoadIcons() {
-	iconDirs, err := os.ReadDir(util.IconsPath)
+	iconNames, err := appearancePackageNames("icons")
 	if err != nil {
 		logging.LogErrorf("read appearance icons folder failed: %s", err)
 		util.ReportFileSysFatalError(err)
@@ -230,14 +294,12 @@ func LoadIcons() {
 
 	var icons []*conf.AppearanceIcon
 	var iconVer string
-	currentIcon := Conf.Appearance.Icon
-	for _, iconDir := range iconDirs {
-		if !util.IsDirRegularOrSymlink(iconDir) {
-			continue
-		}
-		name := iconDir.Name()
-		iconConf, err := bazaar.ParsePackageJSON(filepath.Join(util.IconsPath, name, "icon.json"))
-		if err != nil || !bazaar.IsValidInstalledPackage(iconConf, name) {
+	currentIcon := Conf.Appearance.Load().Icon
+	for _, name := range iconNames {
+		iconPath := util.AppearancePackagePath("icons", name)
+		iconConf, err := bazaar.ParsePackageJSON(filepath.Join(iconPath, "icon.json"))
+		if err != nil || !bazaar.IsValidInstalledPackage(iconConf, name) ||
+			bazaar.IsBelowRequiredAppVersion(iconConf) || !gulu.File.IsExist(filepath.Join(iconPath, "icon.js")) {
 			continue
 		}
 		t := &conf.AppearanceIcon{Name: name}
@@ -261,19 +323,24 @@ func LoadIcons() {
 		}
 	}
 	Conf.m.Lock()
-	Conf.Appearance.Icons = icons
-	Conf.Appearance.IconVer = iconVer
+	replaceConfSectionLocked(&Conf.Appearance, func(appearance *conf.Appearance) bool {
+		appearance.Icons = icons
+		appearance.IconVer = iconVer
+		return true
+	})
 	Conf.m.Unlock()
 }
 
 func isCurrentUseTheme(themePath string) string {
+	confAppearanceSnapshot := Conf.LoadAppearance()
+
 	themeName := filepath.Base(filepath.Dir(themePath))
-	if 0 == Conf.Appearance.Mode { // 明亮
-		if Conf.Appearance.ThemeLight == themeName {
+	if 0 == confAppearanceSnapshot.Mode { // 明亮
+		if confAppearanceSnapshot.ThemeLight == themeName {
 			return themeName
 		}
-	} else if 1 == Conf.Appearance.Mode { // 暗黑
-		if Conf.Appearance.ThemeDark == themeName {
+	} else if 1 == confAppearanceSnapshot.Mode { // 暗黑
+		if confAppearanceSnapshot.ThemeDark == themeName {
 			return themeName
 		}
 	}
@@ -281,29 +348,31 @@ func isCurrentUseTheme(themePath string) string {
 }
 
 func currentThemeDir() string {
+	confAppearanceReadSnapshot := Conf.LoadAppearance()
+
 	if nil == Conf {
 		return ""
 	}
 
 	Conf.m.RLock()
 	defer Conf.m.RUnlock()
-	if nil == Conf.Appearance {
+	if nil == confAppearanceReadSnapshot {
 		return ""
 	}
 
 	var themeName string
-	switch Conf.Appearance.Mode {
+	switch confAppearanceReadSnapshot.Mode {
 	case 0:
-		themeName = Conf.Appearance.ThemeLight
+		themeName = confAppearanceReadSnapshot.ThemeLight
 	case 1:
-		themeName = Conf.Appearance.ThemeDark
+		themeName = confAppearanceReadSnapshot.ThemeDark
 	default:
 		return ""
 	}
 	if "" == themeName || "." == themeName || ".." == themeName || filepath.Base(themeName) != themeName {
 		return ""
 	}
-	return filepath.Clean(filepath.Join(util.ThemesPath, themeName))
+	return util.AppearancePackagePath("themes", themeName)
 }
 
 func broadcastRefreshThemeIfCurrent(themeCssPath string) {
@@ -312,8 +381,7 @@ func broadcastRefreshThemeIfCurrent(themeCssPath string) {
 	}
 	// 只处理主题根目录中的 theme.css
 	themeDir := filepath.Clean(filepath.Dir(themeCssPath))
-	themesRoot := filepath.Clean(util.ThemesPath)
-	if themeDir != filepath.Join(themesRoot, filepath.Base(themeDir)) {
+	if themeDir != util.AppearancePackagePath("themes", filepath.Base(themeDir)) {
 		return
 	}
 	themeName := isCurrentUseTheme(themeCssPath)

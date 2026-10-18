@@ -2,6 +2,22 @@ package apicontract
 
 import "encoding/json"
 
+// TransactionListConversion 转换完整列表或选中的列表项，保留首块 ID 和数据库条目身份。
+// 必须作为单笔、单操作事务提交；数据库绑定无法唯一迁移时整批拒绝，不改动文档或数据库。
+// type 为 heading、paragraph 或 remove，heading 的 level 为 1 至 6；recursively 仅展开同类型子列表。
+// blockIDs 为选中块，撤销快照由内核生成；兼容已有 .sy、数据库和加密笔记本格式。
+type TransactionListConversion struct {
+	Type        string `json:"type" api:"enum=heading|paragraph|remove"`
+	Level       int    `json:"level"`
+	Recursively bool   `json:"recursively"`
+}
+
+type TransactionListConversionResult struct {
+	RootIDs    []string `json:"rootIDs"`
+	RemovedIDs []string `json:"removedIDs"`
+	FocusID    string   `json:"focusID"`
+}
+
 type TransactionBlockSwap struct {
 	IncludeChildren bool `json:"includeChildren"`
 	OriginalToEmbed bool `json:"originalToEmbed"`
@@ -40,11 +56,13 @@ func (value TransactionOperationData) MarshalJSON() ([]byte, error) {
 }
 
 type TransactionOperationFields struct {
-	Action            string                   `json:"action" api:"optional,nullable"`
-	ID                string                   `json:"id" api:"optional,nullable"`
-	RootID            string                   `json:"rootID" api:"optional,nullable"`
-	ParentID          string                   `json:"parentID" api:"optional,nullable"`
-	PreviousID        string                   `json:"previousID" api:"optional,nullable"`
+	Action     string `json:"action" api:"optional,nullable"`
+	ID         string `json:"id" api:"optional,nullable"`
+	RootID     string `json:"rootID" api:"optional,nullable"`
+	ParentID   string `json:"parentID" api:"optional,nullable"`
+	PreviousID string `json:"previousID" api:"optional,nullable"`
+	// NextID 用于 insert、move 的前置同级锚点，优先于 previousID 和 parentID。
+	// move 保留源块及折叠标题下辖块的顺序，不将整列表自动解包为列表项。
 	NextID            string                   `json:"nextID" api:"optional,nullable"`
 	BlockIDs          []string                 `json:"blockIDs" api:"optional,nullable"`
 	BlockID           string                   `json:"blockID" api:"optional,nullable"`
@@ -54,7 +72,7 @@ type TransactionOperationFields struct {
 	Srcs              []*TransactionSource     `json:"srcs" api:"optional,nullable"`
 	IsDetached        bool                     `json:"isDetached" api:"optional,nullable"`
 	Name              string                   `json:"name" api:"optional,nullable"`
-	Typ               string                   `json:"type" api:"optional,nullable,enum=|block|text|number|date|select|mSelect|url|email|phone|mAsset|template|created|updated|checkbox|relation|rollup|lineNumber"`
+	Typ               string                   `json:"type" api:"optional,nullable,enum=|block|text|number|date|select|mSelect|url|email|phone|location|mAsset|template|created|updated|checkbox|relation|rollup|lineNumber"`
 	Format            string                   `json:"format" api:"optional,nullable"`
 	KeyID             string                   `json:"keyID" api:"optional,nullable"`
 	RowID             string                   `json:"rowID" api:"optional,nullable"`

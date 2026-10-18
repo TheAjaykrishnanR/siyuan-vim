@@ -16,8 +16,8 @@ import (
 func TestBacklinkRefFilterListContextAndCandidates(t *testing.T) {
 	fixture := setupStructureTransactionTest(t)
 	setupFoldTransactionDatabase(t, fixture)
-	Conf.Search = conf.NewSearch()
-	Conf.Search.BacklinkMentionDoc = true
+	Conf.Search.Store(conf.NewSearch())
+	Conf.Search.Load().BacklinkMentionDoc = true
 	const archiveID = "20260909160000-archive"
 	const sameNameID = "20260909160001-sameref"
 	const itemID = "20260909160002-listitm"
@@ -70,11 +70,11 @@ func TestBacklinkRefFilterListContextAndCandidates(t *testing.T) {
 	}
 	sql.FlushQueue()
 	filter := &BacklinkSourceFilter{ExcludedRefDefIDs: []string{archiveID}}
-	_, all, mentions, allCount, mentionCount := GetBacklink2InBoxWithOptions(fixture.sourceID, "", "", 0, 0, false, "", nil, true)
+	_, all, mentions, allCount, mentionCount := GetBacklink2InBoxWithOptions(fixture.sourceID, "", "", 0, 0, false, "", nil, true, true)
 	if len(all) != 1 || allCount != 2 {
 		t.Fatalf("expected two entries in one source document: %d, %d", len(all), allCount)
 	}
-	_, filtered, filteredMentions, count, filteredMentionCount := GetBacklink2InBoxWithOptions(fixture.sourceID, "", "", 0, 0, false, "", filter, true)
+	_, filtered, filteredMentions, count, filteredMentionCount := GetBacklink2InBoxWithOptions(fixture.sourceID, "", "", 0, 0, false, "", filter, true, true)
 	if len(filtered) != 1 || count != 1 || filtered[0].Count != 1 {
 		t.Fatalf("unexpected filtered list/count: %+v, %d", filtered, count)
 	}

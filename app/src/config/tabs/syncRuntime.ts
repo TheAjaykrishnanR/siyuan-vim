@@ -1,5 +1,8 @@
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
+import {config as configApi} from "../util/configApi";
+import {fetchSyncPost} from "../../util/fetch";
 import {processSync} from "../../dialog/processSystem";
+import {progressLoading} from "../../dialog/progress";
+import {confirmDialog} from "../../dialog/confirmDialog";
 import {updateAccountPanelVisibility} from "./accountUi";
 import {hideMessage, showMessage} from "../../dialog/message";
 import {
@@ -12,6 +15,53 @@ import {
 export let syncTabElement: HTMLElement | undefined;
 
 let syncAssetDownloadModePending = false;
+let pendingSyncProvider: Config.ISync["provider"] | undefined;
+
+/** 同步提供商控件显示已确认值或正在提交的值，请求期间禁止重复切换 */
+export const mountSyncProvider = (root: ParentNode) => {
+    root.querySelectorAll<HTMLSelectElement>('[id="sync.provider"]').forEach((element) => {
+        element.disabled = pendingSyncProvider !== undefined || window.siyuan.config.readonly;
+        element.setAttribute("aria-busy", String(pendingSyncProvider !== undefined));
+        element.value = String(pendingSyncProvider ?? window.siyuan.config.sync.provider);
+    });
+};
+
+const setSyncProvider = async (provider: Config.ISync["provider"]) => {
+    if (pendingSyncProvider !== undefined || provider === window.siyuan.config.sync.provider) {
+        mountSyncProvider(document);
+        return;
+    }
+    pendingSyncProvider = provider;
+    mountSyncProvider(document);
+    let started = false;
+    try {
+        const confirmed = await new Promise<boolean>((resolve) => {
+            confirmDialog(window.siyuan.languages.syncProvider, window.siyuan.languages.syncProviderChangeConfirm,
+                () => resolve(true), () => resolve(false), false, undefined, window.siyuan.languages.syncProviderChangeContinue);
+        });
+        if (!confirmed) {
+            return;
+        }
+        started = true;
+        progressLoading({code: 1, msg: window.siyuan.languages._kernel[398]});
+        const response = await fetchSyncPost("/api/sync/setSyncProvider", {provider, completeAssets: true});
+        if (response.code === 0) {
+            window.siyuan.config.sync.provider = provider;
+            if (syncTabElement) {
+                refreshSyncCloudSpaceGroup(syncTabElement);
+            }
+        }
+    } catch (error) {
+        console.warn("[config] failed to update sync provider", error);
+        showMessage(window.siyuan.languages.syncProviderChangeFailed, 7000, "error");
+    } finally {
+        if (started) {
+            progressLoading({code: 2, msg: ""});
+        }
+        pendingSyncProvider = undefined;
+        mountSyncProvider(document);
+    }
+};
 
 /** 切换资源下载模式时同步控件状态，并阻止重复提交 */
 export const mountSyncAssetDownloadMode = (root: ParentNode) => {
@@ -36,10 +86,7 @@ const setSyncAssetDownloadMode = async (mode: Config.ISync["assetDownloadMode"])
         messageId = showMessage(window.siyuan.languages.syncAssetDownloadModeUpdating, -1);
     }, 300);
     try {
-        const response = await fetchSyncPost("/api/sync/setSyncAssetDownloadMode", {mode});
-        if (response.code === 0 && (response.data.assetDownloadMode === 0 || response.data.assetDownloadMode === 1)) {
-            window.siyuan.config.sync.assetDownloadMode = response.data.assetDownloadMode;
-        }
+        await configApi.set("sync.assetDownloadMode", mode);
     } catch (error) {
         console.warn("[config] failed to update asset download mode", error);
         showMessage(window.siyuan.languages.syncAssetDownloadModeFailed, 5000, "error");
@@ -121,18 +168,11 @@ export const refreshSyncCloudSpaceGroup = (root: Element) => {
 export const patchSyncConfig = (controlId: string, value: unknown) => {
     switch (controlId) {
         case "sync.provider": {
-            const provider = value as Config.ISync["provider"];
-            fetchPost("/api/sync/setSyncProvider", {provider}, () => {
-                window.siyuan.config.sync.provider = provider;
-                if (syncTabElement) {
-                    refreshSyncCloudSpaceGroup(syncTabElement);
-                }
-            });
-            break;
+            return setSyncProvider(value as Config.ISync["provider"]);
         }
         case "sync.enabled": {
             const enabled = Boolean(value) as Config.ISync["enabled"];
-            fetchPost("/api/sync/setSyncEnable", {enabled}, () => {
+            configApi.set("sync.enabled", enabled, () => {
                 window.siyuan.config.sync.enabled = enabled;
                 if (syncTabElement) {
                     refreshLANSyncConfigItemVisibility(syncTabElement);
@@ -144,14 +184,14 @@ export const patchSyncConfig = (controlId: string, value: unknown) => {
         }
         case "sync.generateConflictDoc": {
             const generateConflictDoc = Boolean(value) as Config.ISync["generateConflictDoc"];
-            fetchPost("/api/sync/setSyncGenerateConflictDoc", {enabled: generateConflictDoc}, () => {
+            configApi.set("sync.generateConflictDoc", generateConflictDoc, () => {
                 window.siyuan.config.sync.generateConflictDoc = generateConflictDoc;
             });
             break;
         }
         case "sync.mode": {
             const mode = value as Config.ISync["mode"];
-            fetchPost("/api/sync/setSyncMode", {mode}, () => {
+            configApi.set("sync.mode", mode, () => {
                 window.siyuan.config.sync.mode = mode;
                 if (syncTabElement) {
                     refreshSyncModeRelatedItems(syncTabElement);
@@ -164,7 +204,7 @@ export const patchSyncConfig = (controlId: string, value: unknown) => {
         }
         case "sync.interval": {
             const interval = value as Config.ISync["interval"];
-            fetchPost("/api/sync/setSyncInterval", {interval}, () => {
+            configApi.set("sync.interval", interval, () => {
                 window.siyuan.config.sync.interval = interval;
                 processSync();
             });
@@ -172,7 +212,7 @@ export const patchSyncConfig = (controlId: string, value: unknown) => {
         }
         case "sync.perception": {
             const perception = Boolean(value) as Config.ISync["perception"];
-            fetchPost("/api/sync/setSyncPerception", {enabled: perception}, () => {
+            configApi.set("sync.perception", perception, () => {
                 window.siyuan.config.sync.perception = perception;
                 processSync();
             });
@@ -180,10 +220,7 @@ export const patchSyncConfig = (controlId: string, value: unknown) => {
         }
         case "sync.lan.enabled": {
             const enabled = Boolean(value) as Config.ISyncLAN["enabled"];
-            fetchPost("/api/sync/setSyncLAN", {
-                enabled,
-                maxConcurrentReqs: window.siyuan.config.sync.lan.maxConcurrentReqs,
-            }, () => {
+            configApi.set("sync.lan.enabled", enabled, () => {
                 window.siyuan.config.sync.lan.enabled = enabled;
                 if (syncTabElement) {
                     refreshLANSyncStatus(syncTabElement);
@@ -194,14 +231,14 @@ export const patchSyncConfig = (controlId: string, value: unknown) => {
 
         case "repo.indexRetentionDays": {
             const indexRetentionDays = value as Config.IRepo["indexRetentionDays"];
-            fetchPost("/api/repo/setRepoIndexRetentionDays", {days: indexRetentionDays}, () => {
+            configApi.set("repo.indexRetentionDays", indexRetentionDays, () => {
                 window.siyuan.config.repo.indexRetentionDays = indexRetentionDays;
             });
             break;
         }
         case "repo.retentionIndexesDaily": {
             const retentionIndexesDaily = value as Config.IRepo["retentionIndexesDaily"];
-            fetchPost("/api/repo/setRetentionIndexesDaily", {indexes: retentionIndexesDaily}, () => {
+            configApi.set("repo.retentionIndexesDaily", retentionIndexesDaily, () => {
                 window.siyuan.config.repo.retentionIndexesDaily = retentionIndexesDaily;
             });
             break;

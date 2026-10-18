@@ -20,6 +20,16 @@ func (r settingConfig) ConfigJSON() []byte        { return append([]byte(nil), r
 func (r settingConfig) ConfigError() error        { return r.configError }
 func (r settingConfig) HasField(name string) bool { _, ok := r.fields[name]; return ok }
 
+// HasFieldFold 按配置结构的大小写兼容规则检查字段是否提交。
+func (r settingConfig) HasFieldFold(name string) bool {
+	for field := range r.fields {
+		if strings.EqualFold(field, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func decodeSettingConfig(reader io.Reader, path string, removeApp bool) (r settingConfig, err error) {
 	var raw json.RawMessage
 	err = json.NewDecoder(reader).Decode(&raw)
@@ -90,6 +100,9 @@ type SettingIconRequest struct {
 }
 type SettingCloudUserRequest struct {
 	Token string `json:"token" api:"optional,nullable"`
+	// Cached 为 true 时仅返回内存账户（未登录时为 null），忽略 token，不联网或等待同步锁。
+	// 默认 false，保留账户恢复、令牌刷新及错误响应；两种模式均仅向管理员返回账户。
+	Cached bool `json:"cached" api:"optional"`
 }
 type SettingLogin2faRequest struct {
 	Token string `json:"token"`

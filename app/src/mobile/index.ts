@@ -16,14 +16,19 @@ import {Menus} from "../menus";
 import {addBaseURL, parseSiYuanUriInfo, setNoteBook} from "../util/pathName";
 import {activateQueuedAVLocate, queueAVLocateRequest} from "../protyle/render/av/locate";
 import {
+    handleTouchCancel,
+    handleTouchContextMenu,
     handleTouchEnd,
     handleTouchMove,
     handleTouchSelectionChange,
     handleTouchStart,
     handleTouchUp,
 } from "./util/touch";
-import {fetchGet, fetchPost} from "../util/fetch";
+import {fetchPost} from "../util/fetch";
 import {initFramework} from "./util/initFramework";
+import {finishMobileSystemUris, processMobileSystemUri} from "./util/systemUri";
+import {saveMobileLayout} from "./util/saveLayout";
+import {finishMobileStartup} from "./util/setEmpty";
 import {initAssets} from "../util/assets";
 import {bootSync, lockScreen} from "../dialog/processSystem";
 import {initMessage, showMessage} from "../dialog/message";
@@ -62,12 +67,16 @@ import {nbsp2space} from "../protyle/util/normalizeText";
 import {armKeyboardLock, callMobileAppShowKeyboard, canInput, setWebViewFocusable} from "./util/mobileAppUtil";
 import {hideAllElements} from "../protyle/ui/hideElements";
 import {initTouchDragBridge} from "../util/touchDragBridge";
+import {bindPanelTransitionGuard} from "../util/panelTransition";
 import {appearanceConfigApi} from "../config/tabs/appearanceRuntime";
 import {openByMobile} from "../editor/openLink";
 import {initHarmonyTextSelectionMenu} from "../util/harmonyTextSelectionMenu";
+import {initMobileSelect} from "./util/nativeSelect";
 import {updateMobileTopBarLayout} from "./util/mobileTopBar";
+import {bindMobileOrientationChange} from "./util/orientation";
 import {showMobileBars} from "./util/mobileBars";
 import {initializeEnglishCommandTranslations} from "../command/english";
+import {loadLanguages} from "../boot/loadLanguages";
 import {scrollInputIntoView} from "./util/visibleViewport";
 import {installPluginStorageFetchAppId} from "../util/fetchAppId";
 
@@ -117,6 +126,13 @@ class App {
             ws: mainWs
         };
         // 不能使用 touchstart，否则会被 event.stopImmediatePropagation() 阻塞
+        document.addEventListener("touchstart", (event: TouchEvent) => {
+            if (window.JSAndroid?.setWebViewFocusable && canInput(event.target as Element)) {
+                // 在原生选区建立前启用焦点，保留首次双击的选择手柄。
+                armKeyboardLock();
+                window.JSAndroid.setWebViewFocusable(true);
+            }
+        }, true);
         window.addEventListener("click", (event: MouseEvent & { target: HTMLElement }) => {
             const menu = window.siyuan.menus?.menu;
             if (menu && !menu.element.contains(event.target) && !hasClosestByAttribute(event.target, "data-menu", "true")) {
@@ -171,19 +187,32 @@ class App {
             };
         }
         window.addEventListener("beforeunload", () => {
-            window.siyuan.mobile.tabs?.save();
+            void saveMobileLayout();
         }, false);
         window.addEventListener("pagehide", () => {
-            window.siyuan.mobile.tabs?.save();
+            void saveMobileLayout();
         }, false);
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "hidden") {
+                void saveMobileLayout();
+            }
+        });
         // 判断手机横竖屏状态
-        window.matchMedia("(orientation:portrait)").addEventListener("change", () => {
+        bindMobileOrientationChange(() => {
             updateCardHV();
             updateMobileTopBarLayout();
             showMobileBars();
             activeBlur();
         });
         fetchPost("/api/system/getConf", {}, async (confResponse) => {
+            try {
+                // 现代 Android 壳先完成可信主文档握手，再开放保持同步语义的原生接口。
+                await window.JSAndroid?.ready;
+            } catch (_error) {
+                console.error("Android native bridge initialization failed");
+                finishMobileStartup();
+                return;
+            }
             await addScriptSync(`${Constants.PROTYLE_CDN}/js/lute/lute.min.js?v=${Constants.SIYUAN_VERSION}`, "protyleLuteScript");
             addScript(`${Constants.PROTYLE_CDN}/js/protyle-html.js?v=${Constants.SIYUAN_VERSION}`, "protyleWcHtmlScript");
             window.siyuan.config = systemConfig(confResponse.data.conf);
@@ -192,19 +221,20 @@ class App {
             correctHotkey(siyuanApp);
             await loadPlugins(this);
             getLocalStorage(() => {
-                fetchGet(`/appearance/langs/${window.siyuan.config.appearance.lang}.json?v=${Constants.SIYUAN_VERSION}`, (lauguages: IObject) => {
-                    window.siyuan.languages = lauguages;
+                void loadLanguages(window.siyuan.config.appearance.lang, Constants.SIYUAN_VERSION, (languages: IObject) => {
+                    window.siyuan.languages = languages;
                     void initializeEnglishCommandTranslations(
                         window.siyuan.config.appearance.lang,
-                        lauguages as Record<string, string>,
+                        languages as Record<string, string>,
                         Constants.SIYUAN_VERSION,
                     );
                     window.siyuan.menus = new Menus(this);
+                    initMobileSelect();
                     document.title = window.siyuan.languages.siyuanNote;
                     bootSync();
                     appearanceConfigApi.apply(window.siyuan.config.appearance);
                     initMessage();
-                    initAssets();
+                    initAssets(true);
                     if (!isInMobileApp()) {
                         if (isChromeBrowser()) {
                             document.querySelector('meta[name="viewport"]').setAttribute("content", "width=device-width, height=device-height, interactive-widget=resizes-content, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover");
@@ -218,7 +248,7 @@ class App {
                     } else if (!isInIOS()) {
                         document.querySelector('meta[name="viewport"]').setAttribute("content", "width=device-width, height=device-height, interactive-widget=resizes-visual, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover");
                     }
-                    fetchPost("/api/setting/getCloudUser", {}, async userResponse => {
+                    fetchPost("/api/setting/getCloudUser", {cached: true}, async userResponse => {
                         window.siyuan.user = userResponse.data && "userId" in userResponse.data ? userResponse.data : null;
                         await ensureOnboarding();
                         fetchPost("/api/system/getEmojiConf", {}, async emojiResponse => {
@@ -229,18 +259,22 @@ class App {
                                 initRightMenu(this);
                                 openChangelog();
                                 window.siyuan.isReady = true;
+                                finishMobileSystemUris(this);
                                 mainWs.flushMainMessages();
+                                fetchPost("/api/setting/getCloudUser", {});
                             } catch (error) {
                                 console.error("Failed to initialize mobile framework:", error);
+                                finishMobileStartup();
                             }
                         });
                     });
                 });
             });
             document.addEventListener("touchstart", handleTouchStart, false);
-            document.addEventListener("touchmove", handleTouchMove, false);
+            document.addEventListener("touchmove", handleTouchMove, {passive: false});
             document.addEventListener("touchend", handleTouchEnd, false);
-            document.addEventListener("touchcancel", handleTouchEnd, false);
+            document.addEventListener("touchcancel", handleTouchCancel, false);
+            document.addEventListener("contextmenu", handleTouchContextMenu, true);
             document.addEventListener("selectionchange", handleTouchSelectionChange, true);
             window.addEventListener("nativePhysicalTouchUp", handleTouchUp, false);
             window.addEventListener("keyup", () => {
@@ -271,12 +305,15 @@ class App {
                     }
                 }
             });
+            ["sidebar", "sidebarRight"].forEach(id => {
+                bindPanelTransitionGuard(document.getElementById(id));
+            });
             initTouchDragBridge();
         });
     }
 }
 
-installPluginStorageFetchAppId(window, Constants.SIYUAN_APPID, window.location.href);
+installPluginStorageFetchAppId(window, Constants.SIYUAN_APPID, document.baseURI, location.origin);
 const siyuanApp = new App();
 
 initWindowOpenOverride(siyuanApp, openByMobile);
@@ -327,5 +364,5 @@ window.openFileByURL = (openURL) => {
         blockInfo.avItemID ? undefined : "start", undefined, blockInfo.avItemID ? (protyle) => activateQueuedAVLocate(protyle, blockInfo.id) : undefined);
         return true;
     }
-    return false;
+    return processMobileSystemUri(siyuanApp, openURL);
 };

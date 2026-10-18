@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +36,7 @@ import (
 	"github.com/siyuan-note/logging"
 
 	"github.com/sashabaranov/go-openai"
+	"github.com/siyuan-note/siyuan/kernel/chatgpt"
 	"github.com/siyuan-note/siyuan/kernel/conf"
 	mcpclient "github.com/siyuan-note/siyuan/kernel/mcp/client"
 	mcptools "github.com/siyuan-note/siyuan/kernel/mcp/tools"
@@ -44,25 +44,13 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
-const systemPrompt = `You are a SiYuan AI assistant. You help users manage their notes, documents, and knowledge base through the tools provided.
+const systemPrompt = `You are a SiYuan AI assistant. You help users manage their notes, documents, and knowledge base, and create or modify SiYuan frontend plugins through the tools provided.
 
 ## Domain Concepts
 - Block: the fundamental unit. Everything is a block with a unique ID, including documents (a document block, type NodeDocument, is the root). Content blocks (headings, paragraphs, lists, code, tables) form a tree under a document block.
-- Container blocks (can hold child blocks): document, blockquote, list, list-item, super-block, callout. Leaf blocks (cannot hold children): heading, paragraph, code-block, math-block, table, HTML-block, thematic-break, video, audio, widget, iframe, attribute-view, block-query-embed.
-- Heading hierarchy: headings (h1-h6) are leaf blocks. Blocks that appear "under" a heading in the UI are its *following siblings* in the AST, not its children. To place a block below a heading, pass the heading's ID (or the ID of the last block currently below it) as previousID, not as parentID.
-- Nested lists: a list-item cannot directly contain another list-item. To nest lists, create a list (NodeList) as a child of the outer list-item, then add list-items to that inner list. The parent of a list-item must always be a list (NodeList).
-- Super-block layouts: despite the token names, "row" means a vertical layout with child blocks stacked top-to-bottom, while "col" means a horizontal layout with child blocks placed side-by-side. Never infer the visual direction from the English token alone.
-- To create a super-block, prefer block.insert/append/prepend with dataType "markdown" and Kramdown. For example, a horizontal super-block containing two paragraphs is:
-
-{{{col
-
-first paragraph
-
-second paragraph
-
-}}}
-
-  Use {{{row for a vertical super-block. Never use data-layout in raw block DOM. If raw DOM is unavoidable, the outer block must use data-type="NodeSuperBlock" and data-sb-layout="row" or data-sb-layout="col", and every child must be complete block DOM with an explicit data-type; otherwise content may become an HTML block.
+- Container blocks (can hold child blocks): document, blockquote, list, list-item, super-block, callout, tabs, tab-item, mindmap, mindmap-item. Leaf blocks (cannot hold children): heading, paragraph, code-block, math-block, table, HTML-block, thematic-break, video, audio, widget, iframe, attribute-view, block-query-embed.
+- Heading hierarchy: headings (h1-h6) are leaf blocks. Blocks that appear "under" a heading in the UI are its *following siblings* in the AST, not its children.
+- Native structured blocks: use native capabilities and preserve existing structure, block IDs, and metadata unless the user explicitly requests a conversion. Follow the relevant tool descriptions for block-specific syntax and operations.
 - Notebook: a top-level container holding documents. Use notebook.list to enumerate; pass notebook ID when creating documents.
 - hPath (human-readable path): the title-based path shown in the document tree, e.g. "/Diary/2024/June". The "path" parameter in document.create/move/list refers to hPath, not the internal ID-based filesystem path. A rename changes hPath but not the ID.
 - Document vs block move: document.move relocates an entire document (and children) to a new hPath within a notebook — needs id, notebook (from document.get field "Box"), and path. block.move repositions a single content block under a new parent block.
@@ -70,19 +58,22 @@ second paragraph
 
 ## Tool Usage Patterns
 - Find: search.fulltext (keyword) → block.get (by ID). For semantic search use search.semantic.
+- Structural search: for block types, inline formats, ancestry or statistics, first fetch sql.schema, then use sql.query. To show matching blocks in the frontend, use native/frontend/open_search(query, method=2) with SELECT b.* FROM blocks b; use projections and aggregates only with sql.query.
+- Dynamic SQL in documents: reuse a complete-block query in a native {{SQL}} embed via block.insert/append/prepend. For single-line embeds, read block.get_kramdown, preserve ID and IAL, and update that block with lockType=true. For multiline SQL or -- comments, read block.dom and write dataType=dom with preserved metadata. Consult sql.schema for the workflow; never replace a dynamic embed with static results unless requested.
 - Explore structure: document.list (children under an hPath) → document.get → block.get_children → block.get. Use block breadcrumb to trace a block's location.
-- Create content: document.create (notebook + hPath) → block.append/prepend/insert (dataType "markdown").
-- Modify: block.update replaces ONE block's content with new markdown — it does NOT create or append new blocks. To both modify and add, call block.update first, then block.append/prepend/insert as separate calls.
+- Create content: document.create (notebook + hPath) → block.append/prepend/insert.
+- Modify: block.update replaces ONE block's content — it does NOT create or append new blocks. To both modify and add, call block.update first, then block.append/prepend/insert as separate calls.
 - Organize: document.move (full document), document.rename (title), block.move (single content block), document.delete.
 - Inbox (cloud-synced clippings, messages, and audio/video/file attachments; requires subscription): inbox.list (paged, summaries only) → inbox.get (read full content to judge how to file it) → inbox.convert (move one or many into local documents under a notebook, auto-deleting the cloud originals on success). Failed conversions are left in the inbox for retry. If a request fails with an auth/subscription error, report it honestly — do not retry.
-- Attributes: attr.get/set on any block. Database/attribute views: database.create (database block with ordered fields), database.item_add (rows), database.key_add (columns), database.key_update (field configuration: name/type/icon/description, number/date format, display template, date defaults, select options, relation and rollup settings; inspect keys first, send exactly one config setting per call, and render to verify), database.key_set_template (existing template field formulas; use .action{add .Number 1} for a number field plus one, then render to verify; do not write computed template cells with item_update), database.render (view). Create database blocks via database.create, never via the file tool or generic block insertion.
+- Attributes: attr.get/set on any block. Database/attribute views: database.create (database block with ordered fields), database.item_add (rows), database.key_add (columns), database.key_update (field configuration: name/type/icon/description, number/date format, display template, date defaults, select options, relation and rollup settings; inspect keys first, send exactly one config setting per call, and render to verify), database.key_set_template (existing template field formulas; use .action{add .Number 1} for a number field plus one, then render to verify; do not write computed template cells with item_update), database.render (view). Use database.get or search to locate the database and view IDs, then database.view_get with its carrier block ID to inspect metadata, ordered views, block-specific visibleViewIDs, filters, sorts, group, layout and revision. Use database.view_add/view_duplicate/view_remove for view lifecycle, view_update for name/icon/desc (omitted fields stay unchanged; empty icon/desc clears them), view_move for database-wide ordering, and view_visibility_set for the carrier block's complete visible view list (preserve other visible views and keep at least one). Metadata and order affect all mirrors; hiding a view affects only the specified carrier block. Use database.view_filters_set/view_sorts_set/view_group_set/view_layout_set for configuration; preserve unchanged rules when replacing the complete filters or sorts array, and use the revision from the latest view_get. Create database blocks via database.create, never via the file tool or generic block insertion.
 - Icons: attr.set only changes a document BLOCK's icon — it cannot set a NOTEBOOK's icon. For notebooks use notebook.set_icon (a specific emoji) or notebook.random_icon (random emoji, optionally scoped by id; omit id to randomize ALL notebooks).
 - Document images: image.list finds local images referenced by a document; call image.analyze on a returned asset path to attach it to the current model for understanding. image.generate creates a reusable image asset for insertion or other document operations.
 - HTML components: asset.create_html writes HTML content as an asset and inserts a sandboxed IFrame block in one operation. Prefer self-contained HTML; only use remote resources when the user requests them.
+- Bazaar packages: use bazaar.list/installed/updates for paginated summaries (no README); while hasMore is true, fetch the next page with offset + packages.length. Use bazaar.installed(pkgType=plugins, enabled=true) to find configured enabled plugins; enabled is not proof of execution in the current frontend. Read details with bazaar.readme, and use bazaar.install/update/uninstall/install_local to manage packages. Never manage package directories through file or unzip. Call bazaar.updates before bazaar.update_all and include each target's pkgType, name as packageName and repoHash for confirmation; if a target changed, query and confirm again. Enabling plugins executes third-party code: call bazaar.enable only when the user authorizes enabling them. Pass the target SiYuan frontend for compatibility checks; ask if unknown.
 
 ## Response Guidelines
 - Reply in the language configured in SiYuan's appearance settings.
-- When mentioning documents/blocks the user can open, format them as markdown links: [title](siyuan://blocks/<blockID>). Only use block IDs actually returned by a tool call (block.get/get_children/breadcrumb/batch_get/search); never fabricate IDs. For general mentions without a specific block, plain text is fine.
+- When mentioning documents/blocks the user can open, format them as markdown links: [title](siyuan://blocks/<blockID>). Only use block IDs actually returned by a tool call; never fabricate IDs. For general mentions without a specific block, plain text is fine.
 - When displaying a SiYuan tag name in chat, render its exact label as <span data-type="tag">label</span>. Keep every label character, including a leading $, inside the span and HTML-escape the label text. Never prefix the label with # or use #label# in chat.
 - Be concise: summarize rather than repeat large content.
 - For choices (which notebook/document/action), use the question tool — never a plain text list.
@@ -90,40 +81,9 @@ second paragraph
 - Refer to the product as "SiYuan", never "SiYuan Note".
 - Do not fabricate. If unknown or not found in the notes, say so honestly and search/verify before claiming facts.
 
-## Formatting
-- Inline formatting uses standard markdown: **bold**, *italic*, ~~strikethrough~~, ==mark==, and "code" (backticks).
-- In markdown written to SiYuan blocks, block references must include anchor text. Use ((<blockID> "<static anchor text>")) for fixed text, which is required whenever the anchor text differs from the referenced block's content. Use ((<blockID> '<dynamic anchor text>')) for text that follows the target block's content, so only when the anchor text is the target block's own content. Never use ((<blockID>)) or [[<blockID>]]. These forms are for note content; in chat responses use [title](siyuan://blocks/<blockID>).
-- For text styling that markdown cannot express (color, background, font size), use SiYuan text marks.
-  The syntax requires a leading data-type="text" attribute — WITHOUT it the HTML is escaped and shown as literal text:
-  - Text color:      <span data-type="text" style="color: #ff0000;">red text</span>
-  - Background:      <span data-type="text" style="background-color: #ffff00;">highlighted</span>
-  - Font size:       <span data-type="text" style="font-size: 18px;">larger text</span>
-  - Multiple CSS props: <span data-type="text" style="color: #ff0000; font-size: 18px;">red and large</span>
-- To also apply a markdown mark (bold/italic), list multiple types in data-type (note: this is about marking types, not CSS):
-  <span data-type="text strong" style="color: #ff0000;">bold red</span> (text + bold)
-  <span data-type="text em" style="background-color: #ffff00;">italic highlighted</span>
-- Prefer a semantic data-type mark over an equivalent style — data-type is SiYuan's native mark (recognized by the editor, convertible to/from markdown, and queryable), whereas style is just raw CSS. Markdown has no equivalent for these, so use the mark rather than faking it with style:
-  - Underline:   <span data-type="u">underlined</span>      (NOT style="text-decoration: underline")
-  - Superscript: x<span data-type="sup">2</span>            (NOT style="vertical-align: super")
-  - Subscript:   H<span data-type="sub">2</span>O           (NOT style="vertical-align: sub")
-  - Keyboard key:<span data-type="kbd">Ctrl</span>          (NOT a bare <kbd>, NOT style)
-  - Tag:         <span data-type="tag">todo</span>         (NOT style="color: ...")
-- This rule also forbids faking ANY mark type with style — never write style="font-weight: bold", style="font-style: italic", style="text-decoration: line-through", etc. to mimic bold/italic/strikethrough/mark/code; use standard markdown (or the data-type mark) instead.
-- NEVER write a bare <span style="..."> without data-type — it will render as escaped literal text.
-- Prefer standard markdown (such as **bold**) when no color/size is needed.
-- HTML blocks (NodeHTMLBlock) render raw HTML in the document. Use one when the user wants HTML actually rendered (e.g. <ruby> annotations, styled containers), not displayed as code.
-  Write the HTML as a bare block-level element whose opening tag starts with <div, on its own line(s); in SiYuan's editor the parser only recognizes a <div-opening line as an HTML block:
-
-  <div>
-  <ruby>你<rt>nǐ</rt></ruby>
-  </div>
-
-  - If the HTML root is not <div (e.g. <p>, <table>, <section>, <ruby>), wrap the whole snippet in <div>...</div> — otherwise it falls back to a plain paragraph and the HTML is escaped to literal text.
-  - Do NOT use a fenced code block with an html info string for rendered HTML: that produces a code block (NodeCodeBlock) where the HTML is shown as syntax-highlighted text, not rendered. A fenced code block is for displaying source code, the opposite of rendering HTML.
-
 ## SiYuan User Guide
 SiYuan has a built-in user guide notebook documenting all features. IDs by language: 简体中文 "20210808180117-czj9bvb", 繁體中文 "20211226090932-5lcq56f", 日本語 "20240530133126-axarxgx", others "20210808180117-6v0mkxr".
-When asked whether/how SiYuan supports a feature: notebook.list to check it's open (notebook.open to open it if not), then search.fulltext the guide for docs, cite if found or honestly say unsupported if not. Do NOT invent features or UI workflows — the guide is authoritative.
+When asked whether/how SiYuan supports a feature: notebook.list to check it's open (notebook.open to open it if not), then search.fulltext the guide for docs and cite if found. Missing guide search results alone do not prove a feature is unsupported; also check the native tool descriptions and supported block types above. Do NOT invent features or UI workflows.
 
 ## Todo Tracking
 For multi-step tasks (3+ distinct steps), use todo_write to track progress. Each call replaces the whole list; statuses are pending / in_progress / completed / cancelled. Set in_progress before starting a step, completed when done, and update on every status change. Skip todo_write for single-step requests.
@@ -202,6 +162,7 @@ var toolSignatureKeys = map[string][]string{
 	"import":    {"notebook", "path"},
 	"export":    {"id"},
 	"skill":     {"name", "url"},
+	"bazaar":    {"pkgType", "packageName", "keyword", "frontend", "path", "packages", "offset", "limit", "enabled"},
 
 	"system":     {"action"},
 	"workspace":  {"action"},
@@ -277,6 +238,7 @@ type QuestionAnswer struct {
 
 var questionChannelsMu sync.Mutex
 var questionChannels = make(map[string]chan QuestionAnswer)
+var questionValidators = make(map[string]func([]string) bool)
 
 func AnswerQuestion(id string, answers []string) bool {
 	questionChannelsMu.Lock()
@@ -285,9 +247,13 @@ func AnswerQuestion(id string, answers []string) bool {
 	if !ok {
 		return false
 	}
+	if validate := questionValidators[id]; validate != nil && !validate(answers) {
+		return false
+	}
 	select {
 	case ch <- QuestionAnswer{Answers: answers}:
 		delete(questionChannels, id)
+		delete(questionValidators, id)
 		return true
 	default:
 		return false
@@ -380,16 +346,17 @@ type AgentEvent struct {
 }
 
 type AgentMessage struct {
-	Role                 string            `json:"role"`
-	Content              string            `json:"content"`
-	ReasoningContent     string            `json:"reasoningContent,omitempty"`
-	ResponseOutput       []json.RawMessage `json:"responseOutput,omitempty"`
-	ResponseOutputTokens int               `json:"responseOutputTokens,omitempty"`
-	RoundID              string            `json:"roundID,omitempty"`
-	References           []Reference       `json:"references,omitempty"`
-	EditorContext        *EditorContext    `json:"editorContext,omitempty"`
-	ToolCalls            []AgentToolCall   `json:"toolCalls,omitempty"`
-	EntryID              string            `json:"entryID,omitempty"`
+	Role                 string                 `json:"role"`
+	Content              string                 `json:"content"`
+	ReasoningContent     string                 `json:"reasoningContent,omitempty"`
+	NativeContent        *util.AIMessageContent `json:"nativeContent,omitempty"`
+	ResponseOutput       []json.RawMessage      `json:"responseOutput,omitempty"`
+	ResponseOutputTokens int                    `json:"responseOutputTokens,omitempty"`
+	RoundID              string                 `json:"roundID,omitempty"`
+	References           []Reference            `json:"references,omitempty"`
+	EditorContext        *EditorContext         `json:"editorContext,omitempty"`
+	ToolCalls            []AgentToolCall        `json:"toolCalls,omitempty"`
+	EntryID              string                 `json:"entryID,omitempty"`
 }
 
 type AgentToolCall struct {
@@ -463,30 +430,31 @@ func newAgentUserMessage(content, entryID string, references []Reference, editor
 // SessionEntry 与前端 SessionStore.ts 中 entries 元素一一对应，
 // 是会话持久化的唯一数据源（不再单独持久化 messages）。
 type SessionEntry struct {
-	ID                   string             `json:"id,omitempty"`
-	Type                 string             `json:"type"` // user|thinking|assistant|confirm|snapshot|rollback
-	Content              string             `json:"content,omitempty"`
-	References           []Reference        `json:"references,omitempty"`
-	EditorContext        *EditorContext     `json:"editorContext,omitempty"`
-	BlockHTML            string             `json:"blockHTML,omitempty"`    // 仅 user，用于保留发送框的 BlockDOM 展示结构
-	Steps                []SessionEntryStep `json:"steps,omitempty"`        // 仅 thinking
-	ToolCalls            []AgentToolCall    `json:"toolCalls,omitempty"`    // 仅 assistant
-	Duration             float64            `json:"duration,omitempty"`     // 秒（thinking/assistant 均可能带）
-	PromptTokens         int                `json:"promptTokens,omitempty"` // 仅 assistant
-	CompletionTok        int                `json:"completionTokens,omitempty"`
-	Timestamp            int64              `json:"timestamp,omitempty"`
-	ReasoningCont        string             `json:"reasoningContent,omitempty"`
-	ResponseOutput       []json.RawMessage  `json:"responseOutput,omitempty"`
-	ResponseOutputTokens int                `json:"responseOutputTokens,omitempty"`
-	RoundID              string             `json:"roundID,omitempty"`
-	Name                 string             `json:"name,omitempty"`
-	Args                 map[string]any     `json:"args,omitempty"`
-	ConfirmID            string             `json:"confirmID,omitempty"`
-	Status               string             `json:"status,omitempty"`
-	QuestionID           string             `json:"questionID,omitempty"`
-	Questions            []map[string]any   `json:"questions,omitempty"`
-	Answers              []string           `json:"answers,omitempty"`
-	SnapshotID           string             `json:"snapshotID,omitempty"`
+	ID                   string                 `json:"id,omitempty"`
+	Type                 string                 `json:"type"` // user|thinking|assistant|confirm|snapshot|rollback
+	Content              string                 `json:"content,omitempty"`
+	References           []Reference            `json:"references,omitempty"`
+	EditorContext        *EditorContext         `json:"editorContext,omitempty"`
+	BlockHTML            string                 `json:"blockHTML,omitempty"`    // 仅 user，用于保留发送框的 BlockDOM 展示结构
+	Steps                []SessionEntryStep     `json:"steps,omitempty"`        // 仅 thinking
+	ToolCalls            []AgentToolCall        `json:"toolCalls,omitempty"`    // 仅 assistant
+	Duration             float64                `json:"duration,omitempty"`     // 秒（thinking/assistant 均可能带）
+	PromptTokens         int                    `json:"promptTokens,omitempty"` // 仅 assistant
+	CompletionTok        int                    `json:"completionTokens,omitempty"`
+	Timestamp            int64                  `json:"timestamp,omitempty"`
+	ReasoningCont        string                 `json:"reasoningContent,omitempty"`
+	NativeContent        *util.AIMessageContent `json:"nativeContent,omitempty"`
+	ResponseOutput       []json.RawMessage      `json:"responseOutput,omitempty"`
+	ResponseOutputTokens int                    `json:"responseOutputTokens,omitempty"`
+	RoundID              string                 `json:"roundID,omitempty"`
+	Name                 string                 `json:"name,omitempty"`
+	Args                 map[string]any         `json:"args,omitempty"`
+	ConfirmID            string                 `json:"confirmID,omitempty"`
+	Status               string                 `json:"status,omitempty"`
+	QuestionID           string                 `json:"questionID,omitempty"`
+	Questions            []map[string]any       `json:"questions,omitempty"`
+	Answers              []string               `json:"answers,omitempty"`
+	SnapshotID           string                 `json:"snapshotID,omitempty"`
 }
 
 // SessionEntryStep 描述一次思考步骤。工具调用只保留名字与调用 ID 列表，过程正文保存在 Content，
@@ -521,15 +489,22 @@ type agentCheckpoint struct {
 	LastCommittedTurnID   string         `json:"lastCommittedTurnID,omitempty"`
 }
 
-func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imageCapabilityKey string, contextLimit int,
+func AgentChat(ctx context.Context, client *util.AIClient, protocol, model, imageCapabilityKey string, contextLimit int,
 	sessionID string, userEntryID string, contentRevision int64, userMessage string, userBlockHTML *string,
 	language string, references []Reference, editorCtx EditorContext, frontendCapabilities []FrontendCapability,
 	regenerate bool, confirmTimeout time.Duration, maxRetries int, reasoningEffort string,
 	requestTimeout, streamIdleTimeout time.Duration) <-chan AgentEvent {
+	confAIReadSnapshot := kernelModel.Conf.LoadAI()
+
 	ch := make(chan AgentEvent, 256)
 
 	go func() {
 		defer close(ch)
+		defer func() {
+			if ctx.Err() != nil && sessionID != "" {
+				pausePluginWorkflow(sessionID)
+			}
+		}()
 		defer func() {
 			if r := recover(); r != nil {
 				logging.LogErrorf("agent chat panic: %v\n%s", r, logging.ShortStack())
@@ -537,9 +512,15 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 		}()
 		thoughtSignatureState := util.NewGeminiThoughtSignatureState()
 		ctx = util.ContextWithGeminiThoughtSignatureState(ctx, thoughtSignatureState)
+		// 每次用户发起对话只读取一次，工具轮次和压缩重建共享这份指令快照。
+		instructions, instructionsErr := util.ReadAgentInstructions()
+		if instructionsErr != nil {
+			sendCriticalEvent(ctx, ch, AgentEvent{Type: "error", Error: util.AgentInstructionsError(instructionsErr, language)})
+			return
+		}
 
-		if kernelModel.Conf.AI.MCP != nil {
-			mcpclient.EnsureMCPConnected(kernelModel.Conf.AI.MCP.Servers)
+		if confAIReadSnapshot.MCP != nil {
+			mcpclient.EnsureMCPConnected(confAIReadSnapshot.MCP.Servers)
 		}
 		select {
 		case <-ctx.Done():
@@ -553,11 +534,12 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 			return
 		}
 		defer unregisterSessionPermissionController(sessionID, permissionController)
+		ctx = pluginWorkflowContext(ctx, sessionID)
 
 		rawUserMessage := userMessage
 		// 变量（非敏感）在用户消息注入对话时解析，让 LLM 看到实际值；密钥不进上下文。
 		// 在此统一解析一次，后续 checkpoint 与消息重建均使用解析后的值，保证全链路一致。
-		userMessage = kernelModel.Conf.Variables.Resolve(userMessage)
+		userMessage = kernelModel.Conf.Variables.Load().Resolve(userMessage)
 
 		capabilityContext := capabilityAccessContext{
 			SessionID:  sessionID,
@@ -572,8 +554,9 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 		tools := capabilities.definitions
 		var messages []openai.ChatCompletionMessage
 		var checkpointMsgs []AgentMessage
-		var sessionEntries []SessionEntry
+		var contextMsgs []AgentMessage
 		var compaction *runtimeCompaction
+		scopeKey := compactionScopeKey(protocol, model, imageCapabilityKey)
 		var totalPrompt, totalCompletion, lastPromptTokens, lastCachedTokens int
 		var doomLoop doomLoopTracker
 		var snapshotIDs []string
@@ -587,19 +570,21 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 			}
 			if cp := loadCheckpoint(sessionID); cp != nil {
 				if len(cp.Entries) > 0 {
-					sessionEntries = append([]SessionEntry(nil), cp.Entries...)
-					contextEntries := cp.Entries
 					currentUserIndex := sessionUserEntryIndex(cp.Entries, userEntryID)
 					if runtime != nil && runtimeCompactionMatchesProtocol(runtime.Compaction, protocol) &&
 						validRuntimeCompaction(cp.Entries, runtime.Compaction) {
-						if currentUserIndex >= runtime.Compaction.CoveredEntryCount {
+						if runtime.Compaction.Version == messageCompactionVersion {
+							if runtime.Compaction.Model == model && runtime.Compaction.ScopeKey == scopeKey {
+								compaction = cloneRuntimeCompaction(runtime.Compaction)
+							}
+						} else if currentUserIndex >= runtime.Compaction.CoveredEntryCount {
 							compaction = cloneRuntimeCompaction(runtime.Compaction)
-							contextEntries = cp.Entries[compaction.CoveredEntryCount:]
+							compaction.CoveredMessageCount = len(entriesToAgentMessages(cp.Entries[:compaction.CoveredEntryCount]))
 						}
 					}
 					// entries 是唯一持久化数据源。先转回 AgentMessage 视图用于
 					// 截断/重建逻辑（thinking/confirm/snapshot 不参与 LLM 上下文）。
-					loadedMsgs := entriesToAgentMessages(contextEntries)
+					loadedMsgs := entriesToAgentMessages(cp.Entries)
 					truncated := loadedMsgs
 					currentUserExists := false
 					if regenerate {
@@ -622,7 +607,7 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 								continue
 							}
 							currentUserExists = userEntryID != "" && truncated[i].EntryID == userEntryID
-							if userEntryID == "" && truncated[i].Content == userMessage {
+							if userEntryID == "" && (truncated[i].Content == userMessage || truncated[i].Content == rawUserMessage) {
 								currentUserExists = true
 							}
 							break
@@ -634,36 +619,31 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 					} else {
 						for i := len(checkpointMsgs) - 1; i >= 0; i-- {
 							if checkpointMsgs[i].Role == "user" {
+								checkpointMsgs[i].Content = userMessage
 								checkpointMsgs[i].References = append([]Reference(nil), references...)
 								checkpointMsgs[i].EditorContext = cloneEditorContext(editorCtx)
 								break
 							}
 						}
 					}
-					if currentUserIndex >= 0 {
-						if regenerate {
-							// 重新生成只保留目标用户消息之前的历史，避免压缩时从持久化会话重新引入
-							// 已被前端截断的旧回答和后续轮次。
-							sessionEntries = sessionEntries[:currentUserIndex+1]
-						}
-						currentUserEntry := &sessionEntries[currentUserIndex]
-						currentUserEntry.Content = userMessage
-						currentUserEntry.References = append([]Reference(nil), references...)
-						currentUserEntry.EditorContext = cloneEditorContext(editorCtx)
-						if userBlockHTML != nil {
-							currentUserEntry.BlockHTML = *userBlockHTML
-						}
-					}
-					messages = checkpointMessagesToOpenAIWithSummary(checkpointMsgs, language, capabilities, compaction)
 				}
 			}
 		}
 
-		if messages == nil {
+		if len(checkpointMsgs) == 0 {
 			checkpointMsgs = []AgentMessage{newAgentUserMessage(userMessage, userEntryID, references, editorCtx)}
-			messages = buildInitialMessages(userMessage, language, references, editorCtx, capabilities)
 		}
-		restoreGeminiThoughtSignatures(thoughtSignatureState, checkpointMsgs)
+		if compaction != nil && compaction.Version == messageCompactionVersion &&
+			!validMessageCompaction(compactionRecordMessages(checkpointMsgs, rawUserMessage), compaction) {
+			compaction = nil
+		}
+		coveredMessages := 0
+		if compaction != nil {
+			coveredMessages = compaction.CoveredMessageCount
+		}
+		contextMsgs = projectCompactionContext(checkpointMsgs, coveredMessages)
+		messages = checkpointMessagesToOpenAIWithSummary(contextMsgs, language, capabilities, compaction, instructions.Content)
+		restoreGeminiThoughtSignatures(thoughtSignatureState, contextMsgs)
 
 		turnBaseIndex := len(checkpointMsgs)
 		turn := &agentRuntimeTurn{
@@ -735,16 +715,17 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 			}
 		}()
 
-		temperature := kernelModel.Conf.AI.Agent.Temperature
+		temperature := confAIReadSnapshot.Agent.Temperature
 		if temperature < 0 || 2 < temperature {
 			temperature = 1.0
 		}
-		maxCompletionTokens := max(kernelModel.Conf.AI.Agent.MaxCompletionTokens, 0)
-		maxRounds := kernelModel.Conf.AI.Agent.MaxToolCallRounds
+		maxCompletionTokens := max(confAIReadSnapshot.Agent.MaxCompletionTokens, 0)
+		maxRounds := confAIReadSnapshot.Agent.MaxToolCallRounds
 		modelRound := 0
 		toolCallRounds := 0
 		overflowRetryPending := false
 		imageInputDisabled := imageInputUnsupportedCached(imageCapabilityKey)
+		compactionRequests := 0
 		projectImageMessages := func(source []openai.ChatCompletionMessage) ([]openai.ChatCompletionMessage, bool) {
 			if imageInputDisabled {
 				return downgradeImageInput(source)
@@ -752,11 +733,24 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 			return source, false
 		}
 		compactionErrorMessage := func(err error) string {
+			switch {
+			case errors.Is(err, errCompactionInputTooLarge):
+				return kernelModel.Conf.Language(415)
+			case errors.Is(err, errCompactionBudget):
+				return kernelModel.Conf.Language(416)
+			case errors.Is(err, errCompactionProtected):
+				return kernelModel.Conf.Language(418)
+			case errors.Is(err, errCompactionLimit):
+				return kernelModel.Conf.Language(419)
+			case errors.Is(err, errCompactionSummaryFailed):
+				requestMessages, _ := projectImageMessages(messages)
+				return fmt.Sprintf(kernelModel.Conf.Language(417), getAgentRequestErrorMessage(err, requestMessages))
+			}
 			if errors.Is(err, errContextCannotBeCompacted) || isContextOverflow(err) {
 				return kernelModel.Conf.Language(352)
 			}
 			requestMessages, _ := projectImageMessages(messages)
-			return getAgentRequestErrorMessage(err, requestMessages)
+			return fmt.Sprintf(kernelModel.Conf.Language(417), getAgentRequestErrorMessage(err, requestMessages))
 		}
 
 		compactContext := func(requestTools []openai.Tool, force bool) (bool, error) {
@@ -764,87 +758,113 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 				if !force {
 					return false, nil
 				}
-				return false, fmt.Errorf("%w: model context length is unknown", errContextCannotBeCompacted)
+				return false, fmt.Errorf("%w: model context length is unknown", errCompactionBudget)
 			}
 			inputBudget := contextInputBudget(contextLimit, maxCompletionTokens)
 			if inputBudget <= 0 {
-				return false, fmt.Errorf("%w: no input budget remains", errContextCannotBeCompacted)
+				return false, fmt.Errorf("%w: no input budget remains", errCompactionBudget)
 			}
 			estimatedMessages, _ := projectImageMessages(messages)
-			if !force && estimateProtocolRequestTokens(model, protocol, estimatedMessages, checkpointMsgs,
-				compaction, requestTools) <= inputBudget {
+			estimatedTokens := estimateProtocolRequestTokens(model, protocol, estimatedMessages, contextMsgs, compaction, requestTools)
+			if !force && estimatedTokens <= inputBudget*9/10 {
 				return false, nil
 			}
-
-			coveredEntryCount := 0
 			previousSummary := ""
 			if compaction != nil {
-				coveredEntryCount = compaction.CoveredEntryCount
 				previousSummary = compaction.Summary
 			}
-			candidates := compactionCandidateEntryCounts(sessionEntries, coveredEntryCount, userEntryID)
-			if len(candidates) == 0 {
-				return false, fmt.Errorf("%w: the current turn is too large", errContextCannotBeCompacted)
-			}
-			tail, ok := currentTurnTail(checkpointMsgs, userEntryID, userMessage)
-			if !ok {
-				return false, fmt.Errorf("%w: current user turn not found", errContextCannotBeCompacted)
-			}
-
 			nativeResponsesCompaction := util.IsOpenAIResponsesProtocol(protocol) &&
-				util.SupportsOpenAIResponsesCompaction(ctx)
-			// 原生 compact 无法限制输出长度，覆盖所有已完成轮次，避免 opaque window 返回后仍超出预算。
-			selectedCandidateIndex := len(candidates) - 1
+				util.SupportsOpenAIResponsesCompaction(ctx) && !client.ChatGPT
+			candidates, protected := compactionCandidateMessageCounts(checkpointMsgs, coveredMessages, protocol, nativeResponsesCompaction, imageInputDisabled)
+			if len(candidates) == 0 {
+				if !force && estimatedTokens <= inputBudget {
+					return false, nil
+				}
+				if protected {
+					return false, errCompactionProtected
+				}
+				return false, errCompactionInputTooLarge
+			}
+			// 压缩后留出继续调用工具的空间，避免在上限附近每轮都重新摘要。
+			targetBudget := inputBudget * 3 / 4
+			if force {
+				targetBudget = min(targetBudget, estimatedTokens*3/4)
+			}
+			selectedCount := candidates[len(candidates)-1]
 			if !nativeResponsesCompaction {
-				selectedCandidateIndex = sort.Search(len(candidates), func(i int) bool {
-					candidate := candidates[i]
-					candidateCheckpointMsgs := checkpointMessagesAfterCompaction(sessionEntries, candidate, tail)
+				for _, candidate := range candidates {
+					candidateCheckpointMsgs := projectCompactionContext(checkpointMsgs, candidate)
 					candidateMessages := checkpointMessagesToOpenAIWithSummary(
-						candidateCheckpointMsgs, language, capabilities, nil)
+						candidateCheckpointMsgs, language, capabilities, nil, instructions.Content)
 					candidateMessages, _ = projectImageMessages(candidateMessages)
 					baseTokens := estimateProtocolRequestTokens(model, protocol, candidateMessages,
 						candidateCheckpointMsgs, nil, requestTools)
-					return compactionSummaryMinTokens <= inputBudget-baseTokens-compactionSummaryOverhead
-				})
+					if compactionSummaryMinTokens <= targetBudget-baseTokens-compactionSummaryOverhead {
+						selectedCount = candidate
+						break
+					}
+				}
 			}
-			if selectedCandidateIndex == len(candidates) {
-				return false, fmt.Errorf("%w: recent messages exceed the input budget", errContextCannotBeCompacted)
-			}
-			selectedEntryCount := candidates[selectedCandidateIndex]
-			selectedCheckpointMsgs := checkpointMessagesAfterCompaction(sessionEntries, selectedEntryCount, tail)
+			selectedCheckpointMsgs := projectCompactionContext(checkpointMsgs, selectedCount)
 			selectedMessages := checkpointMessagesToOpenAIWithSummary(
-				selectedCheckpointMsgs, language, capabilities, nil)
+				selectedCheckpointMsgs, language, capabilities, nil, instructions.Content)
 			estimatedSelectedMessages, _ := projectImageMessages(selectedMessages)
 			baseTokens := estimateProtocolRequestTokens(model, protocol, estimatedSelectedMessages,
 				selectedCheckpointMsgs, nil, requestTools)
 			summaryMaxTokens := min(
-				compactionSummaryMaxTokens, inputBudget-baseTokens-compactionSummaryOverhead)
-
-			sourceMessages := entriesToAgentMessages(sessionEntries[coveredEntryCount:selectedEntryCount])
+				compactionSummaryMaxTokens, targetBudget-baseTokens-compactionSummaryOverhead)
+			if summaryMaxTokens < compactionSummaryMinTokens {
+				// 小窗口仍可使用硬预算，但没有继续工作的余量时不在未超限状态下强行压缩。
+				summaryMaxTokens = min(compactionSummaryMaxTokens, inputBudget-baseTokens-compactionSummaryOverhead)
+			}
+			if summaryMaxTokens < compactionSummaryMinTokens {
+				if !force && estimatedTokens <= inputBudget {
+					return false, nil
+				}
+				if protected {
+					return false, errCompactionProtected
+				}
+				return false, errCompactionInputTooLarge
+			}
+			history := compactionHistory(checkpointMsgs)
+			sourceMessages := history[coveredMessages:selectedCount]
+			compactionCtx, cancelCompaction := context.WithTimeout(ctx, compactionTimeout)
+			defer cancelCompaction()
+			compactionCtx = context.WithValue(compactionCtx, compactionRequestBudgetKey{}, &compactionRequests)
 
 			sendEvent(ch, AgentEvent{Type: "thinking", Reasoning: "compacting context"})
 			var nextCompaction *runtimeCompaction
 			var compactionStateErr error
 			if nativeResponsesCompaction {
-				responseSource := entriesToAgentMessages(sessionEntries[coveredEntryCount:selectedEntryCount])
 				responseInput := checkpointMessagesToOpenAIResponseInput(
-					responseSource, language, capabilities, compaction, imageInputDisabled)
+					sourceMessages, language, capabilities, compaction, imageInputDisabled)
 				compactRequest := openai.ChatCompletionRequest{
 					Model:           model,
-					Messages:        []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt(language, capabilities)}},
+					Messages:        []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt(language, capabilities, instructions.Content)}},
 					Tools:           requestTools,
 					ReasoningEffort: reasoningEffort,
 				}
+				if compactionRequests >= compactionMaxRequests {
+					return false, errCompactionLimit
+				}
 				responseOutput, promptTokens, completionTokens, compactErr := createResponseCompaction(
-					ctx, client, compactRequest, responseInput, maxRetries, requestTimeout, ch)
+					compactionCtx, client, compactRequest, responseInput, maxRetries, requestTimeout, ch)
 				totalPrompt += promptTokens
 				totalCompletion += completionTokens
+				if compactErr != nil && ctx.Err() == nil && compactionCtx.Err() != nil {
+					return false, errCompactionLimit
+				}
 				if compactErr == nil {
-					nextCompaction, compactionStateErr = newRuntimeResponseCompaction(
-						sessionEntries, selectedEntryCount, responseOutput,
-						compactionOutputTokenCost(model, responseOutput, completionTokens))
+					nextCompaction, compactionStateErr = newRuntimeMessageCompaction(
+						compactionRecordMessages(checkpointMsgs, rawUserMessage), selectedCount, protocol, model, scopeKey)
+					if nextCompaction != nil {
+						nextCompaction.ResponseOutput = responseOutput
+						nextCompaction.ResponseOutputTokens = compactionOutputTokenCost(model, responseOutput, completionTokens)
+					}
 				} else if compaction != nil && len(compaction.ResponseOutput) > 0 {
 					return false, compactErr
+				} else if selectedCount > sessionUserMessageIndex(history) && protected {
+					return false, fmt.Errorf("%w: %v", errCompactionProtected, compactErr)
 				} else {
 					logging.LogWarnf("responses compaction failed, fallback to summary: %s", compactErr)
 				}
@@ -854,39 +874,40 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 				if sourceErr != nil {
 					return false, fmt.Errorf("%w: build summary source: %v", errContextCannotBeCompacted, sourceErr)
 				}
-				summaryRequestMessages := compactionSummaryMessages(source)
-				summaryInputBudget := contextInputBudget(contextLimit, summaryMaxTokens)
-				if summaryInputBudget <= 0 ||
-					estimateChatRequestTokens(model, summaryRequestMessages, nil) > summaryInputBudget {
-					return false, fmt.Errorf("%w: summary input exceeds the model context", errContextCannotBeCompacted)
-				}
-				summary, promptTokens, completionTokens, summaryErr := createProtocolCompactionSummary(
-					ctx, client, protocol, model, source, summaryMaxTokens, maxRetries, requestTimeout,
-					streamIdleTimeout, ch)
+				summary, promptTokens, completionTokens, summaryErr := createBatchedCompactionSummary(
+					compactionCtx, client, protocol, model, source, contextLimit, summaryMaxTokens, maxRetries,
+					requestTimeout, streamIdleTimeout, &compactionRequests, ch)
 				totalPrompt += promptTokens
 				totalCompletion += completionTokens
 				if summaryErr != nil {
+					if ctx.Err() == nil && compactionCtx.Err() != nil {
+						return false, errCompactionLimit
+					}
 					return false, summaryErr
 				}
-				nextCompaction, compactionStateErr = newRuntimeProtocolSummaryCompaction(
-					sessionEntries, selectedEntryCount, summary, protocol)
+				nextCompaction, compactionStateErr = newRuntimeMessageCompaction(
+					compactionRecordMessages(checkpointMsgs, rawUserMessage), selectedCount, protocol, model, scopeKey)
+				if nextCompaction != nil {
+					nextCompaction.Summary = summary
+				}
 			}
 			if compactionStateErr != nil {
 				return false, fmt.Errorf(
 					"%w: build runtime state: %v", errContextCannotBeCompacted, compactionStateErr)
 			}
 			nextMessages := checkpointMessagesToOpenAIWithSummary(
-				selectedCheckpointMsgs, language, capabilities, nextCompaction)
+				selectedCheckpointMsgs, language, capabilities, nextCompaction, instructions.Content)
 			estimatedNextMessages, _ := projectImageMessages(nextMessages)
 			if estimateProtocolRequestTokens(model, protocol, estimatedNextMessages, selectedCheckpointMsgs,
 				nextCompaction, requestTools) > inputBudget {
 				return false, fmt.Errorf("%w: compacted context still exceeds the input budget", errContextCannotBeCompacted)
 			}
-			if err := saveRuntimeCompaction(sessionID, nextCompaction); err != nil {
-				return false, fmt.Errorf("%w: persist compaction: %v", errContextCannotBeCompacted, err)
+			if err := saveRuntimeCompaction(sessionID, turn.TurnID, nextCompaction); err != nil {
+				return false, fmt.Errorf("persist compaction: %w", err)
 			}
 			compaction = nextCompaction
-			checkpointMsgs = selectedCheckpointMsgs
+			coveredMessages = selectedCount
+			contextMsgs = selectedCheckpointMsgs
 			messages = nextMessages
 			return true, nil
 		}
@@ -922,8 +943,10 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 			}
 			capabilities = roundCapabilities
 			tools = requestTools
+			contextMsgs = projectCompactionContext(checkpointMsgs, coveredMessages)
+			messages = checkpointMessagesToOpenAIWithSummary(contextMsgs, language, capabilities, compaction, instructions.Content)
 			if len(messages) > 0 && messages[0].Role == openai.ChatMessageRoleSystem {
-				messages[0].Content = buildSystemPrompt(language, roundCapabilities)
+				messages[0].Content = buildSystemPrompt(language, roundCapabilities, instructions.Content)
 			}
 
 			_, compactErr := compactContext(requestTools, false)
@@ -952,11 +975,11 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 			if util.IsOpenAIResponsesProtocol(protocol) {
 				responseInput = func(downgradeImages bool) []any {
 					return checkpointMessagesToOpenAIResponseInput(
-						checkpointMsgs, language, capabilities, compaction, downgradeImages)
+						contextMsgs, language, capabilities, compaction, downgradeImages)
 				}
 			}
 			stream, firstResp, roundCancel, requestMessages, imageDowngraded, imageUnsupportedDetected, streamErr :=
-				createProtocolImageCompatibleStream(util.ContextWithGeminiThoughtSummaries(ctx), client, protocol, req,
+				createProtocolImageCompatibleStream(contextWithNativeContents(util.ContextWithGeminiThoughtSummaries(ctx), contextMsgs), client, protocol, req,
 					responseInput, imageCapabilityKey,
 					imageInputDisabled, maxRetries, requestTimeout, streamIdleTimeout, delayForCategory, ch)
 			if imageUnsupportedDetected {
@@ -1120,6 +1143,7 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 				}
 			}
 
+			nativeContent := stream.NativeContent()
 			responseOutput := stream.ResponseOutput()
 			if len(responseOutput) == 0 {
 				responseOutputTokens = 0
@@ -1154,6 +1178,7 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 					Role:                 "assistant",
 					Content:              contentBuilder.String(),
 					ReasoningContent:     reasoningBuilder.String(),
+					NativeContent:        nativeContent,
 					ResponseOutput:       responseOutput,
 					ResponseOutputTokens: responseOutputTokens,
 					RoundID:              roundID,
@@ -1218,6 +1243,32 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 						toolInputErr = validateCapabilityCall(ctx, registration, args)
 					}
 					requiresConfirm, forcedConfirm := false, false
+					confirmationArgs := args
+					if toolInputErr == nil && registration.Tool != nil && registration.Tool.Name == "bazaar" &&
+						(registration.Tool.Source == "native" || registration.Tool.Source == "") {
+						preview, previewErr := mcptools.PluginDevelopmentInstallPreview(ctx, args)
+						if previewErr != nil {
+							toolInputErr = previewErr
+						} else if preview != nil {
+							confirmationArgs = make(map[string]any, len(args)+1)
+							for key, value := range args {
+								confirmationArgs[key] = value
+							}
+							confirmationArgs["verifiedPackage"] = preview
+						}
+					}
+					if toolInputErr == nil && registration.ID == "native/backend/snippet" {
+						preview, previewErr := mcptools.AgentSnippetPreview(args)
+						if previewErr != nil {
+							toolInputErr = previewErr
+						} else if preview != nil {
+							confirmationArgs = make(map[string]any, len(args)+1)
+							for key, value := range args {
+								confirmationArgs[key] = value
+							}
+							confirmationArgs["currentSnippet"] = preview
+						}
+					}
 					if toolInputErr == nil {
 						requiresConfirm, forcedConfirm = capabilityConfirmRequirement(
 							registration, action, args, permissionController.allowSession.Load(), nil)
@@ -1230,7 +1281,7 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 						confirmChannelsMu.Unlock()
 						effects := capabilityEffects(registration, action)
 						sendCriticalEvent(ctx, ch, AgentEvent{
-							Type: "confirm", Name: tc.Function.Name, Arguments: args, ConfirmID: confirmID, Effects: effects,
+							Type: "confirm", Name: tc.Function.Name, Arguments: confirmationArgs, ConfirmID: confirmID, Effects: effects,
 							ForcedConfirm: forcedConfirm, CapabilityID: registration.ID,
 						})
 						var rejectionMsg string
@@ -1420,7 +1471,13 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 						resultStr = toolInputErr.Error()
 						isErr = true
 					} else if tc.Function.Name == "question" {
-						resultStr = handleQuestion(ctx, args, roundID, ch, resolveQuestionTimeout(confirmTimeout))
+						if workflowResult, handled := handlePluginWorkflowQuestion(ctx, args, sessionID, turn.TurnID,
+							userEntryID, roundID, language, ch, resolveQuestionTimeout(confirmTimeout)); handled {
+							resultStr = workflowResult
+							isErr = strings.HasPrefix(workflowResult, "Plugin workflow error:")
+						} else {
+							resultStr = handleQuestion(ctx, args, roundID, ch, resolveQuestionTimeout(confirmTimeout))
+						}
 					} else if registration.isBrowser() {
 						executed := handleBrowserCapability(ctx, tc, registration, args, ch,
 							resolveBrowserCapabilityTimeout(confirmTimeout))
@@ -1520,11 +1577,12 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 			}
 
 			content := contentBuilder.String()
-			if content != "" || reasoningBuilder.Len() > 0 || len(responseOutput) > 0 {
+			if content != "" || reasoningBuilder.Len() > 0 || len(responseOutput) > 0 || nativeContent != nil {
 				checkpointMsgs = append(checkpointMsgs, AgentMessage{
 					Role:                 "assistant",
 					Content:              content,
 					ReasoningContent:     reasoningBuilder.String(),
+					NativeContent:        nativeContent,
 					ResponseOutput:       responseOutput,
 					ResponseOutputTokens: responseOutputTokens,
 					RoundID:              roundID,
@@ -1559,7 +1617,7 @@ func AgentChat(ctx context.Context, client *openai.Client, protocol, model, imag
 	return ch
 }
 
-func GenerateTitle(client *openai.Client, apiBaseURL, protocol, model, userMsg, language string) string {
+func GenerateTitle(client *util.AIClient, apiBaseURL, protocol, model, userMsg, language string) string {
 	const (
 		initialMaxCompletionTokens  = 50
 		fallbackMaxCompletionTokens = 512
@@ -1688,16 +1746,14 @@ func capabilityEffects(registration *capabilityRegistration, action string) mcpt
 	return effects
 }
 
-func needsCapabilityConfirm(registration *capabilityRegistration, action string, args map[string]any,
-	allowSession bool, alwaysAllow map[string]bool) bool {
-	required, _ := capabilityConfirmRequirement(registration, action, args, allowSession, alwaysAllow)
-	return required
-}
-
 func capabilityConfirmRequirement(registration *capabilityRegistration, action string, args map[string]any,
 	allowSession bool, alwaysAllow map[string]bool) (required, forced bool) {
 	if registration == nil {
 		return false, false
+	}
+	// 代码片段写入可能执行脚本，逐次确认，不沿用会话或自动批准。
+	if registration.ID == "native/backend/snippet" && action != "list" && action != "get" {
+		return true, true
 	}
 	decision := capabilityApprovalDecision(registration, action, args)
 	if decision == conf.ApprovalDecisionConfirm {
@@ -1804,9 +1860,21 @@ func needsLocalSnapshot(toolName, action string) bool {
 
 func handleQuestion(ctx context.Context, args map[string]any, roundID string, ch chan<- AgentEvent, timeout time.Duration) string {
 	questionID := ast.NewNodeID()
+	answer, status := waitForQuestion(ctx, args, questionID, roundID, ch, timeout, nil)
+	if status != "" {
+		return status
+	}
+	return strings.Join(answer.Answers, ", ")
+}
+
+func waitForQuestion(ctx context.Context, args map[string]any, questionID, roundID string,
+	ch chan<- AgentEvent, timeout time.Duration, validate func([]string) bool) (QuestionAnswer, string) {
 	ch2 := make(chan QuestionAnswer, 1)
 	questionChannelsMu.Lock()
 	questionChannels[questionID] = ch2
+	if validate != nil {
+		questionValidators[questionID] = validate
+	}
 	questionChannelsMu.Unlock()
 
 	sendCriticalEvent(ctx, ch, AgentEvent{
@@ -1823,25 +1891,26 @@ func handleQuestion(ctx context.Context, args map[string]any, roundID string, ch
 		if acceptedAnswer, accepted := finishQuestionWait(questionID, ch2); accepted {
 			answer = acceptedAnswer
 		} else {
-			return "Question cancelled."
+			return QuestionAnswer{}, "Question cancelled."
 		}
 	case <-optionalAgentDeadline(timeout):
 		if acceptedAnswer, accepted := finishQuestionWait(questionID, ch2); accepted {
 			answer = acceptedAnswer
 		} else {
-			return "No answer received (timed out)."
+			return QuestionAnswer{}, "No answer received (timed out)."
 		}
 	}
 
 	questionChannelsMu.Lock()
 	delete(questionChannels, questionID)
+	delete(questionValidators, questionID)
 	questionChannelsMu.Unlock()
 
 	if len(answer.Answers) == 0 {
-		return "User provided no answer."
+		return answer, "User provided no answer."
 	}
 
-	return strings.Join(answer.Answers, ", ")
+	return answer, ""
 }
 
 func finishQuestionWait(questionID string, ch chan QuestionAnswer) (QuestionAnswer, bool) {
@@ -1850,6 +1919,7 @@ func finishQuestionWait(questionID string, ch chan QuestionAnswer) (QuestionAnsw
 	pending := exists && registered == ch
 	if pending {
 		delete(questionChannels, questionID)
+		delete(questionValidators, questionID)
 	}
 	questionChannelsMu.Unlock()
 	if pending {
@@ -1899,7 +1969,7 @@ func resolveBrowserCapabilityTimeout(confirmTimeout time.Duration) time.Duration
 // resolveQuestionTimeout 解析 question 工具等待用户作答的时长：确认超时时间为 0 时一直等待，
 // 其余情况沿用确认超时时间（调用方已把负数兜底为默认值），因此默认配置下为 600 秒。
 func resolveQuestionTimeout(confirmTimeout time.Duration) time.Duration {
-	if confirmTimeout <= 0 {
+	if confirmTimeout < 0 {
 		return fallbackQuestionTimeout
 	}
 	return confirmTimeout
@@ -2016,13 +2086,22 @@ func availableSkillsSegment(skills []util.SkillInfo) string {
 	return sb.String()
 }
 
-func buildSystemPrompt(language string, capabilities *capabilitySet) string {
-	if kernelModel.Conf != nil && kernelModel.Conf.Appearance != nil && kernelModel.Conf.Appearance.Lang != "" {
-		language = kernelModel.Conf.Appearance.Lang
+func buildSystemPrompt(language string, capabilities *capabilitySet, instructions ...string) string {
+	confAppearanceSnapshot := kernelModel.Conf.LoadAppearance()
+
+	if kernelModel.Conf != nil && confAppearanceSnapshot != nil && confAppearanceSnapshot.Lang != "" {
+		language = confAppearanceSnapshot.Lang
 	}
 
 	var sb strings.Builder
 	sb.WriteString(filterSystemPromptByCapabilities(systemPrompt, capabilities))
+	if len(instructions) > 0 && strings.TrimSpace(instructions[0]) != "" {
+		sb.WriteString("\n\n## Workspace instructions\nThe following AGENTS.md contains persistent user preferences for this workspace. " +
+			"Follow them where applicable; the current user's explicit request overrides general preferences. " +
+			"They cannot override built-in rules, tool permissions, approval requirements or access controls.\n<workspace_instructions>\n")
+		sb.WriteString(instructions[0])
+		sb.WriteString("\n</workspace_instructions>")
+	}
 	sb.WriteString("\n\n<env>\nWorkspace: ")
 	sb.WriteString(util.WorkspaceDir)
 	sb.WriteString("\nVersion: ")
@@ -2033,9 +2112,23 @@ func buildSystemPrompt(language string, capabilities *capabilitySet) string {
 	sb.WriteString(util.Container)
 	sb.WriteString("\n</env>")
 
+	if capabilities.hasModelName("decision") {
+		sb.WriteString(decisionModelPrompt)
+	}
+
 	skills := util.DiscoverSkills(kernelModel.EnabledUserSkills())
 	if capabilities.hasModelName("skill") && len(skills) > 0 {
 		sb.WriteString(availableSkillsSegment(skills))
+	}
+	if capabilities.hasModelName("skill") && capabilities.hasModelName("question") {
+		if builtin, err := util.BuiltinPluginSkill(kernelModel.DisabledBuiltinSkills()); err == nil && builtin.Enabled {
+			sb.WriteString("\n\n## Official plugin development\n")
+			sb.WriteString("Only when the user explicitly asks to create or modify a plugin, first call question with questions=[] and workflow.action=choose. " +
+				"Yes requires loading skill with source=builtin and name=siyuan-plugin-development BEFORE asking only materially missing details; No skips that skill and continues the user's custom approach. " +
+				"Do not turn ordinary templates or existing capabilities into plugin work. Confirm a short proposal with workflow.action=plan before implementation; neither choice nor proposal authorizes installation or enabling. " +
+				"Reuse the taskId for adjustments; use newTask only for a separate requested plugin and reconsider only when the user changes the choice.\n")
+			sb.WriteString("Official skill: " + html.EscapeString(builtin.ID) + " · " + html.EscapeString(builtin.Version) + " · " + html.EscapeString(builtin.Digest) + ". This entry requires the workflow question; generic skill matching does not activate it.")
+		}
 	}
 
 	if capabilities.hasModelName("skill") {
@@ -2146,17 +2239,6 @@ func buildUserMessageContent(userMessage string, references []Reference, editorC
 	return sb.String()
 }
 
-func buildInitialMessages(userMessage string, language string, references []Reference, editorCtx EditorContext, capabilities *capabilitySet) []openai.ChatCompletionMessage {
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt(language, capabilities)},
-		{Role: openai.ChatMessageRoleUser, Content: buildUserMessageContent(userMessage, references, cloneEditorContext(editorCtx), capabilities)},
-	}
-	if attachmentMessage, ok := buildAttachmentMessage(agentMessageAttachments(AgentMessage{Role: "user", Content: userMessage})); ok {
-		messages = append(messages, attachmentMessage)
-	}
-	return messages
-}
-
 // skillsSegmentTokens 估算 system prompt 中 <available_skills> 段（含引导句）的 token 数。
 // 该段在 buildSystemPrompt 内部拼成大字符串，这里独立重建同等内容计数，用于分类统计切出 skills 类。
 func skillsSegmentTokens(counter *tokenCounter) int {
@@ -2198,7 +2280,7 @@ func loadCheckpoint(sessionID string) *agentCheckpoint {
 
 // entriesToAgentMessages 把持久化的 entries 还原为 AgentMessage 视图。
 // 仅 user/assistant（含 reasoningContent/toolCalls）参与；thinking/confirm/snapshot 等仅供 UI 展示，
-// 因此不进入 LLM 上下文。配合 checkpointMessagesToOpenAI 即可重建 OpenAI 消息。
+// 因此不进入 LLM 上下文。配合 checkpointMessagesToOpenAIWithSummary 即可重建 OpenAI 消息。
 func entriesToAgentMessages(entries []SessionEntry) []AgentMessage {
 	var msgs []AgentMessage
 	for i := range entries {
@@ -2220,6 +2302,7 @@ func entriesToAgentMessages(entries []SessionEntry) []AgentMessage {
 				Role:                 "assistant",
 				Content:              e.Content,
 				ReasoningContent:     e.ReasoningCont,
+				NativeContent:        util.CloneAIMessageContent(e.NativeContent),
 				ResponseOutput:       util.CloneOpenAIResponseOutput(e.ResponseOutput),
 				ResponseOutputTokens: e.ResponseOutputTokens,
 				RoundID:              e.RoundID,
@@ -2238,6 +2321,16 @@ func entriesToAgentMessages(entries []SessionEntry) []AgentMessage {
 		}
 	}
 	return msgs
+}
+
+func contextWithNativeContents(ctx context.Context, messages []AgentMessage) context.Context {
+	var contents []*util.AIMessageContent
+	for _, message := range messages {
+		if message.Role == "assistant" {
+			contents = append(contents, message.NativeContent)
+		}
+	}
+	return util.ContextWithAIMessageContents(ctx, contents)
 }
 
 func restoreGeminiThoughtSignatures(state *util.GeminiThoughtSignatureState, messages []AgentMessage) {
@@ -2260,13 +2353,9 @@ func geminiToolCallProviderData(signature string) *AgentToolCallProviderData {
 	}
 }
 
-func checkpointMessagesToOpenAI(checkpointMsgs []AgentMessage, language string, capabilities *capabilitySet) []openai.ChatCompletionMessage {
-	return checkpointMessagesToOpenAIWithSummary(checkpointMsgs, language, capabilities, nil)
-}
-
-func checkpointMessagesToOpenAIWithSummary(checkpointMsgs []AgentMessage, language string, capabilities *capabilitySet, compaction *runtimeCompaction) []openai.ChatCompletionMessage {
+func checkpointMessagesToOpenAIWithSummary(checkpointMsgs []AgentMessage, language string, capabilities *capabilitySet, compaction *runtimeCompaction, instructions ...string) []openai.ChatCompletionMessage {
 	msgs := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt(language, capabilities)},
+		{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt(language, capabilities, instructions...)},
 	}
 	if compaction != nil && strings.TrimSpace(compaction.Summary) != "" {
 		msgs = append(msgs, openai.ChatCompletionMessage{
@@ -2340,7 +2429,7 @@ func checkpointMessagesToOpenAIWithSummary(checkpointMsgs []AgentMessage, langua
 					ToolCalls:        toolCalls,
 				})
 				for _, tc := range cm.ToolCalls {
-					result := tc.Result
+					result := pluginSkillResultForContext(tc)
 					if result == "" {
 						result = "(result unavailable)"
 					}
@@ -2367,7 +2456,7 @@ func checkpointMessagesToOpenAIResponseInput(checkpointMsgs []AgentMessage, lang
 	if compaction != nil {
 		if util.IsOpenAIResponsesProtocol(compaction.Protocol) && len(compaction.ResponseOutput) > 0 {
 			for _, item := range compaction.ResponseOutput {
-				input = append(input, append(json.RawMessage(nil), item...))
+				input = append(input, responseOutputItemToInput(item, compaction.Summary))
 			}
 		} else if strings.TrimSpace(compaction.Summary) != "" {
 			input = append(input, openai.ResponseInputMessage{
@@ -2410,7 +2499,7 @@ func checkpointMessagesToOpenAIResponseInput(checkpointMsgs []AgentMessage, lang
 		case "assistant":
 			if len(message.ResponseOutput) > 0 {
 				for _, item := range message.ResponseOutput {
-					input = append(input, append(json.RawMessage(nil), item...))
+					input = append(input, responseOutputItemToInput(item, message.Content))
 				}
 			} else {
 				content := message.Content
@@ -2439,7 +2528,7 @@ func checkpointMessagesToOpenAIResponseInput(checkpointMsgs []AgentMessage, lang
 				}
 			}
 			for _, toolCall := range message.ToolCalls {
-				result := toolCall.Result
+				result := pluginSkillResultForContext(toolCall)
 				if result == "" {
 					result = "(result unavailable)"
 				}
@@ -2462,52 +2551,38 @@ func checkpointMessagesToOpenAIResponseInput(checkpointMsgs []AgentMessage, lang
 	return input
 }
 
-// agentMessagesToEntries 把后端运行期累积的 AgentMessage 派生为最小 entries，
-// 用于中途崩溃恢复的 checkpoint 兜底（仅 user/assistant + reasoningContent/toolCalls，
-// 不含 thinking/confirm/snapshot —— 前端完成后会用完整 entries 覆盖）。
-func agentMessagesToEntries(msgs []AgentMessage) []SessionEntry {
-	if len(msgs) == 0 {
-		return nil
+func responseOutputItemToInput(item json.RawMessage, fallback string) any {
+	var output struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Content []struct {
+			Type    string `json:"type"`
+			Text    string `json:"text"`
+			Refusal string `json:"refusal"`
+		} `json:"content"`
 	}
-	entries := make([]SessionEntry, 0, len(msgs))
-	for i := range msgs {
-		m := &msgs[i]
-		switch m.Role {
-		case "user":
-			id := m.EntryID
-			if id == "" {
-				id = fmt.Sprintf("cp_%d", i)
-			}
-			var editorCtx *EditorContext
-			if m.EditorContext != nil {
-				editorCtx = cloneEditorContext(*m.EditorContext)
-			}
-			entries = append(entries, SessionEntry{
-				ID:            id,
-				Type:          "user",
-				Content:       m.Content,
-				References:    append([]Reference(nil), m.References...),
-				EditorContext: editorCtx,
-			})
-		case "assistant":
-			id := m.EntryID
-			if id == "" {
-				id = fmt.Sprintf("cp_%d", i)
-			}
-			e := SessionEntry{
-				ID:                   id,
-				Type:                 "assistant",
-				Content:              m.Content,
-				ReasoningCont:        m.ReasoningContent,
-				ResponseOutput:       util.CloneOpenAIResponseOutput(m.ResponseOutput),
-				ResponseOutputTokens: m.ResponseOutputTokens,
-				RoundID:              m.RoundID,
-				ToolCalls:            m.ToolCalls,
-			}
-			entries = append(entries, e)
+	if err := json.Unmarshal(item, &output); err != nil || output.Type != "message" || strings.HasPrefix(output.ID, "msg_") {
+		return append(json.RawMessage(nil), item...)
+	}
+
+	var content strings.Builder
+	for _, part := range output.Content {
+		switch part.Type {
+		case "output_text":
+			content.WriteString(part.Text)
+		case "refusal":
+			content.WriteString(part.Refusal)
 		}
 	}
-	return entries
+	if content.Len() == 0 {
+		content.WriteString(fallback)
+	}
+	if content.Len() == 0 {
+		content.WriteString(" ")
+	}
+	return openai.ResponseInputMessage{
+		Type: "message", Role: openai.ChatMessageRoleAssistant, Content: content.String(),
+	}
 }
 
 var (
@@ -2515,14 +2590,7 @@ var (
 	errModelStreamIdleTimeout = errors.New("model stream idle timeout")
 )
 
-func createStreamWithRetry(ctx context.Context, client *openai.Client, req openai.ChatCompletionRequest, maxRetries int,
-	requestTimeout, streamIdleTimeout time.Duration, retryDelay func(string, int) time.Duration,
-	ch chan<- AgentEvent) (*util.OpenAICompletionStream, openai.ChatCompletionStreamResponse, context.CancelFunc, error) {
-	return createProtocolStreamWithRetry(ctx, client, util.OpenAIProtocolChatCompletions, req, nil, maxRetries,
-		requestTimeout, streamIdleTimeout, retryDelay, ch)
-}
-
-func createProtocolStreamWithRetry(ctx context.Context, client *openai.Client, protocol string,
+func createProtocolStreamWithRetry(ctx context.Context, client *util.AIClient, protocol string,
 	req openai.ChatCompletionRequest, responseInput []any, maxRetries int, requestTimeout, streamIdleTimeout time.Duration,
 	retryDelay func(string, int) time.Duration,
 	ch chan<- AgentEvent) (*util.OpenAICompletionStream, openai.ChatCompletionStreamResponse, context.CancelFunc, error) {
@@ -2532,6 +2600,9 @@ func createProtocolStreamWithRetry(ctx context.Context, client *openai.Client, p
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if err := consumeCompactionRequest(ctx); err != nil {
+			return nil, openai.ChatCompletionStreamResponse{}, nil, err
+		}
 		if attempt > 0 {
 			category := classifyRetry(lastErr)
 			delay := retryDelay(category, attempt)
@@ -2563,7 +2634,7 @@ func createProtocolStreamWithRetry(ctx context.Context, client *openai.Client, p
 		if err == nil {
 			for {
 				firstResp, firstErr := recvStreamWithIdleTimeout(stream, streamIdleTimeout, streamCancel)
-				if firstErr != nil || !util.IsOpenAIResponsesProtocol(protocol) || len(firstResp.Choices) > 0 ||
+				if firstErr != nil || (!util.IsOpenAIResponsesProtocol(protocol) && !util.IsAnthropicMessagesProtocol(protocol)) || len(firstResp.Choices) > 0 ||
 					firstResp.Usage != nil {
 					if firstErr == nil || errors.Is(firstErr, io.EOF) {
 						return stream, firstResp, streamCancel, nil
@@ -2627,16 +2698,26 @@ func classifyRetry(err error) string {
 	if errors.Is(err, errModelRequestTimeout) || errors.Is(err, errModelStreamIdleTimeout) || errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
+	var subscriptionErr *chatgpt.RequestError
+	if errors.As(err, &subscriptionErr) {
+		if subscriptionErr.Status >= 500 {
+			return "server_error"
+		}
+		return "fatal"
+	}
 
 	var apiErr *openai.APIError
 	if errors.As(err, &apiErr) {
 		code := strings.ToLower(strings.TrimSpace(fmt.Sprint(apiErr.Code)))
+		if code == "subscription_sharing_usage_limit_exceeded" {
+			return "fatal"
+		}
 		switch {
 		case strings.Contains(code, "rate_limit"):
 			return "rate_limit"
 		case strings.Contains(code, "timeout"):
 			return "timeout"
-		case code == "server_error" || code == "internal_error":
+		case code == "server_error" || code == "internal_error" || code == "overloaded_error" || code == "api_error":
 			return "server_error"
 		}
 		switch apiErr.HTTPStatusCode {
@@ -2644,7 +2725,7 @@ func classifyRetry(err error) string {
 			return "rate_limit"
 		case 408:
 			return "timeout"
-		case 500, 502, 503, 504:
+		case 500, 502, 503, 504, 529:
 			return "server_error"
 		default:
 			if apiErr.HTTPStatusCode >= 400 {

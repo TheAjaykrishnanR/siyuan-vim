@@ -7,6 +7,7 @@ import {
 } from "./nativeCatalog";
 import {getCommandRegistry} from "./service";
 import type {ICommandContextSnapshot, ICommandDefinition} from "./types";
+import {DATABASE_ROW_COMMANDS, getDatabaseRowNavigationButton} from "./databaseRowNavigation";
 
 export type TNativeCommandExecutor = (
     command: string,
@@ -22,7 +23,16 @@ const getHotkey = (item: INativeCommandCatalogItem) => {
     return window.siyuan.config.keymap.editor[item.keymapPath[1]][item.keymapPath[2]]?.custom || "";
 };
 
+const publishUnavailableCommands = new Set([
+    "addToDatabase", "closeUnmodified", "editReadonly", "switchReadonly", "replace",
+    "move", "newFile", "dailyNote", "syncNow", "dataHistory",
+]);
+
 const matchesContext = (item: INativeCommandCatalogItem, context: ICommandContextSnapshot) => {
+    if (DATABASE_ROW_COMMANDS.some(command => command === item.legacyId)) {
+        const button = getDatabaseRowNavigationButton(context, item.legacyId);
+        return !!button && !button.disabled;
+    }
     // 命令面板和快捷键共用只读限制，文档树操作仍按文档树上下文处理。
     if (context.focus !== "fileTree" && context.protyle?.disabled &&
         ["move", "addToDatabase"].includes(item.legacyId)) {
@@ -51,6 +61,7 @@ const createNativeCommand = (
     hotkey: () => getHotkey(item),
     order,
     platform: environment => isNativeCommandSupported(item, environment),
+    when: () => !window.siyuan.isPublish || !publishUnavailableCommands.has(item.legacyId),
     enabled: context => matchesContext(item, context),
     execute: context => execute(item.legacyId, context),
 });

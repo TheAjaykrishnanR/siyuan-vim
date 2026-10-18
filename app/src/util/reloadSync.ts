@@ -12,6 +12,7 @@ import type {Tab} from "../layout/Tab";
 import {setTitle} from "./processTitle";
 /// #if MOBILE
 import {getMobileBacklinkPanels, removeMobileBacklinkContent} from "../mobile/util/backlinkPanels";
+import {refreshMobileReferenceSheet, removeMobileReferenceSheet} from "../mobile/util/openReference";
 /// #endif
 /// #if !MOBILE
 import {removeBlockPanelEditors} from "../block/panelRemoval";
@@ -31,6 +32,8 @@ export const reloadSync = (
     }
     /// #if MOBILE
     removeMobileBacklinkContent({rootIDs: data.removeRootIDs});
+    removeMobileReferenceSheet({rootIDs: data.removeRootIDs});
+    refreshMobileReferenceSheet(data.upsertRootIDs, updateReadonly);
     getMobileBacklinkPanels().forEach(panel => {
         panel.markIndexDirty({backlinkChanged: true, backlinkFull: true});
         panel.refreshAfterIndex();
@@ -121,7 +124,7 @@ export const reloadSync = (
     allModels.outline.forEach(item => {
         if (item.type === "local" && data.removeRootIDs.includes(item.blockId)) {
             item.parent.parent.removeTab(item.parent.id, false, false);
-        } else if (item.type !== "local" || data.upsertRootIDs.includes(item.blockId)) {
+        } else if (item.blockId && (item.type !== "local" || data.upsertRootIDs.includes(item.blockId))) {
             const outlineParam: IObject = {
                 id: item.blockId,
                 preview: item.isPreview

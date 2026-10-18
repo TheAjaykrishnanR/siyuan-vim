@@ -19,10 +19,64 @@ import {escapeAttr, escapeHtml} from "../../util/escape";
 import {bindAccountAuthEnter, isAccountLoginDisabled} from "./accountAuth";
 import {
     getCloudLoginUserName,
+    getCloudUserSession,
+    createCloudUserRefresh,
     resolveCloudUserRefresh,
     setCloudUser,
     type TCloudUser,
 } from "./cloudUser";
+
+const getCloudUserRefreshKey = () =>
+    `${window.siyuan.config.cloudRegion}:${window.siyuan.user?.userId}:${getCloudUserSession()}`;
+
+const requestCloudUserRefresh = createCloudUserRefresh(async (key) => {
+    const user = window.siyuan.user;
+    if (!user?.userToken || key !== getCloudUserRefreshKey()) {
+        return;
+    }
+    const region = window.siyuan.config.cloudRegion;
+    const session = getCloudUserSession();
+    let result: {code: number; msg: string} | undefined;
+    const isCurrentSession = () => session === getCloudUserSession() &&
+        region === window.siyuan.config.cloudRegion && user.userId === window.siyuan.user?.userId;
+    await fetchPost("/api/setting/getCloudUser", {token: user.userToken}, response => {
+        if (!isCurrentSession()) {
+            return;
+        }
+        result = {code: response.code, msg: response.msg};
+        const action = resolveCloudUserRefresh(response.code, response.data, user.userName);
+        if (action.apply) {
+            applyCloudUserState(action.user, action.userName);
+        }
+    }, undefined, () => {
+        if (isCurrentSession()) {
+            result = {code: 400, msg: window.siyuan.languages._kernel[18]};
+        }
+    });
+    return result;
+});
+
+export const refreshCloudUser = async (force = false, root?: Element) => {
+    const user = window.siyuan.user;
+    if (!user?.userToken) {
+        return;
+    }
+    const key = getCloudUserRefreshKey();
+    const icon = root?.querySelector("#refresh svg");
+    icon?.classList.add("fn__rotate");
+    try {
+        const result = await requestCloudUserRefresh(key, force);
+        if (result && root?.isConnected) {
+            if (result.code !== 0) {
+                showMessage(result.msg);
+            } else if (force) {
+                showMessage(window.siyuan.languages.refreshUser, 3000);
+            }
+        }
+    } finally {
+        icon?.classList.remove("fn__rotate");
+    }
+};
 
 /** 账号节：由 syncTab 注册 */
 export const registerAccountGroup = (tab: SettingTabBuilder) => {
@@ -143,7 +197,7 @@ const genAccountAuthHTML = (mode: "login" | "deactivate") => {
         <div class="fn__hr--b"></div>
         <div class="b3-form__img fn__flex">
             <img id="captchaImg" class="b3-form__img-captcha fn__pointer" alt="">
-            <input id="captcha" class="b3-text-field fn__flex-1" placeholder="${window.siyuan.languages.captcha}">
+            <input spellcheck="false" id="captcha" class="b3-text-field fn__flex-1" placeholder="${window.siyuan.languages.captcha}">
         </div>
     </div>
     ${mode === "login" ? `<div class="fn__hr--b"></div>
@@ -164,7 +218,7 @@ const genAccountAuthHTML = (mode: "login" | "deactivate") => {
 <div class="b3-form__space--small fn__none" id="form2">
     <div class="b3-form__icon">
         <svg class="b3-form__icon-icon"><use xlink:href="#iconLock"></use></svg>
-        <input id="twofactorAuthCode" class="b3-text-field fn__block b3-form__icon-input" placeholder="${window.siyuan.languages.twoFactorCaptcha}">
+        <input spellcheck="false" id="twofactorAuthCode" class="b3-text-field fn__block b3-form__icon-input" placeholder="${window.siyuan.languages.twoFactorCaptcha}">
     </div>
     <div class="fn__hr--b"></div>
     <button id="login2" class="b3-button fn__block">${mode === "login" ? window.siyuan.languages.login : window.siyuan.languages.deactivateUser}</button>
@@ -189,25 +243,7 @@ const bindAccountMainEvent = (accountSettingsRoot: Element) => {
         if (refreshIcon?.classList.contains("fn__rotate")) {
             return;
         }
-        refreshIcon?.classList.add("fn__rotate");
-        const previousUserName = window.siyuan.user?.userName || "";
-        fetchPost("/api/setting/getCloudUser", {
-            token: window.siyuan.user?.userToken || "",
-        }, response => {
-            const action = resolveCloudUserRefresh(response.code, response.data, previousUserName);
-            if (action.apply) {
-                applyCloudUserState(action.user, action.userName, accountSettingsRoot);
-            }
-            if (response.code !== 0) {
-                showMessage(response.msg);
-                return;
-            }
-            showMessage(window.siyuan.languages.refreshUser, 3000);
-        }, undefined, () => {
-            showMessage(window.siyuan.languages._kernel[18]);
-        }).finally(() => {
-            refreshIcon?.classList.remove("fn__rotate");
-        });
+        void refreshCloudUser(true, accountSettingsRoot);
     });
     if (accountMainEl.classList.contains("config-account--login")) {
         bindAccountAuthForm(accountMainEl as HTMLElement, "login", accountSettingsRoot);
@@ -289,6 +325,8 @@ const genAccountPaymentHTML = () => {
     }
 
     const isIOS = isInIOS();
+    const mobile = isMobile();
+    const renewButtonClass = mobile ? "b3-button b3-button--outline" : "b3-button b3-button--text";
     const expireTime = window.siyuan.user.userSiYuanProExpireTime;
     const isOnetimePaid = window.siyuan.user.userSiYuanOneTimePayStatus === 1;
     let statusHTML = "";
@@ -316,8 +354,8 @@ const genAccountPaymentHTML = () => {
         actionsHtmlParts.push(`<div class="ft__on-surface config-account__payment-remaining">${window.siyuan.languages.account6} ${daysLeft} ${window.siyuan.languages.day}</div><span class="fn__space"></span>`);
         // 续费订阅
         actionsHtmlParts.push(isIOS
-            ? `<button type="button" class="b3-button b3-button--text" data-action="iOSPay" data-type="subscribe">${window.siyuan.languages.clickMeToRenew}</button>`
-            : `<a class="b3-button b3-button--text" href="${getCloudURL("subscribe/siyuan")}" target="_blank">${window.siyuan.languages.clickMeToRenew}</a>`
+            ? `<button type="button" class="${renewButtonClass}" data-action="iOSPay" data-type="subscribe">${window.siyuan.languages.clickMeToRenew}</button>`
+            : `<a class="${renewButtonClass}" href="${getCloudURL("subscribe/siyuan")}" target="_blank">${window.siyuan.languages.clickMeToRenew}</a>`
         );
         if (!isOnetimePaid) {
             // 购买功能特性
@@ -333,8 +371,8 @@ const genAccountPaymentHTML = () => {
 
         const actionsHtmlParts: string[] = [];
         actionsHtmlParts.push(isIOS
-            ? `<button type="button" class="b3-button b3-button--text" data-action="iOSPay" data-type="subscribe">${window.siyuan.languages.clickMeToRenew}</button>`
-            : `<a class="b3-button b3-button--text" href="${getCloudURL("subscribe/siyuan")}" target="_blank">${window.siyuan.languages.clickMeToRenew}</a>`
+            ? `<button type="button" class="${renewButtonClass}" data-action="iOSPay" data-type="subscribe">${window.siyuan.languages.clickMeToRenew}</button>`
+            : `<a class="${renewButtonClass}" href="${getCloudURL("subscribe/siyuan")}" target="_blank">${window.siyuan.languages.clickMeToRenew}</a>`
         );
         if (!isOnetimePaid) {
             const onepayAction = isIOS
@@ -370,10 +408,10 @@ ${iconVIP}${isOnetimePaid ? window.siyuan.languages.account4 : window.siyuan.lan
     // 激活码包含首年订阅和终生订阅两种，在非终生订阅状态时显示输入框
     const activationHTML = !isIOS && expireTime !== -1 ? `<div class="fn__hr"></div>
 <div class="b3-form__icon fn__block">
-    <input class="b3-text-field fn__block" style="padding-right: 52px;" placeholder="${window.siyuan.languages.activationCodePlaceholder}">
+    <input spellcheck="false" class="b3-text-field fn__block" style="padding-right: 52px;" placeholder="${window.siyuan.languages.activationCodePlaceholder}">
     <button type="button" id="activationCode" class="b3-button b3-button--text" style="position: absolute; right: 0; top: 0;">${window.siyuan.languages.confirm}</button>
 </div>` : "";
-    const showDeactivate = isMobile();
+    const showDeactivate = mobile;
     const deactivateHTML = showDeactivate ? `<div class="config-account__deactivate">
     <button type="button" class="b3-button b3-button--cancel" id="deactivateUser">${window.siyuan.languages.deactivateUser}</button>
 </div>` : "";
@@ -381,7 +419,7 @@ ${iconVIP}${isOnetimePaid ? window.siyuan.languages.account4 : window.siyuan.lan
     return `<div id="configAccountPayment" class="b3-label config-item${showDeactivate ? " config-account--deactivate" : ""}">
     <div class="fn__flex">
         <span class="config-name">${window.siyuan.languages.paymentStatus}</span>
-        <span class="fn__space"></span><span class="ft__on-surface">${statusHTML}</span>
+        <span class="fn__space"></span><span class="ft__on-surface config-account__payment-status">${statusHTML}</span>
         <div class="fn__flex-1"></div>
         ${actionsHTML}
     </div>
@@ -454,7 +492,6 @@ const bindAccountAuthForm = (
                     showMessage(userResponse.msg);
                     return;
                 }
-                window.dispatchEvent(new CustomEvent("siyuan-login-success"));
             });
         } else if (mode === "deactivate") {
             confirmDeactivateAccount();
@@ -565,7 +602,7 @@ const renderAccount = (accountSettingsRoot: Element) => {
 };
 
 export const applyCloudUserState = (user: TCloudUser | null, userName = "", accountSettingsRoot?: Element) => {
-    setCloudUser(user, userName);
+    const loggedIn = setCloudUser(user, userName);
     const root = accountSettingsRoot || syncTabElement;
     if (root) {
         renderAccount(root);
@@ -573,6 +610,9 @@ export const applyCloudUserState = (user: TCloudUser | null, userName = "", acco
     }
     onSetaccount();
     processSync();
+    if (loggedIn) {
+        window.dispatchEvent(new CustomEvent("siyuan-login-success"));
+    }
 };
 
 const genVIPIconHTML = (className = "") =>

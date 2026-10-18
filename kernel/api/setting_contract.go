@@ -35,6 +35,7 @@ func settingAIPayload(value *conf.AI) *apicontract.SettingAI {
 	result.MCP = settingMCPPayload(value.MCP)
 	result.Embedding = settingEmbeddingPayload(value.Embedding)
 	result.Rerank = settingRerankPayload(value.Rerank)
+	result.Decision = settingDecisionPayload(value.Decision)
 	result.Agent = settingAgentPayload(value.Agent)
 	result.Editing = settingEditingPayload(value.Editing)
 	result.ImageGeneration = settingImageGenerationPayload(value.ImageGeneration)
@@ -124,6 +125,28 @@ func settingRerankPayload(value *conf.Rerank) *apicontract.SettingRerank {
 	return result
 }
 
+func settingDecisionPayload(value *conf.Decision) *apicontract.SettingDecision {
+	if value == nil {
+		return nil
+	}
+	result := &apicontract.SettingDecision{Enabled: value.Enabled, Provider: value.Provider, Endpoint: value.Endpoint, APIKey: value.APIKey, Name: value.Name, Timeout: value.Timeout}
+	if value.Profiles != nil {
+		result.Profiles = map[string]*apicontract.SettingDecisionProfile{}
+	}
+	for provider, profile := range value.Profiles {
+		if profile == nil {
+			result.Profiles[provider] = nil
+		} else {
+			result.Profiles[provider] = &apicontract.SettingDecisionProfile{Endpoint: profile.Endpoint, APIKey: profile.APIKey, Name: profile.Name, Timeout: profile.Timeout}
+		}
+	}
+	// 旧客户端兼容字段固定投影 TypeSafe，不能投影当前供应商的凭证。
+	if profile := value.Profiles["typesafe"]; profile != nil {
+		result.Endpoint, result.APIKey, result.Name, result.Timeout = profile.Endpoint, profile.APIKey, profile.Name, profile.Timeout
+	}
+	return result
+}
+
 func settingAgentPayload(value *conf.Agent) *apicontract.SettingAgent {
 	if value == nil {
 		return nil
@@ -174,6 +197,7 @@ func settingAgentSkillsPayload(value *conf.AgentSkills) *apicontract.SettingAgen
 	}
 	result := &apicontract.SettingAgentSkills{}
 	result.UserEnabled = value.UserEnabled
+	result.BuiltinDisabled = value.BuiltinDisabled
 	return result
 }
 
@@ -207,6 +231,8 @@ func settingProviderPayload(value *conf.Provider) *apicontract.SettingProvider {
 		return nil
 	}
 	result := &apicontract.SettingProvider{}
+	result.AuthType = value.AuthType
+	result.AccountID = value.AccountID
 	result.Headers = value.Headers
 	result.ID = value.ID
 	result.DisplayName = value.DisplayName
@@ -338,6 +364,8 @@ func settingEditorPayload(value *conf.Editor) *apicontract.SettingEditor {
 	result.CodeLigatures = value.CodeLigatures
 	result.DisplayBookmarkIcon = value.DisplayBookmarkIcon
 	result.DisplayNetImgMark = value.DisplayNetImgMark
+	result.DisplayImgName = value.DisplayImgName
+	result.DisplayImgAlt = value.DisplayImgAlt
 	result.DatabaseAttrShow = value.DatabaseAttrShow
 	result.DatabaseAttrClickMode = value.DatabaseAttrClickMode
 	result.DatabaseAttrViewMode = value.DatabaseAttrViewMode
@@ -365,6 +393,7 @@ func settingEditorPayload(value *conf.Editor) *apicontract.SettingEditor {
 	result.DynamicLoadBlocks = value.DynamicLoadBlocks
 	result.Justify = value.Justify
 	result.RTL = value.RTL
+	result.AutoDirection = value.AutoDirection
 	result.Spellcheck = value.Spellcheck
 	result.SpellcheckLanguages = value.SpellcheckLanguages
 	result.HashTagSearch = value.HashTagSearch
@@ -376,6 +405,8 @@ func settingEditorPayload(value *conf.Editor) *apicontract.SettingEditor {
 	result.BacklinkHideReference = value.BacklinkHideReference
 	result.BacklinkShowBottom = value.BacklinkShowBottom
 	result.BacklinkSort = value.BacklinkSort
+	result.BacklinkGlobalSort = value.BacklinkGlobalSort
+	result.BacklinkBlockSort = value.BacklinkBlockSort
 	result.BackmentionSort = value.BackmentionSort
 	result.HeadingNumber = value.HeadingNumber
 	result.HeadingNumberFormat = value.HeadingNumberFormat
@@ -466,8 +497,8 @@ func settingFileTreePayload(value *conf.FileTree) *apicontract.SettingFileTree {
 	result.AlwaysSelectOpenedFile = value.AlwaysSelectOpenedFile
 	result.OpenFilesUseCurrentTab = value.OpenFilesUseCurrentTab
 	result.CloseTabOnDoubleClick = value.CloseTabOnDoubleClick
-	result.DocIconClickExpand = value.DocIconClickExpand
-	result.ParentDocClickExpand = value.ParentDocClickExpand
+	result.DocIconClickMode = value.DocIconClickMode
+	result.ParentDocTitleClickMode = value.ParentDocTitleClickMode
 	result.BoxDocEnabled = value.BoxDocEnabled
 	result.UseSVGDefaultIcon = value.UseSVGDefaultIcon
 	result.RefCreateSaveBox = value.RefCreateSaveBox
@@ -497,6 +528,8 @@ func settingSearchPayload(value *conf.Search) *apicontract.SettingSearch {
 		return nil
 	}
 	result := &apicontract.SettingSearch{}
+	result.Mindmap = value.Mindmap
+	result.MindmapItem = value.MindmapItem
 	result.Document = value.Document
 	result.Heading = value.Heading
 	result.List = value.List
@@ -682,6 +715,7 @@ func settingEntryVisibilityProfilePayload(value *conf.EntryVisibilityProfile) *a
 	result := &apicontract.SettingEntryVisibilityProfile{}
 	result.ID = value.ID
 	result.Name = value.Name
+	result.Defaults = value.Defaults
 	result.Entries = value.Entries
 	result.Orders = value.Orders
 	return result

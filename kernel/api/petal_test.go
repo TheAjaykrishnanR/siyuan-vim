@@ -36,7 +36,8 @@ func TestSetPetalPublishEnabledAuthorization(t *testing.T) {
 	originalConf := model.Conf
 	originalDataDir := util.DataDir
 	model.Conf = model.NewAppConf()
-	model.Conf.Bazaar = &conf.Bazaar{Trust: true}
+	model.Conf.Sync.Store(conf.NewSync())
+	model.Conf.Bazaar.Store(&conf.Bazaar{Trust: true})
 	util.DataDir = t.TempDir()
 	t.Cleanup(func() {
 		model.Conf = originalConf

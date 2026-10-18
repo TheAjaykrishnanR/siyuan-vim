@@ -7,7 +7,7 @@
 		"id": "20240530101000-35bbvcx",
 		"title": "コンテンツブロックの種類",
 		"type": "doc",
-		"updated": "20260906220233"
+		"updated": "20261012014930"
 	},
 	"Children": [
 		{
@@ -17,7 +17,7 @@
 			"Properties": {
 				"ID": "20240530101000-6nam42g",
 				"id": "20240530101000-n0tipvh",
-				"updated": "20260906003609"
+				"updated": "20260921215916"
 			},
 			"Children": [
 				{
@@ -73,7 +73,7 @@
 			"Properties": {
 				"colgroup": "||",
 				"id": "20240530101000-7ed5u6l",
-				"updated": "20260906003609"
+				"updated": "20260923221935"
 			},
 			"Children": [
 				{
@@ -956,6 +956,75 @@
 										},
 										{
 											"Type": "NodeLinkText",
+											"Data": "mindmap-list"
+										},
+										{
+											"Type": "NodeCloseBracket"
+										},
+										{
+											"Type": "NodeOpenParen"
+										},
+										{
+											"Type": "NodeLinkDest",
+											"Data": "assets/mindmap-list-20260921215248-e039c4.svg"
+										},
+										{
+											"Type": "NodeCloseParen"
+										}
+									]
+								},
+								{
+									"Type": "NodeText",
+									"Data": "​"
+								}
+							]
+						},
+						{
+							"Type": "NodeTableCell",
+							"Data": "td",
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "マインドマップブロック"
+								}
+							]
+						},
+						{
+							"Type": "NodeTableCell",
+							"Data": "td",
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "コンテナブロック"
+								}
+							]
+						}
+					]
+				},
+				{
+					"Type": "NodeTableRow",
+					"Data": "tr",
+					"Children": [
+						{
+							"Type": "NodeTableCell",
+							"Data": "td",
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "​​"
+								},
+								{
+									"Type": "NodeImage",
+									"Data": "span",
+									"Children": [
+										{
+											"Type": "NodeBang"
+										},
+										{
+											"Type": "NodeOpenBracket"
+										},
+										{
+											"Type": "NodeLinkText",
 											"Data": "list-item"
 										},
 										{
@@ -1422,7 +1491,7 @@
 			"Properties": {
 				"ID": "20240530101000-rjjxxn8",
 				"id": "20240530101000-p035stn",
-				"updated": "20260906220233"
+				"updated": "20261012014930"
 			},
 			"Children": [
 				{
@@ -2625,6 +2694,60 @@
 			]
 		},
 		{
+			"ID": "20260921215916-odykie5",
+			"Type": "NodeHeading",
+			"HeadingLevel": 3,
+			"Properties": {
+				"id": "20260921215916-odykie5",
+				"updated": "20261012014930"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "マインドマップブロック"
+				}
+			]
+		},
+		{
+			"ID": "20260921215248-kduw3ym",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260921215248-kduw3ym",
+				"updated": "20260923221935"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "マインドマップブロックは独立したブロックタイプです。箇条書き、番号付きリスト、タスクリストから変換でき、リストに戻すこともできます。変換時には項目の内容、番号、タスクの状態が保持されます。リストとして保存された以前のマインドマップは、文書を編集用に開いたときに更新されます。"
+				}
+			]
+		},
+		{
+			"ID": "20261012014537-okp6gop",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261012014537-okp6gop",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "詳しくは "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "block-ref",
+					"TextMarkBlockRefID": "20240530101000-1ev7xub",
+					"TextMarkBlockRefSubtype": "s",
+					"TextMarkTextContent": "マインドマップブロック"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " を参照してください。"
+				}
+			]
+		},
+		{
 			"ID": "20240530101000-y5kx7kx",
 			"Type": "NodeHeading",
 			"HeadingLevel": 3,
@@ -2910,7 +3033,7 @@
 			"Children": [
 				{
 					"Type": "NodeText",
-					"Data": "タブブロックは内容をグループに分けて表示します。タイトルのクリックで切り替え、ドラッグで並べ替え、ダブルクリックで名前を変更できます。上部または左側に配置でき、選択したタブは保存・同期されます。"
+					"Data": "タブブロックは内容をグループに分けて表示します。タイトルのクリックで切り替え、ドラッグで並べ替え、ダブルクリックで名前を変更できます。上部または左側に配置でき、編集モードで選択したタブは保存・同期されます。編集をロックしたドキュメントでは、既定のタブを変更せず、閲覧位置をローカルに記憶します。"
 				}
 			]
 		},
@@ -3028,7 +3151,7 @@
 			"HeadingLevel": 3,
 			"Properties": {
 				"id": "20240530101000-cb0jgj8",
-				"updated": "20250330192732"
+				"updated": "20260928225427"
 			},
 			"Children": [
 				{
@@ -3084,6 +3207,178 @@
 					"Properties": {
 						"id": ""
 					}
+				}
+			]
+		},
+		{
+			"ID": "20260928225427-067f59x",
+			"Type": "NodeList",
+			"ListData": {},
+			"Properties": {
+				"id": "20260928225427-067f59x",
+				"updated": "20260928225427"
+			},
+			"Children": [
+				{
+					"ID": "20260928225427-hbgeetu",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260928225427-hbgeetu",
+						"updated": "20260928225427"
+					},
+					"Children": [
+						{
+							"ID": "20260928225427-e9kqvn5",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260928225427-e9kqvn5",
+								"updated": "20260928225427"
+							},
+							"Children": [
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "/"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " を入力し、"
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "横向きスーパーブロック"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " または "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "縦向きスーパーブロック"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " を選ぶと、空の段落を左右または上下に２つ配置し、最初の段落から入力できます。「columns」で検索しても見つかります。モバイルではキーボードツールバーの挿入パネルからも選べます"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260928225427-yj8hs5v",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260928225427-yj8hs5v",
+						"updated": "20260928225427"
+					},
+					"Children": [
+						{
+							"ID": "20260928225427-o90dbbh",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260928225427-o90dbbh",
+								"updated": "20260928225427"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "スーパーブロックのブロックアイコンメニューで "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "スーパーブロック"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " - "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "現在のスーパーブロックの先頭に列を追加"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " または "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "スーパーブロック"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " - "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "現在のスーパーブロックの末尾に列を追加"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " を選ぶと、横向きレイアウトの先頭または末尾に空の段落を追加できます。縦向きレイアウトでは対応する操作でブロックを追加します。既存の子ブロックの種類や内容は複製しません"
+								}
+							]
+						}
+					]
+				},
+				{
+					"ID": "20260928225427-szdbffm",
+					"Type": "NodeListItem",
+					"ListData": {
+						"BulletChar": 42,
+						"Marker": "Kg=="
+					},
+					"Properties": {
+						"id": "20260928225427-szdbffm",
+						"updated": "20260928225427"
+					},
+					"Children": [
+						{
+							"ID": "20260928225427-ddjfwhu",
+							"Type": "NodeParagraph",
+							"Properties": {
+								"id": "20260928225427-ddjfwhu",
+								"updated": "20260928225427"
+							},
+							"Children": [
+								{
+									"Type": "NodeText",
+									"Data": "縦向きスーパーブロックの直下の子ブロックのメニューで "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "左側に局所的な段組みを作成"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " または "
+								},
+								{
+									"Type": "NodeTextMark",
+									"TextMarkType": "kbd",
+									"TextMarkTextContent": "右側に局所的な段組みを作成"
+								},
+								{
+									"Type": "NodeText",
+									"Data": " を選ぶと、そのブロックと新しい空の段落を内側の横向きスーパーブロックにまとめます。他のブロックの配置は維持され、既存の左右への列挿入ショートカットの対象範囲も変わりません"
+								}
+							]
+						}
+					]
 				}
 			]
 		},

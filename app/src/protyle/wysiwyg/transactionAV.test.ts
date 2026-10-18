@@ -13,8 +13,8 @@ const compiled = transpileModule(readFileSync("src/protyle/wysiwyg/transaction.t
 const fixture = () => {
     const rendered: Element[] = [];
     const carriers = [
-        {isConnected: true, closest: (): Element => null, getAttribute: () => "NodeAttributeView"},
-        {isConnected: true, closest: (): Element => null, getAttribute: () => "NodeAttributeView"},
+        {isConnected: true, closest: (): Element => null, getAttribute: (name: string) => name === "data-av-type" ? "table" : "NodeAttributeView"},
+        {isConnected: true, closest: (): Element => null, getAttribute: (name: string) => name === "data-av-type" ? "table" : "NodeAttributeView"},
     ];
     let finish: (success: boolean) => void;
     const exports: any = {};
@@ -27,6 +27,9 @@ const fixture = () => {
             ({doOperations, undoOperations}),
         cleanBlockSelectionModeHTML: (html: string) => html,
         cleanTableCellRichHTML: (html: string) => html,
+        cleanTableVirtualizationHTML: (html: string) => html,
+        cleanListMindmapHTML: (html: string) => html,
+        restoreInlineElementBoundaryHTML: (html: string) => html,
         normalizeHTMLAssetIFrameBlockDOM: (html: string) => html,
         cleanHeadingNumberOperations: (): void => undefined,
         needSubscribe: () => true,
@@ -38,6 +41,7 @@ const fixture = () => {
         countBlockWord: (): void => undefined,
         handleViewFoldSourceOperation: () => false,
         queueHeadingNumberRefresh: (): void => undefined,
+        refreshHeadingFoldIndicators: (): void => undefined,
         applyViewFoldStates: (): void => undefined,
         fetchPost: (_url: string, data: {transactions: unknown[]}, callback: (response: unknown) => void) =>
             new Promise<void>(resolve => {

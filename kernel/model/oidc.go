@@ -230,11 +230,8 @@ func OIDCStart(c *gin.Context, request apicontract.SystemOIDCStartRequest) (ret 
 	return apicontract.Success(data)
 }
 
-func OIDCCallback(c *gin.Context, request apicontract.SystemOIDCCallbackRequest) apicontract.Response[apicontract.BinaryContent] {
-	request.State = c.Query("state")
-	request.Code = c.Query("code")
-	request.Error = c.Query("error")
-	state := request.State
+func OIDCCallback(c *gin.Context, request apicontract.EmptyRequest) apicontract.Response[apicontract.BinaryContent] {
+	state := c.Query("state")
 	workspaceSession := util.GetWorkspaceSession(util.GetSession(c))
 	transaction, repeated, err := claimOIDCTransaction(c.Request.Context(), state, workspaceSession.OIDCBinding, true)
 	if err != nil {
@@ -255,13 +252,13 @@ func OIDCCallback(c *gin.Context, request apicontract.SystemOIDCCallbackRequest)
 			return writeOIDCCallbackPage(c, false, oidcUserMessage())
 		}
 	}
-	if providerError := request.Error; providerError != "" {
+	if providerError := c.Query("error"); providerError != "" {
 		logging.LogWarnf("OIDC provider rejected the login: %s", providerError)
 		message := oidcUserMessage()
 		completeOIDCTransaction(transaction.State, false, message)
 		return writeOIDCCallbackPage(c, false, message)
 	}
-	if err = finishOIDCExchange(c, transaction, request.Code); err != nil {
+	if err = finishOIDCExchange(c, transaction, c.Query("code")); err != nil {
 		logging.LogErrorf("finish OIDC authorization code exchange failed: %s", err)
 		completeOIDCTransaction(transaction.State, false, oidcUserMessage())
 		return writeOIDCCallbackPage(c, false, oidcUserMessage())
@@ -279,7 +276,7 @@ func OIDCCallback(c *gin.Context, request apicontract.SystemOIDCCallbackRequest)
 		return writeOIDCCallbackPage(c, false, oidcUserMessage())
 	}
 	completeOIDCTransaction(transaction.State, true, "")
-	return apicontract.RedirectHTTPContent(http.StatusFound, safeOIDCRedirectTarget(transaction.To))
+	return writeOIDCWebCallbackPage(c, transaction.To)
 }
 
 func OIDCMobileCallback(c *gin.Context, request apicontract.SystemOIDCMobileRequest) (ret apicontract.Response[apicontract.SystemOIDCMobileData]) {
@@ -826,7 +823,7 @@ func respondRepeatedOIDCCallback(c *gin.Context, transaction *oidcTransaction) a
 	if err := authenticateOIDCSession(c, transaction.RememberMe); err != nil {
 		return writeOIDCCallbackPage(c, false, oidcUserMessage())
 	}
-	return apicontract.RedirectHTTPContent(http.StatusFound, safeOIDCRedirectTarget(transaction.To))
+	return writeOIDCWebCallbackPage(c, transaction.To)
 }
 
 func cleanupOIDCTransactionsLocked() {
@@ -973,6 +970,18 @@ func writeOIDCCallbackPage(c *gin.Context, success bool, message string) apicont
 	if success {
 		title = oidcLanguage(366, "OIDC login completed")
 	}
+	lang := setOIDCCallbackPageHeaders(c)
+	return apicontract.SuccessHTTPContent(http.StatusOK, "text/html; charset=utf-8", util.RenderOAuthCallbackPage(lang, title, message, success))
+}
+
+func writeOIDCWebCallbackPage(c *gin.Context, target string) apicontract.Response[apicontract.BinaryContent] {
+	lang := setOIDCCallbackPageHeaders(c)
+	title := oidcLanguage(366, "OIDC login completed")
+	return apicontract.SuccessHTTPContent(http.StatusOK, "text/html; charset=utf-8",
+		util.RenderOAuthRedirectPage(lang, title, safeOIDCRedirectTarget(target)))
+}
+
+func setOIDCCallbackPageHeaders(c *gin.Context) string {
 	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
 	c.Header("Referrer-Policy", "no-referrer")
@@ -981,7 +990,7 @@ func writeOIDCCallbackPage(c *gin.Context, success bool, message string) apicont
 	if Conf != nil {
 		lang = util.LangToBCP47(Conf.Lang)
 	}
-	return apicontract.SuccessHTTPContent(http.StatusOK, "text/html; charset=utf-8", util.RenderOAuthCallbackPage(lang, title, message, success))
+	return lang
 }
 
 func OIDCStartPreflight(c *gin.Context) *apicontract.Response[apicontract.SystemOIDCStartData] {

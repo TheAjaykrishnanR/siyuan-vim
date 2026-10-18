@@ -1,10 +1,10 @@
+import {toggleMenu} from "../../menus/menuToggle";
 import {Tab} from "../Tab";
 import {bindPanelSearch} from "./panelSearch";
 import {Model} from "../Model";
 import {Tree} from "../../util/Tree";
 import {setPanelFocus} from "../util";
 import {getDockByType} from "../tabUtil";
-import {getTransactionOperations} from "../../util/transactionOperations";
 import {fetchPost} from "../../util/fetch";
 import {updateHotkeyAfterTip} from "../../protyle/util/compatibility";
 import {openGlobalSearch} from "../../search/util";
@@ -39,7 +39,7 @@ export class Tag extends Model {
 
         this.element.innerHTML = `<div class="block__icons">
     <div class="block__logo fn__flex-1">${window.siyuan.languages.tag}</div>
-    <input class="b3-text-field search__label fn__none fn__size200" placeholder="${window.siyuan.languages.searchPlaceholder}" />
+    <input spellcheck="false" class="b3-text-field search__label fn__none fn__size200" placeholder="${window.siyuan.languages.searchPlaceholder}" />
     <span data-type="search" class="block__icon ariaLabel" data-position="north" aria-label="${window.siyuan.languages.search}"><svg><use xlink:href='#iconSearch'></use></svg></span>
     <span class="fn__space"></span>
     <span data-type="refresh" class="block__icon ariaLabel" data-position="north" aria-label="${window.siyuan.languages.refresh}"><svg><use xlink:href='#iconRefresh'></use></svg></span>
@@ -104,58 +104,63 @@ export class Tag extends Model {
                             getDockByType("tag").toggleModel("tag", false, true);
                             break;
                         case "sort": {
-                            window.siyuan.menus.menu.remove();
-                            window.siyuan.menus.menu.append(new MenuItem({
-                                icon: window.siyuan.config.tag.sort === 0 ? "iconSelect" : undefined,
-                                label: window.siyuan.languages.fileNameASC,
-                                click: () => {
-                                    window.siyuan.config.tag.sort = 0;
-                                    this.update();
+                            toggleMenu({
+                                target: target,
+                                build: (_menu, session) => {
+                                    window.siyuan.menus.menu.append(new MenuItem({
+                                        icon: window.siyuan.config.tag.sort === 0 ? "iconSelect" : undefined,
+                                        label: window.siyuan.languages.fileNameASC,
+                                        click: () => {
+                                            window.siyuan.config.tag.sort = 0;
+                                            this.update();
+                                        },
+                                    }).element);
+                                    window.siyuan.menus.menu.append(new MenuItem({
+                                        icon: window.siyuan.config.tag.sort === 1 ? "iconSelect" : undefined,
+                                        label: window.siyuan.languages.fileNameDESC,
+                                        click: () => {
+                                            window.siyuan.config.tag.sort = 1;
+                                            this.update();
+                                        },
+                                    }).element);
+                                    window.siyuan.menus.menu.append(new MenuItem({
+                                        icon: window.siyuan.config.tag.sort === 4 ? "iconSelect" : undefined,
+                                        label: window.siyuan.languages.fileNameNatASC,
+                                        click: () => {
+                                            window.siyuan.config.tag.sort = 4;
+                                            this.update();
+                                        },
+                                    }).element);
+                                    window.siyuan.menus.menu.append(new MenuItem({
+                                        icon: window.siyuan.config.tag.sort === 5 ? "iconSelect" : undefined,
+                                        label: window.siyuan.languages.fileNameNatDESC,
+                                        click: () => {
+                                            window.siyuan.config.tag.sort = 5;
+                                            this.update();
+                                        },
+                                    }).element);
+                                    window.siyuan.menus.menu.append(new MenuItem({
+                                        icon: window.siyuan.config.tag.sort === 7 ? "iconSelect" : undefined,
+                                        label: window.siyuan.languages.refCountASC,
+                                        click: () => {
+                                            window.siyuan.config.tag.sort = 7;
+                                            this.update();
+                                        },
+                                    }).element);
+                                    window.siyuan.menus.menu.append(new MenuItem({
+                                        icon: window.siyuan.config.tag.sort === 8 ? "iconSelect" : undefined,
+                                        label: window.siyuan.languages.refCountDESC,
+                                        click: () => {
+                                            window.siyuan.config.tag.sort = 8;
+                                            this.update();
+                                        },
+                                    }).element);
+                                    const rect = target.getBoundingClientRect();
+                                    session.show(() => window.siyuan.menus.menu.popup({x: rect.left, y: rect.bottom, h: rect.height}));
+
                                 },
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
-                                icon: window.siyuan.config.tag.sort === 1 ? "iconSelect" : undefined,
-                                label: window.siyuan.languages.fileNameDESC,
-                                click: () => {
-                                    window.siyuan.config.tag.sort = 1;
-                                    this.update();
-                                },
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
-                                icon: window.siyuan.config.tag.sort === 4 ? "iconSelect" : undefined,
-                                label: window.siyuan.languages.fileNameNatASC,
-                                click: () => {
-                                    window.siyuan.config.tag.sort = 4;
-                                    this.update();
-                                },
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
-                                icon: window.siyuan.config.tag.sort === 5 ? "iconSelect" : undefined,
-                                label: window.siyuan.languages.fileNameNatDESC,
-                                click: () => {
-                                    window.siyuan.config.tag.sort = 5;
-                                    this.update();
-                                },
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
-                                icon: window.siyuan.config.tag.sort === 7 ? "iconSelect" : undefined,
-                                label: window.siyuan.languages.refCountASC,
-                                click: () => {
-                                    window.siyuan.config.tag.sort = 7;
-                                    this.update();
-                                },
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
-                                icon: window.siyuan.config.tag.sort === 8 ? "iconSelect" : undefined,
-                                label: window.siyuan.languages.refCountDESC,
-                                click: () => {
-                                    window.siyuan.config.tag.sort = 8;
-                                    this.update();
-                                },
-                            }).element);
-                            const rect = target.getBoundingClientRect();
-                            window.siyuan.menus.menu.popup({x: rect.left, y: rect.bottom, h: rect.height});
-                            event.preventDefault();
+                            });
+                        event.preventDefault();
                             event.stopPropagation();
                             break;
                         }
@@ -176,19 +181,6 @@ export class Tag extends Model {
     private handleMsgCallback(data: IWebSocketData) {
         if (data) {
             switch (data.cmd) {
-                case "transactions":
-                    getTransactionOperations(data.data).forEach((item: IOperation) => {
-                        let needReload = false;
-                        if ((item.action === "update" || item.action === "insert") && item.data.indexOf('data-type="tag"') > -1) {
-                            needReload = true;
-                        } else if (item.action === "delete") {
-                            needReload = true;
-                        }
-                        if (needReload) {
-                            this.update();
-                        }
-                    });
-                    break;
                 case "closeBox":
                 case "removeBox":
                 case "removeDoc":

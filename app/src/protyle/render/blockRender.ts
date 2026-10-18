@@ -11,6 +11,7 @@ import {normalizeHTMLAssetIFrameBlockDOM} from "../../asset/html";
 import {finishCustomEmbedRender, finishEmptyEmbedRender, IEmbedRenderLoadingState} from "./embedRenderState";
 import {getHostCapabilities} from "../../util/hostCapabilities";
 import {isDirectHeadingEmbed} from "./embedHeading";
+import {isFoldedRenderContent} from "./foldedContent";
 
 /**
  * 渲染嵌入块
@@ -27,6 +28,9 @@ export const blockRender = (protyle: IProtyle, element: Element, top?: number, o
         return;
     }
     blockElements.forEach((item: HTMLElement) => {
+        if (item.closest(".mindmap-view__preview-block") || isFoldedRenderContent(item)) {
+            return;
+        }
         const content = Lute.UnEscapeHTMLStr(item.getAttribute("data-content"));
         if (!content.trim()) {
             genRenderFrame(item);

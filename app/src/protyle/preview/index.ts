@@ -1,5 +1,5 @@
 import {isOnlyMeta, writeText} from "../util/compatibility";
-import {focusByRange} from "../util/selection";
+import {focusByRange} from "../util/selectionOffsets";
 import {openLink} from "../../editor/openLink";
 import {showMessage} from "../../dialog/message";
 import {previewDocImage} from "./image";
@@ -26,9 +26,10 @@ import {speechRender} from "../render/speechRender";
 import {avRender} from "../render/av/render";
 import {getPadding} from "../ui/initUI";
 import {hasTopClosestByAttribute} from "../util/hasClosest";
-import {addScriptSync} from "../util/addScript";
 import {prepareWechatCopy, prepareZhihuCopy} from "./platformCopy";
+import {renderWechatMath} from "./wechatMath";
 import {getHostCapabilities} from "../../util/hostCapabilities";
+import {destroyAutoDirection, setAutoDirection} from "../render/autoDirection";
 
 export class Preview {
     public element: HTMLElement;
@@ -127,6 +128,14 @@ export class Preview {
         document.addEventListener("copy", this.copyEventHandler);
         /// #endif
 
+        this.element.addEventListener("dblclick", (event) => {
+            const diagramElement = getDiagramBlock((event.target as Element).closest('[data-subtype="plantuml"]') as HTMLElement);
+            if (diagramElement) {
+                previewDiagram(diagramElement);
+                event.stopPropagation();
+                event.preventDefault();
+            }
+        });
         this.element.addEventListener("click", (event) => {
             let target = event.target as HTMLElement;
             while (target && !target.isEqualNode(this.element)) {
@@ -146,6 +155,12 @@ export class Preview {
                     openLink(protyle.app, linkAddress, event, isOnlyMeta(event));
                     break;
                 } else if (target.tagName === "IMG") {
+                    const diagramElement = getDiagramBlock(target.closest('[data-subtype="plantuml"]') as HTMLElement);
+                    if (diagramElement) {
+                        event.stopPropagation();
+                        event.preventDefault();
+                        return;
+                    }
                     previewDocImage((event.target as HTMLElement).getAttribute("src"), protyle.block.rootID);
                     event.stopPropagation();
                     event.preventDefault();
@@ -200,7 +215,7 @@ export class Preview {
                 window.siyuan.mobile.docks.outline?.setCurrentByPreview(nodeElement);
                 /// #endif
                 const diagramElement = getDiagramBlock(nodeElement);
-                if (diagramElement) {
+                if (diagramElement && diagramElement.getAttribute("data-subtype") !== "plantuml") {
                     previewDiagram(diagramElement);
                     event.stopPropagation();
                     event.preventDefault();
@@ -213,6 +228,7 @@ export class Preview {
     }
 
     public destroy() {
+        destroyAutoDirection(this.previewElement);
         destroyTabsRender(this.previewElement);
         window.clearTimeout(this.mdTimeoutId);
         /// #if !BROWSER
@@ -261,6 +277,7 @@ export class Preview {
                     ?.classList.add("protyle-preview__title");
                 /// #endif
                 processRender(protyle.preview.previewElement);
+                setAutoDirection(protyle.preview.previewElement, window.siyuan.config.editor.autoDirection);
                 tabsRender(protyle.preview.previewElement, {label: window.siyuan.languages.tabItem,
                     shown: item => processRender(item)});
                 highlightRender(protyle.preview.previewElement);
@@ -290,29 +307,9 @@ export class Preview {
     }
 
     private async copyToX(copyElement: HTMLElement, protyle: IProtyle, type?: string) {
-        // fix math render
         if (type === "mp-wechat") {
             this.link2online(copyElement);
-            copyElement.querySelectorAll(".katex-html .base").forEach((item: HTMLElement) => {
-                item.style.display = "initial";
-            });
-            copyElement.querySelectorAll("mjx-container > svg").forEach((item) => {
-                item.setAttribute("width", (parseInt(item.getAttribute("width")) * 8) + "px");
-            });
-            if (typeof window.MathJax === "undefined") {
-                window.MathJax = {
-                    svg: {
-                        fontCache: "none"
-                    },
-                };
-            }
-            await addScriptSync(`${Constants.PROTYLE_CDN}/js/mathjax/tex-svg-full.js`, "protyleMathJaxScript");
-            await window.MathJax.startup.promise;
-            copyElement.querySelectorAll('[data-subtype="math"]').forEach(mathElement => {
-                const node = window.MathJax.tex2svg(Lute.UnEscapeHTMLStr(mathElement.getAttribute("data-content")).trim(), {display: mathElement.tagName === "DIV"});
-                node.querySelector("mjx-assistive-mml").remove();
-                mathElement.innerHTML = node.outerHTML;
-            });
+            await renderWechatMath(copyElement);
             prepareWechatCopy(copyElement, this.previewElement);
         } else if (type === "zhihu") {
             this.link2online(copyElement);

@@ -71,7 +71,17 @@ func exportMd(args map[string]any) (CallToolResult, error) {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
 	}
 
-	hPath, content := model.ExportMarkdownContent(id, 4, 0, true, false, false, false, false)
+	hPath, content := model.ExportMarkdownContent(id, &model.ExportOptions{
+		BlockRefMode:   new(4),
+		BlockEmbedMode: new(0),
+		MarkdownYFM:    new(true),
+		AddTitle:       new(false),
+		Render: model.ExportRenderOptions{
+			FillCSSVar:         false,
+			AdjustHeadingLevel: false,
+			ImgTag:             false,
+		},
+	})
 	if content == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "export failed or empty"}}, IsError: true}, nil
 	}
@@ -96,7 +106,7 @@ func exportPreview(args map[string]any) (CallToolResult, error) {
 	if id == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
 	}
-	html := model.ExportPreview(id, false)
+	html := model.ExportPreview(id, false, nil)
 	if html == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "export preview failed or empty"}}, IsError: true}, nil
 	}

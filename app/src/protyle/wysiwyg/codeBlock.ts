@@ -1,9 +1,11 @@
 import {getContenteditableElement} from "./getBlock";
-import {focusByOffset, getSelectionOffset, getUndoFocusContext, setLastNodeRange} from "../util/selection";
+import {focusByOffset, getUndoFocusContext} from "../util/selection";
+import {getSelectionOffset, setLastNodeRange} from "../util/selectionOffsets";
 import {updateTransaction} from "./transaction";
 import {Constants} from "../../constants";
 import {
-    getCodeBlockDeleteStart,
+    detectCodeTabSpaces,
+    getCodeBlockOutdentRange,
     getCodeBlockLineRange,
     getCodeTabSpace,
     resolveCodeTabSpaces,
@@ -22,21 +24,30 @@ export const tabCodeBlock = (protyle: IProtyle, nodeElement: HTMLElement,
         return;
     }
     const undoFocusContext = getUndoFocusContext(protyle.wysiwyg.element, range, true);
-    const tabSpace = getCodeBlockTabSpace(nodeElement);
+    const detectedSpaces = nodeElement.hasAttribute(Constants.CUSTOM_SY_CODE_TAB_SPACES) ? null :
+        detectCodeTabSpaces(editableElement.textContent);
+    const tabSpace = detectedSpaces === null ? getCodeBlockTabSpace(nodeElement) : getCodeTabSpace(detectedSpaces);
     const oldHTML = nodeElement.outerHTML;
+    const commit = () => {
+        // 识别结果随缩进操作一同保存和撤销，后续操作沿用该代码块的设置。
+        if (detectedSpaces !== null) {
+            nodeElement.setAttribute(Constants.CUSTOM_SY_CODE_TAB_SPACES, detectedSpaces.toString());
+        }
+        updateTransaction(protyle, nodeElement, oldHTML, undoFocusContext);
+    };
     if (range.collapsed) {
         if (outdent) {
             const caret = getSelectionOffset(editableElement, undefined, range).start;
-            const deleteStart = getCodeBlockDeleteStart(editableElement.textContent, caret, tabSpace);
-            if (deleteStart === caret) {
+            const outdentRange = getCodeBlockOutdentRange(editableElement.textContent, caret, tabSpace);
+            if (outdentRange.start === outdentRange.end) {
                 return;
             }
-            const deleteRange = focusByOffset(editableElement, deleteStart, caret, false) as Range;
+            const deleteRange = focusByOffset(editableElement, outdentRange.start, outdentRange.end, false) as Range;
             if (!deleteRange) {
                 return;
             }
             deleteRange.deleteContents();
-            const caretRange = focusByOffset(editableElement, deleteStart, deleteStart, false) as Range;
+            const caretRange = focusByOffset(editableElement, outdentRange.caret, outdentRange.caret, false) as Range;
             if (!caretRange) {
                 return;
             }
@@ -48,7 +59,7 @@ export const tabCodeBlock = (protyle: IProtyle, nodeElement: HTMLElement,
             range.setStartAfter(textNode);
             range.collapse(true);
         }
-        updateTransaction(protyle, nodeElement, oldHTML, undoFocusContext);
+        commit();
         return;
     }
 
@@ -94,6 +105,6 @@ export const tabCodeBlock = (protyle: IProtyle, nodeElement: HTMLElement,
     const brElement = wbrElement.parentElement.querySelector("br");
     setLastNodeRange(brElement.previousSibling as Element, range, false);
     brElement.remove();
-    updateTransaction(protyle, nodeElement, oldHTML, undoFocusContext);
+    commit();
     wbrElement.remove();
 };

@@ -70,32 +70,35 @@ type Box struct {
 
 func StatJob() {
 
-	Conf.m.Lock()
-	Conf.Stat.TreeCount = treenode.CountTrees()
-	Conf.Stat.CTreeCount = treenode.CeilTreeCount(Conf.Stat.TreeCount)
-	Conf.Stat.BlockCount = treenode.CountBlocks()
-	Conf.Stat.CBlockCount = treenode.CeilBlockCount(Conf.Stat.BlockCount)
-	Conf.Stat.DataSize, Conf.Stat.AssetsSize = util.DataSize()
-	Conf.Stat.CDataSize = util.CeilSize(Conf.Stat.DataSize)
-	Conf.Stat.CAssetsSize = util.CeilSize(Conf.Stat.AssetsSize)
-	Conf.m.Unlock()
-	Conf.Save()
+	treeCount, blockCount := treenode.CountTrees(), treenode.CountBlocks()
+	dataSize, assetsSize := util.DataSize()
+	stat := UpdateStatConf(func(stat *conf.Stat) {
+		stat.TreeCount = treeCount
+		stat.CTreeCount = treenode.CeilTreeCount(treeCount)
+		stat.BlockCount = blockCount
+		stat.CBlockCount = treenode.CeilBlockCount(blockCount)
+		stat.DataSize, stat.AssetsSize = dataSize, assetsSize
+		stat.CDataSize = util.CeilSize(dataSize)
+		stat.CAssetsSize = util.CeilSize(assetsSize)
+	})
 
-	logging.LogInfof("auto stat [trees=%d, blocks=%d, dataSize=%s, assetsSize=%s]", Conf.Stat.TreeCount, Conf.Stat.BlockCount, humanize.BytesCustomCeil(uint64(Conf.Stat.DataSize), 2), humanize.BytesCustomCeil(uint64(Conf.Stat.AssetsSize), 2))
+	logging.LogInfof("auto stat [trees=%d, blocks=%d, dataSize=%s, assetsSize=%s]", stat.TreeCount, stat.BlockCount, humanize.BytesCustomCeil(uint64(stat.DataSize), 2), humanize.BytesCustomCeil(uint64(stat.AssetsSize), 2))
 
 	// 桌面端检查磁盘可用空间 https://github.com/siyuan-note/siyuan/issues/6873
 	if util.ContainerStd != util.Container {
 		return
 	}
 
-	if util.NeedWarnDiskUsage(Conf.Stat.DataSize) {
+	if util.NeedWarnDiskUsage(Conf.Stat.Load().DataSize) {
 		util.PushMsg(Conf.Language(179), 7000)
 	}
 }
 
 func ListNotebooks() (ret []*Box, err error) {
+	confSyncSnapshot := Conf.LoadSync()
+
 	// 启用数据同步时，缺失配置可能表示其他设备已删除笔记本，不能在列表读取过程中自动重建。
-	repairMissingConf := nil != Conf && nil != Conf.Sync && !Conf.Sync.Enabled
+	repairMissingConf := nil != Conf && nil != confSyncSnapshot && !confSyncSnapshot.Enabled
 	ret, err = listNotebooks(repairMissingConf)
 	return
 }
@@ -246,7 +249,7 @@ func listNotebooks(repairMissingConf bool) (ret []*Box, err error) {
 		ret = append(ret, box)
 	}
 
-	switch Conf.FileTree.Sort {
+	switch Conf.FileTree.Load().Sort {
 	case util.SortModeNameASC:
 		sort.Slice(ret, func(i, j int) bool {
 			return util.PinYinCompare4FileTree(ret[i].Name, ret[j].Name)
@@ -332,6 +335,15 @@ func (box *Box) GetConf() (ret *conf.BoxConf) {
 }
 
 func (box *Box) SaveConf(conf *conf.BoxConf) error {
+	return box.saveConf(conf, false)
+}
+
+// SaveConfAndSync 保存用户修改的笔记本配置，并为已落盘的变更重新计划同步。
+func (box *Box) SaveConfAndSync(conf *conf.BoxConf) error {
+	return box.saveConf(conf, true)
+}
+
+func (box *Box) saveConf(conf *conf.BoxConf, syncChange bool) error {
 	confPath := filepath.Join(util.DataDir, box.ID, ".siyuan/conf.json")
 	persisted, err := prepareBoxConfForSave(box.ID, conf)
 	if err != nil {
@@ -347,6 +359,9 @@ func (box *Box) SaveConf(conf *conf.BoxConf) error {
 		if err = box.saveConf0(newData); err != nil {
 			return err
 		}
+		if syncChange {
+			IncSyncIfNeeded(confPath)
+		}
 		return syncBoxConfCryptoBackup(box.ID, persisted)
 	}
 
@@ -356,6 +371,9 @@ func (box *Box) SaveConf(conf *conf.BoxConf) error {
 
 	if err = box.saveConf0(newData); err != nil {
 		return err
+	}
+	if syncChange {
+		IncSyncIfNeeded(confPath)
 	}
 	return syncBoxConfCryptoBackup(box.ID, persisted)
 }
@@ -527,7 +545,7 @@ func (box *Box) Move(oldPath, newPath string) error {
 	if oldDir := path.Dir(oldPath); ast.IsNodeIDPattern(path.Base(oldDir)) {
 		fromDir := filepath.Join(boxLocalPath, oldDir)
 		if util.IsEmptyDir(fromDir) {
-			filelock.Remove(fromDir)
+			util.RemoveEmptyDir(fromDir)
 		}
 	}
 	IncSync()
@@ -587,6 +605,16 @@ type BoxInfo struct {
 }
 
 func (box *Box) GetInfo() (ret *BoxInfo) {
+	return box.getInfo(nil)
+}
+
+// GetInfoForPublish 返回发布访问控制下笔记本的聚合信息，只统计发布读者可见的文档。
+func (box *Box) GetInfoForPublish(publishAccess PublishAccess) (ret *BoxInfo) {
+	return box.getInfo(PublishVisibleDocPathFilter(box.ID, publishAccess))
+}
+
+// getInfo 统计笔记本的聚合信息，include 为文档路径可见性判定，nil 表示统计全部文档。
+func (box *Box) getInfo(include func(docPath string) bool) (ret *BoxInfo) {
 	ret = &BoxInfo{
 		ID:   box.ID,
 		Name: util.EscapeHTML(box.Name),
@@ -614,6 +642,10 @@ func (box *Box) GetInfo() (ret *BoxInfo) {
 
 		id := strings.TrimSuffix(fileInfo.name, ".sy")
 		if !ast.IsNodeIDPattern(id) {
+			continue
+		}
+
+		if nil != include && !include(fileInfo.path) {
 			continue
 		}
 
@@ -704,7 +736,7 @@ func normalizeTree(tree *parse.Tree) (yfmRootID, yfmTitle, yfmUpdated string) {
 			n.SetIALAttr("id", n.ID)
 		}
 
-		if "" == n.IALAttr("id") && (ast.NodeParagraph == n.Type || ast.NodeList == n.Type || ast.NodeListItem == n.Type || ast.NodeBlockquote == n.Type ||
+		if "" == n.IALAttr("id") && (ast.NodeParagraph == n.Type || ast.NodeList == n.Type || ast.NodeListItem == n.Type || ast.NodeMindmap == n.Type || ast.NodeMindmapItem == n.Type || ast.NodeBlockquote == n.Type ||
 			ast.NodeMathBlock == n.Type || ast.NodeCodeBlock == n.Type || ast.NodeHeading == n.Type || ast.NodeTable == n.Type || ast.NodeThematicBreak == n.Type ||
 			ast.NodeYamlFrontMatter == n.Type || ast.NodeBlockQueryEmbed == n.Type || ast.NodeSuperBlock == n.Type || ast.NodeAttributeView == n.Type ||
 			ast.NodeHTMLBlock == n.Type || ast.NodeIFrame == n.Type || ast.NodeWidget == n.Type || ast.NodeAudio == n.Type || ast.NodeVideo == n.Type || ast.NodeCallout == n.Type) {
@@ -905,7 +937,7 @@ func clearTempDir(dir string, count *int, size *int64) {
 	}
 
 	if util.IsEmptyDir(dir) {
-		os.Remove(dir)
+		util.RemoveEmptyDir(dir)
 	}
 	return
 }

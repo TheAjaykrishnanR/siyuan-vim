@@ -114,8 +114,8 @@ func TestFillThemeStyleVarUsesBuiltinOverrides(t *testing.T) {
 		--b3-card-error-color: #020202;
 		--b3-card-error-background: #030303;
 	}`)
-	Conf.Appearance.Mode = 0
-	Conf.Appearance.ThemeLight = "daylight"
+	Conf.Appearance.Load().Mode = 0
+	Conf.Appearance.Load().ThemeLight = "daylight"
 
 	if _, _, err := SetInlineStylesData(&InlineStyles{
 		Version: InlineStylesVersion,
@@ -145,12 +145,30 @@ func TestFillThemeStyleVarUsesBuiltinOverrides(t *testing.T) {
 		"border-color: #aabbcc; text-decoration-color: #ddeeff; outline-color: #112233;" {
 		t.Fatalf("unexpected builtin inline style export: %s", actual)
 	}
+	for _, mode := range []int{0, 1} {
+		Conf.Appearance.Load().Mode = mode
+		for _, source := range []string{
+			"color: var(--b3-card-error-color); background-color: var(--b3-card-error-background);",
+			"color: var(--b3-inline-builtin-error-color, var(--b3-card-error-color)); " +
+				"background-color: var(--b3-inline-builtin-error-background-color, var(--b3-card-error-background));",
+		} {
+			tree, node = inlineStyleThemeTestTree(source)
+			fillThemeStyleVar(tree)
+			expected := "color: #aabbcc; background-color: #ddeeff;"
+			if mode == 1 {
+				expected = "color: #123456; background-color: #654321;"
+			}
+			if actual := node.KramdownIAL[0][1]; actual != expected {
+				t.Fatalf("mode %d export of %q: %s", mode, source, actual)
+			}
+		}
+	}
 }
 
 func TestFillThemeStyleVarUsesCurrentInlineStyleMode(t *testing.T) {
 	setupThemeTest(t, "midnight", `:root {}`)
-	Conf.Appearance.Mode = 1
-	Conf.Appearance.ThemeDark = "midnight"
+	Conf.Appearance.Load().Mode = 1
+	Conf.Appearance.Load().ThemeDark = "midnight"
 
 	const id = "20260821000000-abcdefg"
 	if _, _, err := SetInlineStyles([]*InlineStyle{{
@@ -172,8 +190,8 @@ func TestFillThemeStyleVarUsesCurrentInlineStyleMode(t *testing.T) {
 
 func TestFillThemeStyleVarFallsBackForInvalidInlineStyles(t *testing.T) {
 	setupThemeTest(t, "daylight", `:root { --theme-background: #112233; }`)
-	Conf.Appearance.Mode = 0
-	Conf.Appearance.ThemeLight = "daylight"
+	Conf.Appearance.Load().Mode = 0
+	Conf.Appearance.Load().ThemeLight = "daylight"
 
 	if err := os.MkdirAll(filepath.Dir(inlineStylesPath()), 0755); err != nil {
 		t.Fatal(err)
@@ -200,17 +218,20 @@ func inlineStyleThemeTestTree(style string) (tree *parse.Tree, node *ast.Node) {
 func setupThemeTest(t *testing.T, theme, css string) {
 	t.Helper()
 	oldDataDir, oldThemesPath, oldConf := util.DataDir, util.ThemesPath, Conf
+	oldAppearancePath, oldMode := util.AppearancePath, util.Mode
 	tempDir := t.TempDir()
 	util.DataDir = filepath.Join(tempDir, "data")
 	util.ThemesPath = filepath.Join(tempDir, "themes")
+	util.AppearancePath, util.Mode = filepath.Join(tempDir, "appearance"), "prod"
 	Conf = NewAppConf()
-	Conf.Appearance = conf.NewAppearance()
-	Conf.Sync = conf.NewSync()
+	Conf.Appearance.Store(conf.NewAppearance())
+	Conf.Sync.Store(conf.NewSync())
 	t.Cleanup(func() {
 		util.DataDir, util.ThemesPath, Conf = oldDataDir, oldThemesPath, oldConf
+		util.AppearancePath, util.Mode = oldAppearancePath, oldMode
 	})
 
-	themeDir := filepath.Join(util.ThemesPath, theme)
+	themeDir := util.AppearancePackagePath("themes", theme)
 	if err := os.MkdirAll(themeDir, 0755); err != nil {
 		t.Fatal(err)
 	}

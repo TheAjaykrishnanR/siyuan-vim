@@ -1,3 +1,137 @@
+.config-chatgpt__actions,
+.config-chatgpt__account {
+  gap: 8px;
+}
+
+.config-chatgpt__account {
+  align-items: center;
+}
+
+:root[data-theme-mode="dark"] .config-ai-decision__icon {
+  filter: invert(1);
+}
+
+.config-chatgpt__info {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.config-chatgpt__picker {
+  max-width: 100%;
+}
+
+.workspace-storage {
+  &__header {
+    flex-wrap: wrap;
+  }
+
+  &__time {
+    flex: 1 0 100%;
+    text-align: right;
+  }
+
+  &__content {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    line-height: 1.5;
+  }
+
+  &__figure {
+    display: grid;
+    flex: 1 1 14em;
+    min-width: 0;
+  }
+
+  &__chart,
+  &__total {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+
+  &__chart,
+  &__placeholder {
+    height: 16em;
+    max-height: 280px;
+  }
+
+  &__placeholder {
+    position: relative;
+  }
+
+  &__total {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+
+  &__details {
+    flex: 1 1 16em;
+    min-width: 0;
+    margin: 0;
+  }
+
+  &__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 3.5em;
+    gap: 8px;
+    margin: 8px 0;
+
+    dt {
+      display: flex;
+      align-items: baseline;
+      overflow-wrap: anywhere;
+    }
+
+    dd {
+      margin: 0;
+      text-align: end;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    &--assets {
+      padding-inline-start: 16px;
+    }
+  }
+
+  &__color {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    margin-inline-end: 8px;
+  }
+}
+
+.config--mobile .workspace-storage__content {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.config--mobile .workspace-storage__figure,
+.config--mobile .workspace-storage__details {
+  flex: auto;
+}
+
+@media (max-width: 750px) {
+  .workspace-storage__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0;
+
+    dt {
+      grid-row: 1 / span 2;
+    }
+  }
+
+  .workspace-storage__percent {
+    grid-column: 2;
+  }
+}
+
 .config-body-gradient {
   display: flex;
   flex-wrap: wrap;
@@ -28,6 +162,31 @@
   output {
     min-width: 4ch;
     text-align: end;
+  }
+}
+
+.config-sync-field {
+  flex-wrap: wrap;
+
+  > .fn__flex-1 {
+    min-width: 0;
+  }
+}
+
+.config-sync-form {
+  min-height: 0;
+}
+
+.config-sync-dialog {
+  max-height: 90vh;
+  max-height: 90dvh;
+}
+
+@media screen and (max-width: 750px) {
+  .config-sync-field > .fn__flex-1 {
+    flex: none;
+    width: 100%;
+    margin-top: 8px;
   }
 }
 
@@ -241,6 +400,15 @@
     font-size: 15px;
   }
 
+  &-side-panel {
+    [data-action="drag"],
+    &--dragging {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+  }
+
   &__panel {
     background-color: var(--b3-theme-background);
     border-radius: var(--b3-border-radius-b);
@@ -264,6 +432,7 @@
       .config__tab-scroll {
         flex: 1;
         min-height: 0;
+        outline: none;
         overflow-y: auto;
         margin: 0 -12px 0 0;
         padding-right: 2px;
@@ -424,6 +593,7 @@
     &__list {
       overflow: auto;
       flex: 1;
+      position: relative;
     }
 
     &__preview {
@@ -435,6 +605,22 @@
       flex: 1;
       padding: 0 8px;
       margin-top: 8px;
+      border-top: 1px solid var(--b3-border-color);
+    }
+
+    &__document,
+    &__pdf {
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+      flex-shrink: 0;
+      overflow: auto;
+    }
+
+    &__pdf {
+      position: relative;
+      overflow: hidden;
     }
   }
 
@@ -616,6 +802,7 @@
       align-items: center;
       gap: 4px;
       vertical-align: middle;
+      white-space: nowrap;
     }
 
     &__panel {
@@ -728,6 +915,40 @@
 
       > [data-bazaar-index] {
         cursor: default;
+      }
+    }
+
+    // 桌面端已下载卡片：图标右侧分为上下两块，名称/描述在上、操作按钮在下，按钮不跨到图标下方
+    &__panel[data-type="downloaded"] .config-bazaar__content .b3-card {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+
+      // 图标跨两行并垂直居中；同时去掉上下外边距，否则它会把第一行撑高、在描述下方留下空白
+      // 行是隐式的，跨行只能用 span 指定
+      > .b3-card__img {
+        align-self: center;
+        grid-column: 1;
+        grid-row: 1 / span 2;
+        margin: 0 0 0 16px;
+      }
+
+      > .fn__flex-1 {
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      > .b3-card__actions--right {
+        grid-column: 2;
+        grid-row: 2;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        min-width: 0;
+        row-gap: 4px;
+        padding: 0 16px 16px;
+
+        > .config-bazaar__publish-controls {
+          margin-right: auto;
+        }
       }
     }
 
@@ -1053,6 +1274,7 @@
 
               .b3-chip {
                 margin: 2px 0 2px 4px;
+                text-align: start;
               }
             }
           }
@@ -1080,6 +1302,21 @@
           }
         }
 
+        &__resource {
+          gap: 4px;
+          // 显式行高保持文字行框一致，大字号时随字号增大。
+          line-height: max(16px, 1em);
+
+          &-list {
+            gap: 8px 16px;
+          }
+        }
+
+        &__desc {
+          // 无预览图时与右侧信息栏顶部（.item__header + .fn__flex-1）对齐：8px 上外边距 + 21px 头部高度 + 16px 下外边距
+          margin-top: 45px;
+        }
+
         &__preview {
           width: 100%;
           height: 50%;
@@ -1102,6 +1339,11 @@
             cursor: zoom-out;
           }
         }
+      }
+
+      // 有预览图时由预览图的下外边距提供与描述之间的间距
+      .item__preview + .item__desc {
+        margin-top: 0;
       }
     }
   }
@@ -1201,8 +1443,17 @@
   }
 
   &-entry-visibility {
+    &__reset-orders {
+      max-width: 100%;
+    }
+
     &__view--mobile {
+      .config-entry-visibility__search {
+        margin: 0 8px;
+      }
+
       .config-entry-visibility__column {
+        box-sizing: border-box;
         flex: 1 0 100%;
       }
 
@@ -1210,13 +1461,33 @@
         margin: 0 8px 8px;
       }
 
-      .config-entry-visibility__drag,
       .config-entry-visibility__arrow-space {
         display: none;
       }
 
       .config-entry-visibility__row {
         min-height: 44px;
+      }
+
+      .config-entry-visibility__drag {
+        min-height: 32px;
+        min-width: 24px;
+        touch-action: none;
+      }
+    }
+
+    &__mobile-header {
+      flex: 0 1 auto;
+      min-height: 0;
+      max-height: 60%;
+      overflow-y: auto;
+    }
+
+    &__mobile-controls {
+      margin: 0 8px 8px;
+
+      > .b3-select {
+        width: 100%;
       }
     }
 
@@ -1233,7 +1504,8 @@
       margin: 0 0 16px;
     }
 
-    &__content > .config-group + .config-group {
+    &__content > .config-group + .config-group,
+    &__mobile-header > .config-group + .config-group {
       margin-top: 0;
     }
 
@@ -1418,17 +1690,11 @@
     }
 
     &__drag {
-      color: var(--b3-theme-on-surface-light);
       cursor: grab;
-      flex: 0 0 16px;
-      height: 16px;
       margin-right: 8px;
-      width: 16px;
 
       svg {
-        height: 16px;
         pointer-events: none;
-        width: 16px;
       }
 
       &:active {

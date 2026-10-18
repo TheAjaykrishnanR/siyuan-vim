@@ -1,8 +1,10 @@
+import {isTableLikeView} from "./viewType";
 import {Menu} from "../../../plugin/Menu";
 import {hasClosestByAttribute, hasClosestByClassName, hasTopClosestByClassName} from "../../util/hasClosest";
-import {UDLRHint, upDownHint} from "../../../util/upDownHint";
-import {fetchPost} from "../../../util/fetch";
-import {escapeAttr, escapeHtml, escapeLessThans} from "../../../util/escape";
+import {UDLRHint} from "../../../util/upDownHint";
+import {fetchPost, fetchSyncPost} from "../../../util/fetch";
+import type {AVRelationItemPreview, AVRelationItemCellInput} from "../../../types/api";
+import {escapeAttr, escapeHtml, escapeLessThans, escapeHtmlTextAndAttr} from "../../../util/escape";
 import {transaction} from "../../wysiwyg/transaction";
 import {genCellValueByElement, getCellValueText, renderCell, updateCellsValue} from "./cell";
 import {updateAttrViewCellAnimation} from "./action";
@@ -22,6 +24,11 @@ import {getSearchAVFocus} from "./searchAVFocus";
 import {getAVTemplateHTML} from "./attributeValue";
 import {hasAVRenderTemplateResult} from "./cellValue";
 import {renderAVRichTextElements} from "./richText";
+import {getAVBlockIconHTML} from "./blockIcon";
+import {unicode2Emoji} from "../../../emoji";
+import {bindRelationLayout} from "./relationLayout";
+import {getRelationKeyboardTarget} from "./relationKeyboard";
+import {getTopBarHeight} from "../../../layout/getTopBarHeight";
 
 interface IAVItem {
     avID: string;
@@ -39,12 +46,14 @@ type TSearchAVPurpose = "addToDatabase" | "selectRelation";
 interface IOpenSearchAVOptions {
     avID: string;
     target: HTMLElement;
+    position?: IPosition;
     callback?: (element: HTMLElement) => void;
     purpose: TSearchAVPurpose;
     blockID?: string;
 }
 
 const RELATION_PAGE_SIZE = 16;
+const relationItemPreviews = new WeakMap<HTMLElement, {keyword: string, preview: AVRelationItemPreview}>();
 
 const SEARCH_AV_LOADING_HTML = '<img style="margin: 0 auto;display: block;width: 64px;height: 64px" src="/stage/loading-pure.svg">';
 
@@ -115,12 +124,13 @@ const setDatabase = (avId: string, element: HTMLElement, item: HTMLElement) => {
 
 export const openSearchAV = (options: IOpenSearchAVOptions) => {
     window.siyuan.menus.menu.remove();
-    const menu = new Menu();
+    let cancelSearch: () => void;
+    const menu = new Menu(undefined, () => cancelSearch?.());
     menu.addItem({
         iconHTML: "",
         type: "empty",
         label: `<div class="fn__flex-column b3-menu__filter"${isMobile() ? "" : ' style="width: 50vw"'} >
-    <input class="b3-text-field fn__flex-shrink" placeholder="${window.siyuan.languages.searchPlaceholder}"/>
+    <input spellcheck="false" class="b3-text-field fn__flex-shrink" placeholder="${window.siyuan.languages.searchPlaceholder}"/>
     <div class="fn__hr"></div>
     <div class="b3-list fn__flex-1 b3-list--background">
         ${SEARCH_AV_LOADING_HTML}
@@ -132,25 +142,36 @@ export const openSearchAV = (options: IOpenSearchAVOptions) => {
             let searchTimer = 0;
             let requestSequence = 0;
             let controller: AbortController;
-            // 列表内容变化后重新适配面板高度，避免下方留白
-            const updateSheetHeight = () => {
-                if (menu.element.classList.contains("b3-menu--fit")) {
-                    window.siyuan.menus.menu.resetPosition();
-                }
+            let closed = false;
+            cancelSearch = () => {
+                closed = true;
+                clearTimeout(searchTimer);
+                requestSequence++;
+                controller?.abort();
+            };
+            // 列表内容变化后重新适配菜单位置和面板高度。
+            const updateMenuPosition = () => {
+                window.siyuan.menus.menu.resetPosition();
             };
             const loadList = (keyword: string, cb?: () => void) => {
+                if (closed) {
+                    return;
+                }
                 controller?.abort();
                 controller = new AbortController();
                 const currentSequence = ++requestSequence;
                 genSearchList(listElement, keyword, options, controller.signal, () => {
-                    if (currentSequence !== requestSequence) {
+                    if (closed || currentSequence !== requestSequence) {
                         return;
                     }
                     cb?.();
-                    updateSheetHeight();
+                    updateMenuPosition();
                 });
             };
             const search = () => {
+                if (closed) {
+                    return;
+                }
                 controller?.abort();
                 requestSequence++;
                 clearTimeout(searchTimer);
@@ -177,6 +198,9 @@ export const openSearchAV = (options: IOpenSearchAVOptions) => {
                     return;
                 }
                 UDLRHint(listElement, event);
+                if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    updateMenuPosition();
+                }
                 if (event.key === "Enter") {
                     event.preventDefault();
                     event.stopPropagation();
@@ -207,8 +231,8 @@ export const openSearchAV = (options: IOpenSearchAVOptions) => {
                         }
                         event.preventDefault();
                         event.stopPropagation();
-                        // 展开或收起视图后重新适配面板高度
-                        updateSheetHeight();
+                        // 展开或收起视图后重新适配菜单位置和面板高度。
+                        updateMenuPosition();
                         break;
                     } else if (clickTarget.classList.contains("b3-list-item")) {
                         event.preventDefault();
@@ -221,7 +245,7 @@ export const openSearchAV = (options: IOpenSearchAVOptions) => {
             });
             loadList("", () => {
                 const rect = options.target.getBoundingClientRect();
-                menu.open({
+                menu.open(options.position || {
                     x: rect.left,
                     y: rect.bottom,
                     h: rect.height,
@@ -230,7 +254,6 @@ export const openSearchAV = (options: IOpenSearchAVOptions) => {
             });
         }
     });
-    menu.element.querySelector(".b3-menu__items").setAttribute("style", "overflow: initial");
     if (isMobile()) {
         // 移动端底部面板按内容收缩，避免列表下方留白
         menu.element.classList.add("b3-menu--fit");
@@ -403,7 +426,7 @@ const getRelationGridTemplate = (columns: IAVColumn[], rows: IAVRow[],
     } as IAVTable, getCellValueText, measureText);
     return `32px ${columns.map((column, index) => {
         const width = widths[column.id] || "64px";
-        return getAVRelationColumnWidth(width, column.type, index === 0);
+        return getAVRelationColumnWidth(width, column.type, index === 0, measureText(column.name));
     }).join(" ")}`;
 };
 
@@ -411,13 +434,17 @@ const getRelationPrimaryCell = (row: IAVRow) => {
     return row.cells.find((cell) => cell.value?.type === "block");
 };
 
-const genRelationHeaderHTML = (columns: IAVColumn[], gridTemplate: string) => {
+const genRelationHeaderHTML = (columns: IAVColumn[], gridTemplate: string, sort?: {column: string, order: "ASC" | "DESC"}) => {
     let html = `<div class="av__relation-table-header" data-relation-type="header" style="grid-template-columns:${gridTemplate}">
 <span class="av__relation-table-check"></span>`;
     columns.forEach((column, index) => {
-        html += `<span class="av__relation-table-cell${index === 0 ? " av__relation-table-primary" : ""}">
-    <svg><use xlink:href="#${getColIconByType(column.type)}"></use></svg>
+        const sorted = sort?.column === column.id;
+        html += `<span data-relation-column="${escapeAttr(column.id)}" role="columnheader" tabindex="0" aria-sort="${sorted ? sort.order === "ASC" ? "ascending" : "descending" : "none"}" class="av__relation-table-cell fn__pointer${index === 0 ? " av__relation-table-primary" : ""}">
+    ${column.icon ? unicode2Emoji(column.icon, "av__relation-header-icon", true) :
+        `<svg><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`}
     <span class="fn__ellipsis">${escapeHtml(column.name)}</span>
+    <svg class="av__relation-sort${sorted ? "" : " fn__hidden"}" aria-hidden="true"><use xlink:href="#${sort?.order === "DESC" ? "iconDown" : "iconUp"}"></use></svg>
+    <span class="av__widthdrag"></span>
 </span>`;
     });
     return html + "</div>";
@@ -440,21 +467,24 @@ style="grid-template-columns:${gridTemplate}">
             const isDetached = primaryValue.isDetached;
             const useRenderedContent = hasAVRenderTemplateResult(primaryValue, column.renderTemplate);
             const content = useRenderedContent ? getAVTemplateHTML(primaryValue.renderedContent || "") :
-                Lute.EscapeHTMLStr(primaryValue.block?.content || window.siyuan.languages.untitled);
-            html += `<span class="av__relation-table-cell av__relation-table-primary" data-row-id="${escapeAttr(row.id)}"
+                escapeHtmlTextAndAttr(primaryValue.block?.content || window.siyuan.languages.untitled);
+            html += `<span data-relation-column="${escapeAttr(column.id)}" class="av__relation-table-cell av__relation-table-primary" data-row-id="${escapeAttr(row.id)}"
 data-value-id="${escapeAttr(primaryCell.id || "")}"
 style="${primaryCell.bgColor ? `background-color:${primaryCell.bgColor};` : ""}${primaryCell.color ? `color:${primaryCell.color};` : ""}">
     ${selected ? '<svg class="b3-menu__icon fn__grab"><use xlink:href="#iconDrag"></use></svg>' : ""}
+    <span class="av__relation-row-icon">${getAVBlockIconHTML(primaryValue)}</span>
     <span class="b3-menu__label fn__ellipsis${isDetached ? "" : " popover__block"}${useRenderedContent ? " av__celltext--template" : ""}"
-        ${isDetached ? "" : 'style="color:var(--b3-protyle-inline-blockref-color)"'}
-        data-id="${escapeAttr(primaryValue.block?.id || "")}" data-content="${escapeAttr(primaryValue.block?.content || "")}">${content}</span>
+        data-icon="${escapeAttr(primaryValue.block?.icon || "")}"
+        data-id="${escapeAttr(primaryValue.block?.id || "")}" data-content="${escapeAttr(primaryValue.block?.content || "")}">${isDetached ? content : `<span class="av__celltext--ref">${content}</span>`}</span>
     ${primaryCell.id ? `<button type="button" class="av__relation-row-open ariaLabel" data-type="openRelationRow" draggable="false"
         data-position="north" aria-label="${window.siyuan.languages.openBy}"><svg><use xlink:href="#iconOpen"></use></svg></button>` : ""}
 </span>`;
         } else {
-            html += `<div class="av__relation-table-cell"
+            const text = cell?.value ? getCellValueText(cell.value, column) : "";
+            html += `<div data-relation-column="${escapeAttr(column.id)}" data-dtype="${column.type}" data-wrap="false" title="${escapeAttr(text)}" class="av__relation-table-cell"
 style="${cell?.bgColor ? `background-color:${cell.bgColor};` : ""}${cell?.color ? `color:${cell.color};` : ""}">${cell?.value ?
-                renderCell(cell.value, 0, false, "table", column.options, column.dateFormat, column.renderTemplate) : ""}</div>`;
+                column.type === "text" ? `<span class="av__celltext">${escapeHtmlTextAndAttr(text)}</span>` :
+                    renderCell(cell.value, 0, true, "table", column.options, column.dateFormat, column.renderTemplate, false) : ""}</div>`;
         }
     });
     return html + "</div>";
@@ -472,20 +502,25 @@ const genRelationRowsHTML = (rows: IAVRow[], columns: IAVColumn[], type: "select
     return html;
 };
 
-const genRelationFooterHTML = (menuElement: HTMLElement, keyword: string, hasCandidates: boolean, hasMore: boolean) => {
-    if (keyword) {
-        const refElement = menuElement.querySelector(".popover__block");
-        const databaseName = `<span style="color: var(--b3-protyle-inline-blockref-color);" class="popover__block"
+const genRelationFooterHTML = (menuElement: HTMLElement, keyword: string) => {
+    const preview = relationItemPreviews.get(menuElement)?.preview;
+    const creating = menuElement.querySelector<HTMLElement>(".av__relation")?.dataset.creating === "true";
+    const content = preview ? preview.primaryKey : keyword;
+    const refElement = menuElement.querySelector(".popover__block");
+    const databaseName = `<span style="color: var(--b3-protyle-inline-blockref-color);" class="popover__block"
 data-id="${escapeAttr(refElement?.getAttribute("data-id") || "")}">${escapeHtml(refElement?.textContent || "")}</span>`;
-        return `<button class="b3-menu__item av__relation-table-footer" data-type="setRelationCell" data-relation-type="create">
-    <span class="b3-menu__label fn__ellipsis">${window.siyuan.languages.newRowInRelation.replace("${x}", databaseName).
-            replace("${y}", Lute.EscapeHTMLStr(keyword))}</span>
+    const inputName = preview?.inputPrimaryKey ?? keyword.trim();
+    const hasNameChoice = preview?.hasPrimaryKeyTemplate && keyword.trim() && inputName !== content;
+    const genButton = (label: string, name: string, useInputName = false) => `<button class="b3-menu__item av__relation-table-footer" data-type="setRelationCell" data-relation-type="create" data-use-input-name="${useInputName}"
+${!preview || preview.error || creating ? "disabled" : ""} title="${escapeAttr(preview?.error || "")}">
+    <span class="b3-menu__label fn__ellipsis">${label.replace("${x}", databaseName).
+        replace("${y}", escapeHtmlTextAndAttr(name || window.siyuan.languages.untitled))}</span>
 </button>`;
+    if (hasNameChoice) {
+        return genButton(window.siyuan.languages.newRelationItemWithTemplate, content) +
+            genButton(window.siyuan.languages.newRelationItemWithInputName, inputName, true);
     }
-    if (!hasCandidates && !hasMore) {
-        return `<div class="b3-list--empty av__relation-table-footer" data-relation-type="empty">${window.siyuan.languages.noMoreItems}</div>`;
-    }
-    return "";
+    return genButton(window.siyuan.languages.newRowInRelation, content);
 };
 
 const genRelationLoaderHTML = (loading: boolean, visible = loading) => {
@@ -511,6 +546,7 @@ export const bindRelationEvent = (options: {
         loaderVisible: false,
         columns: [] as IAVColumn[],
         gridTemplate: "",
+        sort: undefined as {column: string, order: "ASC" | "DESC"} | undefined,
         controller: undefined as AbortController | undefined,
     };
     let searchTimer: number;
@@ -529,7 +565,8 @@ export const bindRelationEvent = (options: {
             return false;
         }
         const menuStyle = getComputedStyle(options.menuElement);
-        const maxMenuHeight = parseFloat(menuStyle.maxHeight) || window.innerHeight - 32;
+        const maxMenuHeight = Math.min(parseFloat(menuStyle.maxHeight) || window.innerHeight - 32,
+            window.innerHeight - getTopBarHeight() - 8);
         const headerHeight = listElement.previousElementSibling?.getBoundingClientRect().height || 0;
         const chromeHeight = headerHeight + parseFloat(menuStyle.paddingTop) + parseFloat(menuStyle.paddingBottom) +
             parseFloat(menuStyle.borderTopWidth) + parseFloat(menuStyle.borderBottomWidth);
@@ -549,12 +586,32 @@ export const bindRelationEvent = (options: {
         listNaturalMaxHeight = naturalHeight;
         return updateListMaxHeight();
     };
+    let anchorElement = options.cellElements[options.cellElements.length - 1];
+    let anchorRect = anchorElement.getBoundingClientRect();
+    const anchorRow = anchorElement.closest<HTMLElement>(".av__row, .av__gallery-item, .av__calendar-item");
+    const anchorColumnAttribute = anchorElement.dataset.colId ? "data-col-id" : "data-field-id";
+    const anchorColumnID = anchorElement.getAttribute(anchorColumnAttribute);
+    const anchorRowID = anchorRow?.dataset.id || anchorElement.dataset.rowId;
+    const anchorRowClass = ["av__row", "av__gallery-item", "av__calendar-item"].find(name => anchorRow?.classList.contains(name));
+    const anchorSelector = anchorRow ?
+        `.${anchorRowClass}[data-id="${CSS.escape(anchorRowID)}"] [${anchorColumnAttribute}="${CSS.escape(anchorColumnID)}"]` :
+        anchorRowID ? `[data-row-id="${CSS.escape(anchorRowID)}"][${anchorColumnAttribute}="${CSS.escape(anchorColumnID)}"]` :
+            `.fn__flex-1[${anchorColumnAttribute}="${CSS.escape(anchorColumnID)}"]`;
     const positionMenu = (reset = false) => {
         if (reset) {
             resetPosition();
         }
-        const cellRect = options.cellElements[options.cellElements.length - 1].getBoundingClientRect();
-        setPosition(options.menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
+        // 数据库刷新会替换单元格，重新查找锚点；条目不可见时沿用最后的有效位置。
+        if (!anchorElement?.isConnected) {
+            anchorElement = options.blockElement.querySelector<HTMLElement>(anchorSelector);
+        }
+        if (anchorElement?.isConnected) {
+            const rect = anchorElement.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                anchorRect = rect;
+            }
+        }
+        setPosition(options.menuElement, anchorRect.left, anchorRect.bottom, anchorRect.height, 0, true);
         positionInitialized = true;
     };
     const resize = () => {
@@ -613,6 +670,7 @@ export const bindRelationEvent = (options: {
                 return {
                     id: item.dataset.rowId,
                     blockID: blockElement.dataset.id,
+                    icon: blockElement.dataset.icon || "",
                     content: blockElement.dataset.content ?? blockElement.textContent,
                     isDetached: !blockElement.classList.contains("popover__block"),
                 };
@@ -624,25 +682,28 @@ export const bindRelationEvent = (options: {
             return {
                 id,
                 blockID: value?.block?.id,
+                icon: value?.block?.icon || "",
                 content: value?.block?.content || "",
                 isDetached: value?.isDetached === true || !value?.block?.id,
             };
         });
     };
-    const renderFooter = (hasCandidates: boolean) => {
-        listElement.querySelector('[data-relation-type="create"], [data-relation-type="empty"]')?.remove();
+    const renderFooter = () => {
+        listElement.querySelectorAll('[data-relation-type="create"], [data-relation-type="empty"]').forEach(element => element.remove());
         const more = hasMore();
         listElement.dataset.hasMore = more.toString();
-        const footerHTML = genRelationFooterHTML(options.menuElement, state.keyword, hasCandidates, more);
+        const footerHTML = genRelationFooterHTML(options.menuElement, state.keyword);
         if (footerHTML) {
             listElement.querySelector('[data-relation-type="loader"]').insertAdjacentHTML("beforebegin", footerHTML);
         }
     };
+    const updateLayout = bindRelationLayout(relationElement, relationElement.dataset.avId, resize);
     const renderPage = (data: {
         columns: IAVColumn[],
         selectedRows: IAVRow[],
         rows: IAVRow[]
     }, reset: boolean) => {
+        const focusedColumn = listElement.querySelector<HTMLElement>('[role="columnheader"]:focus')?.dataset.relationColumn;
         state.columns = data.columns || state.columns;
         if (reset || !state.gridTemplate) {
             state.gridTemplate = getRelationGridTemplate(state.columns,
@@ -658,11 +719,11 @@ export const bindRelationEvent = (options: {
             const selectedHTML = genRelationRowsHTML(data.selectedRows || [], state.columns, "selected",
                 gridTemplate, excludedIDs);
             candidateHTML = genRelationRowsHTML(data.rows || [], state.columns, "candidate", gridTemplate, excludedIDs);
-            listElement.innerHTML = `${genRelationHeaderHTML(state.columns, gridTemplate)}
+            listElement.innerHTML = `${genRelationHeaderHTML(state.columns, gridTemplate, state.sort)}
 <div class="av__relation-table-selected" data-relation-type="selectedRows">${selectedHTML}</div>
 <div class="b3-menu__separator" data-relation-type="separator"></div>
 <div class="av__relation-table-candidates" data-relation-type="candidateRows">${candidateHTML}</div>
-${genRelationLoaderHTML(state.loading, state.loaderVisible)}`;
+${genRelationLoaderHTML(false)}`;
         } else {
             candidateHTML = genRelationRowsHTML(data.rows || [], state.columns, "candidate", gridTemplate, excludedIDs);
             if (candidateHTML) {
@@ -670,10 +731,13 @@ ${genRelationLoaderHTML(state.loading, state.loaderVisible)}`;
             }
         }
         renderAVRichTextElements(listElement);
-        renderFooter(!!listElement.querySelector('[data-relation-type="candidate"]'));
-        if (!listElement.querySelector(".b3-menu__item--current")) {
-            listElement.querySelector('[data-type="setRelationCell"]')?.classList.add("b3-menu__item--current");
+        updateLayout(state.columns, gridTemplate);
+        if (focusedColumn) {
+            Array.from(listElement.querySelectorAll<HTMLElement>('[role="columnheader"]'))
+                .find(header => header.dataset.relationColumn === focusedColumn)?.focus();
         }
+        renderFooter();
+        getRelationKeyboardTarget(listElement, state.keyword.trim() !== "");
         updateCopyRelatedItems(options.menuElement);
     };
     const loadPage = (reset: boolean) => {
@@ -693,15 +757,19 @@ ${genRelationLoaderHTML(state.loading, state.loaderVisible)}`;
         const selectedItems = getSelectedItems();
         state.controller = controller;
         state.loading = true;
-        setLoading(true, initialLoad && reset, controller);
+        // 已有条目刷新时保留列表尺寸，首次加载和追加分页显示底部加载提示。
+        setLoading(initialLoad || !reset, initialLoad && reset, controller);
         let succeeded = false;
         fetchPost("/api/av/getAttributeViewRelationCandidates", {
+            includeNewItemPreview: true,
+            blockID: options.blockElement.getAttribute("data-node-id"),
             avID: relationElement.getAttribute("data-source-av-id"),
             keyID: relationElement.getAttribute("data-key-id"),
             keyword,
             page,
             pageSize: RELATION_PAGE_SIZE,
             selectedBlockIDs: selectedItems.map((item) => item.id),
+            sort: state.sort,
         }, response => {
             if (controller.signal.aborted || keyword !== state.keyword) {
                 return;
@@ -715,6 +783,11 @@ ${genRelationLoaderHTML(state.loading, state.loaderVisible)}`;
             databaseName.setAttribute("data-id", response.data.blockIDs?.[0] || "");
             relationElement.dataset.databaseBlockId = response.data.blockIDs?.[0] || "";
             relationElement.dataset.notebookId = response.data.notebookID || "";
+            if (response.data.newItemPreview) {
+                relationItemPreviews.set(options.menuElement, {keyword, preview: response.data.newItemPreview});
+            } else {
+                relationItemPreviews.delete(options.menuElement);
+            }
             const columns = response.data.columns as IAVColumn[] || [];
             const selectedRowsByID = new Map<string, IAVRow>((response.data.selectedRows as IAVRow[] || []).
                 map((row) => [row.id, row]));
@@ -733,6 +806,7 @@ ${genRelationLoaderHTML(state.loading, state.loaderVisible)}`;
                             isDetached: item.isDetached,
                             block: {
                                 id: item.blockID,
+                                icon: item.icon,
                                 content: item.content,
                             }
                         }
@@ -763,8 +837,40 @@ ${genRelationLoaderHTML(state.loading, state.loaderVisible)}`;
             }
         });
     };
+    listElement.addEventListener("mousedown", event => {
+        const target = event.target as HTMLElement;
+        if (target.closest('[role="columnheader"]') && !target.closest(".av__widthdrag")) {
+            event.preventDefault();
+        }
+    });
+    listElement.addEventListener("click", event => {
+        const target = event.target as HTMLElement;
+        if (target.closest(".av__widthdrag")) {
+            return;
+        }
+        const header = target.closest<HTMLElement>('[role="columnheader"]');
+        if (!header) {
+            return;
+        }
+        event.stopPropagation();
+        const column = header.dataset.relationColumn;
+        state.sort = {column, order: state.sort?.column === column && state.sort.order === "ASC" ? "DESC" : "ASC"};
+        listElement.scrollTop = 0;
+        loadPage(true);
+    });
+    listElement.addEventListener("keydown", event => {
+        const header = (event.target as HTMLElement).closest<HTMLElement>('[role="columnheader"]');
+        if (header && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            event.stopPropagation();
+            header.click();
+        }
+    });
     const search = () => {
         state.keyword = inputElement.value;
+        listElement.querySelectorAll(".b3-menu__item--current").forEach(item => item.classList.remove("b3-menu__item--current"));
+        relationItemPreviews.delete(options.menuElement);
+        renderFooter();
         state.controller?.abort();
         state.controller = undefined;
         state.loading = false;
@@ -773,20 +879,24 @@ ${genRelationLoaderHTML(state.loading, state.loaderVisible)}`;
             clearTimeout(searchTimer);
         }
         searchTimer = window.setTimeout(() => {
+            searchTimer = undefined;
             loadPage(true);
         }, Constants.TIMEOUT_INPUT);
     };
 
     inputElement.addEventListener("keydown", (event) => {
-        if (event.isComposing) {
+        if (event.isComposing || !["Enter", "ArrowDown", "ArrowUp"].includes(event.key)) {
             return;
         }
-        upDownHint(listElement, event, "b3-menu__item--current");
-        const currentElement = options.menuElement.querySelector(".b3-menu__item--current") as HTMLElement;
-        if (event.key === "Enter" && currentElement && currentElement.getAttribute("data-type") === "setRelationCell") {
+        event.preventDefault();
+        event.stopPropagation();
+        // 搜索防抖或首页请求完成前，不允许键盘操作旧候选项。
+        if (searchTimer || state.page === 0 || inputElement.value !== state.keyword) {
+            return;
+        }
+        const currentElement = getRelationKeyboardTarget(listElement, state.keyword.trim() !== "", event.key);
+        if (event.key === "Enter" && currentElement) {
             setRelationCell(options.protyle, options.blockElement as HTMLElement, currentElement, options.cellElements);
-            event.preventDefault();
-            event.stopPropagation();
         }
     });
     inputElement.addEventListener("input", (event: InputEvent) => {
@@ -858,6 +968,7 @@ ${genRelationLoaderHTML(state.loading, state.loaderVisible)}`;
     window.addEventListener("resize", resize);
     loadPage(true);
     return () => {
+        updateLayout.close();
         state.controller?.abort();
         window.removeEventListener("resize", resize);
         options.menuElement.removeEventListener("relationrefresh", refresh);
@@ -881,13 +992,17 @@ export const getRelationHTML = (data: IAV, cellElements?: HTMLElement[]) => {
     });
     if (colRelationData && colRelationData.avID) {
         return `<div data-av-id="${colRelationData.avID}" data-source-av-id="${data.id}" data-key-id="${colId}" class="fn__flex-column av__relation">
+<div>
 <div class="b3-menu__item" data-type="nobg">
     <div class="b3-form__icona fn__flex-1" style="overflow: visible">
-        <input class="b3-text-field fn__block" style="min-width: 190px"/>
+        <input spellcheck="false" class="b3-text-field fn__block" style="min-width: 190px"/>
         <svg class="b3-form__icona-icon ariaLabel fn__none" data-position="north" data-type="copyRelatedItems" aria-label="${window.siyuan.languages.copy} ${window.siyuan.languages.relatedItems}"><use xlink:href="#iconCopy"></use></svg>
     </div>
     <span class="fn__space"></span>
     <span style="color: var(--b3-protyle-inline-blockref-color);max-width: 200px" data-id="" class="popover__block fn__pointer fn__ellipsis"></span>
+    <span class="fn__space"></span>
+    <svg class="b3-menu__action b3-menu__action--show ariaLabel" data-type="relationFields" data-position="north" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false" aria-label="${window.siyuan.languages.more}"><use xlink:href="#iconMore"></use></svg>
+</div>
 </div>
 <div class="b3-menu__items av__relation-table">
     ${genRelationLoaderHTML(true, false)}
@@ -906,6 +1021,7 @@ const getRelationValue = (menuElement: HTMLElement) => {
             type: "block",
             block: {
                 id: blockElement.dataset.id,
+                icon: blockElement.dataset.icon || "",
                 content: blockElement.dataset.content ?? blockElement.textContent
             },
             isDetached: !blockElement.classList.contains("popover__block")
@@ -914,15 +1030,16 @@ const getRelationValue = (menuElement: HTMLElement) => {
     return value;
 };
 
-const genCreatedRelationRowHTML = (menuElement: HTMLElement, rowID: string, content: string) => {
+const genCreatedRelationRowHTML = (menuElement: HTMLElement, rowID: string, content: string, blockID = "", isDetached = true) => {
     const headerElement = menuElement.querySelector('[data-relation-type="header"]') as HTMLElement;
-    const columnCount = headerElement?.querySelectorAll(".av__relation-table-cell").length || 1;
-    let cellsHTML = `<span class="av__relation-table-cell av__relation-table-primary" data-row-id="${rowID}">
+    const columns = headerElement?.querySelectorAll<HTMLElement>(".av__relation-table-cell");
+    let cellsHTML = `<span data-relation-column="${escapeAttr(columns?.[0]?.dataset.relationColumn || "")}" class="av__relation-table-cell av__relation-table-primary" data-row-id="${rowID}">
     <svg class="b3-menu__icon fn__grab"><use xlink:href="#iconDrag"></use></svg>
-    <span class="b3-menu__label fn__ellipsis" data-id="">${Lute.EscapeHTMLStr(content)}</span>
+    <span class="av__relation-row-icon">${getAVBlockIconHTML({isDetached})}</span>
+    <span class="b3-menu__label fn__ellipsis${isDetached ? "" : " popover__block"}" data-id="${escapeAttr(isDetached ? "" : blockID)}">${escapeHtmlTextAndAttr(content)}</span>
 </span>`;
-    for (let i = 1; i < columnCount; i++) {
-        cellsHTML += '<span class="av__relation-table-cell"></span>';
+    for (let i = 1; i < (columns?.length || 1); i++) {
+        cellsHTML += `<span data-relation-column="${escapeAttr(columns[i].dataset.relationColumn)}" class="av__relation-table-cell${columns[i].classList.contains("fn__none") ? " fn__none" : ""}"></span>`;
     }
     return `<div data-row-id="${rowID}" data-position="west" data-type="setRelationCell"
 data-relation-type="selected" class="b3-menu__item av__relation-table-row" draggable="true"
@@ -944,7 +1061,7 @@ export const setRelationCell = async (protyle: IProtyle, nodeElement: HTMLElemen
     if (!nodeElement.contains(cellElements[0])) {
         const viewType = nodeElement.getAttribute("data-av-type") as TAVView;
         const rowID = getFieldIdByCellElement(cellElements[0], viewType);
-        if (viewType === "table") {
+        if (isTableLikeView(viewType)) {
             cellElements[0] = (nodeElement.querySelector(`.av__row[data-id="${rowID}"] .av__cell[data-col-id="${cellElements[0].dataset.colId}"]`) ||
                 nodeElement.querySelector(`.fn__flex-1[data-col-id="${cellElements[0].dataset.colId}"]`)) as HTMLElement;
         } else {
@@ -955,7 +1072,11 @@ export const setRelationCell = async (protyle: IProtyle, nodeElement: HTMLElemen
     if (target.classList.contains("b3-menu__item")) {
         const rowId = target.getAttribute("data-row-id");
         if (target.dataset.relationType === "selected") {
-            target.remove();
+            target.dataset.relationType = "candidate";
+            target.removeAttribute("draggable");
+            target.querySelector(".av__relation-table-check use").setAttribute("xlink:href", "#iconUncheck");
+            target.querySelector(".av__relation-table-primary > .fn__grab")?.remove();
+            menuElement.querySelector('[data-relation-type="candidateRows"]').prepend(target);
             updateCellsValue(protyle, nodeElement, getRelationValue(menuElement), cellElements);
             menuElement.dispatchEvent(new CustomEvent("relationrefresh"));
         } else if (rowId) {
@@ -969,32 +1090,65 @@ export const setRelationCell = async (protyle: IProtyle, nodeElement: HTMLElemen
             updateCellsValue(protyle, nodeElement, getRelationValue(menuElement), cellElements);
             menuElement.dispatchEvent(new CustomEvent("relationrefresh"));
         } else {
-            const blockID = target.querySelector(".popover__block").getAttribute("data-id");
-            const content = target.querySelector("b").textContent;
-            const rowId = Lute.NewNodeID();
-            const bodyElement = hasClosestByClassName(cellElements[0], "av__body");
-            menuElement.querySelector('[data-relation-type="selectedRows"]').insertAdjacentHTML(
-                "beforeend", genCreatedRelationRowHTML(menuElement, rowId, content));
-            const newValue = getRelationValue(menuElement);
-            const updateOptions = await updateCellsValue(protyle, nodeElement, newValue, cellElements, null, null, true);
-            const doOperations: IOperation[] = [{
-                action: "insertAttrViewBlock",
-                ignoreDefaultFill: true,
-                avID: relationElement.getAttribute("data-av-id"),
-                srcs: [{
-                    itemID: rowId,
-                    id: Lute.NewNodeID(),
-                    isDetached: true,
-                    content
-                }],
-                blockID,
-                groupID: bodyElement ? bodyElement.getAttribute("data-group-id") : "",
-            }, {
-                action: "doUpdateUpdated",
-                id: blockID,
-                data: dayjs().format("YYYYMMDDHHmmss"),
-            }];
-            transaction(protyle, doOperations.concat(updateOptions.doOperations));
+            const entry = relationItemPreviews.get(menuElement);
+            if (target.hasAttribute("disabled") || relationElement.dataset.creating === "true" ||
+                !entry || entry.preview.error || entry.keyword !== menuElement.querySelector("input").value) {
+                return;
+            }
+            relationElement.dataset.creating = "true";
+            const useInputName = target.dataset.useInputName === "true";
+            target.setAttribute("disabled", "");
+            try {
+                // 用临时 ID 计算批量关系合并结果，仅成功创建后更新面板。
+                const pendingID = Lute.NewNodeID();
+                const value = getRelationValue(menuElement);
+                value.blockIDs.push(pendingID);
+                value.contents.push({type: "block", block: {content: useInputName ?
+                    (entry.preview.inputPrimaryKey ?? entry.keyword.trim()) : entry.preview.primaryKey}, isDetached: true});
+                const operations = await updateCellsValue(protyle, nodeElement, value, cellElements,
+                    null, null, true, false, false, undefined, false);
+                const cells: AVRelationItemCellInput[] = [];
+                operations.doOperations.forEach(operation => {
+                    if (operation.action === "updateAttrViewCell" && operation.data.relation) {
+                        cells.push({itemID: operation.rowID,
+                            relatedItemIDs: operation.data.relation.blockIDs.filter(id => id !== pendingID)});
+                    }
+                });
+                if (!cells.length) {
+                    return;
+                }
+                const response = await fetchSyncPost("/api/av/createAttributeViewRelationItem", {
+                    avID: nodeElement.dataset.avId,
+                    blockID: nodeElement.dataset.nodeId,
+                    keyID: relationElement.dataset.keyId,
+                    keyword: entry.keyword,
+                    useInputName,
+                    cells,
+                    preview: entry.preview,
+                    app: protyle.app.appId,
+                    session: protyle.id,
+                });
+                if (response.code !== 0 || !response.data || !("itemID" in response.data)) {
+                    if (response.code === 1 && response.data && "unavailableNotebook" in response.data && response.data.unavailableNotebook) {
+                        showMessage(window.siyuan.languages.newItemTemplateUnavailableNotebookTip, 6000, "error");
+                    }
+                    return;
+                }
+                if (response.data.warnings?.length) {
+                    showMessage(response.data.warnings.map(item => escapeHtml(item)).join("<br>"));
+                }
+                if (menuElement.isConnected && !menuElement.querySelector(`[data-relation-type="selected"][data-row-id="${response.data.itemID}"]`)) {
+                    menuElement.querySelector('[data-relation-type="selectedRows"]').insertAdjacentHTML("beforeend",
+                        genCreatedRelationRowHTML(menuElement, response.data.itemID, response.data.content,
+                            response.data.blockID, response.data.isDetached));
+                }
+            } catch (error) {
+                showMessage(escapeHtml(error.message), 6000, "error");
+            } finally {
+                delete relationElement.dataset.creating;
+                target.removeAttribute("disabled");
+                menuElement.dispatchEvent(new CustomEvent("relationrefresh"));
+            }
         }
     }
     updateCopyRelatedItems(menuElement);

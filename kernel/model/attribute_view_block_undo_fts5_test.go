@@ -55,6 +55,53 @@ func TestAttributeViewDeletedBlockUndoRedo(t *testing.T) {
 	}
 }
 
+func TestAttributeViewDeletedBlockGroupedUndoRedo(t *testing.T) {
+	fixture, before, tx := setupAttributeViewDeletedBlockTest(t, "block")
+	groupKey := before.KeyValues[2].Key
+	view := before.Views[0]
+	view.Table.Columns = append(view.Table.Columns, &av.ViewTableColumn{BaseField: &av.BaseField{ID: groupKey.ID}})
+	view.Group = &av.ViewGroup{Field: groupKey.ID, Method: av.GroupMethodValue, Order: av.GroupOrderAsc}
+	regenAttrViewGroups(before)
+	if err := av.SaveAttributeView(before); err != nil {
+		t.Fatal(err)
+	}
+
+	boundItemID := before.GetBlockKeyValues().Values[0].BlockID
+	if err := PerformTxSync(tx); err != nil {
+		t.Fatal(err)
+	}
+	entry := GlobalUndoLog.Peek(fixture.sourceID)
+	if entry == nil {
+		t.Fatal("grouped database deletion did not enter the undo log")
+	}
+	deleted := readAttributeViewItemsTest(t, before.ID)
+	if deleted.GetBlockValue(boundItemID) != nil {
+		t.Fatal("deleted block remains in the grouped database")
+	}
+	group := deleted.Views[0].GetGroupByGroupValue("private field contents")
+	if group == nil || slices.Contains(group.GroupItemIDs, boundItemID) {
+		t.Fatal("grouped database retained the deleted item")
+	}
+
+	replayAttributeViewFieldsTest(t, entry.UndoOperationsForReplay())
+	restored := readAttributeViewItemsTest(t, before.ID)
+	assertAttributeViewFieldsTest(t, before, restored)
+	group = restored.Views[0].GetGroupByGroupValue("private field contents")
+	if group == nil || !slices.Contains(group.GroupItemIDs, boundItemID) {
+		t.Fatal("undo did not restore the grouped item")
+	}
+
+	replayAttributeViewFieldsTest(t, entry.DoOperationsForReplay())
+	redone := readAttributeViewItemsTest(t, before.ID)
+	if redone.GetBlockValue(boundItemID) != nil {
+		t.Fatal("redo retained the deleted grouped item")
+	}
+	group = redone.Views[0].GetGroupByGroupValue("private field contents")
+	if group == nil || slices.Contains(group.GroupItemIDs, boundItemID) {
+		t.Fatal("redo did not regenerate the grouped items")
+	}
+}
+
 func TestAttributeViewDeletedBlockWriteFailure(t *testing.T) {
 	fixture, before, tx := setupAttributeViewDeletedBlockTest(t, "container")
 	tx.writeTransactionTree = func(*parse.Tree) error { return errors.New("injected block write failure") }
@@ -146,11 +193,21 @@ func TestAttributeViewDeletedBlockUndoRelations(t *testing.T) {
 		t.Run(map[bool]string{false: "other database", true: "same database"}[self], func(t *testing.T) {
 			fixture, source, tx := setupAttributeViewDeletedBlockTest(t, "container")
 			dest, backID, targetID := addDeletedBlockTestRelation(t, source, self)
+			keptID := source.GetBlockKeyValues().Values[2].BlockID
+			back := dest.GetValue(backID, targetID)
+			back.Relation.BlockIDs = append([]string{keptID}, back.Relation.BlockIDs...)
+			if err := av.SaveAttributeView(dest); err != nil {
+				t.Fatal(err)
+			}
 			if err := PerformTxSync(tx); err != nil {
 				t.Fatal(err)
 			}
 			entry := GlobalUndoLog.Peek(fixture.sourceID)
 			for cycle := 0; cycle < 2; cycle++ {
+				back := readAttributeViewItemsTest(t, dest.ID).GetValue(backID, targetID)
+				if !slices.Equal(back.Relation.BlockIDs, []string{keptID}) {
+					t.Fatalf("deletion retained stale back relations: %v", back.Relation.BlockIDs)
+				}
 				for _, id := range []string{source.ID, dest.ID} {
 					rendered := readAttributeViewItemsTest(t, id)
 					for _, view := range rendered.Views {
@@ -162,7 +219,7 @@ func TestAttributeViewDeletedBlockUndoRelations(t *testing.T) {
 				}
 				replayAttributeViewFieldsTest(t, entry.UndoOperationsForReplay())
 				assertAttributeViewFieldsTest(t, source, readAttributeViewItemsTest(t, source.ID))
-				back := readAttributeViewItemsTest(t, dest.ID).GetValue(backID, targetID)
+				back = readAttributeViewItemsTest(t, dest.ID).GetValue(backID, targetID)
 				if !slices.Equal(back.Relation.BlockIDs, dest.GetValue(backID, targetID).Relation.BlockIDs) {
 					t.Fatal("block undo did not restore the back relation")
 				}
@@ -206,6 +263,47 @@ func addDeletedBlockTestRelation(t *testing.T, source *av.AttributeView, self bo
 	av.UpsertAvBackRel(source.ID, dest.ID)
 	av.UpsertAvBackRel(dest.ID, source.ID)
 	return dest, backID, targetID
+}
+
+func TestAttributeViewDeletedBlockRelationsWriteFailure(t *testing.T) {
+	fixture, source, tx := setupAttributeViewDeletedBlockTest(t, "container")
+	dest, _, _ := addDeletedBlockTestRelation(t, source, false)
+	tx.writeTransactionTree = func(*parse.Tree) error { return errors.New("injected document write failure") }
+	if err := PerformTxSync(tx); err == nil {
+		t.Fatal("failed deletion succeeded")
+	}
+	assertAttributeViewFieldsTest(t, source, readAttributeViewItemsTest(t, source.ID))
+	assertAttributeViewFieldsTest(t, dest, readAttributeViewItemsTest(t, dest.ID))
+	tree, err := LoadTreeByBlockID(fixture.sourceID)
+	if err != nil || treenode.GetNodeInTree(tree, tx.DoOperations[0].ID) == nil {
+		t.Fatalf("failed deletion did not restore the document: %v", err)
+	}
+}
+
+func TestAttributeViewDeletedBlockOneWayRelations(t *testing.T) {
+	fixture, source, tx := setupAttributeViewDeletedBlockTest(t, "block")
+	dest, backID, targetID := addDeletedBlockTestRelation(t, source, false)
+	for _, view := range []*av.AttributeView{source, dest} {
+		for _, kv := range view.KeyValues {
+			if kv.Key.Relation != nil {
+				kv.Key.Relation.IsTwoWay = false
+			}
+		}
+		if err := av.SaveAttributeView(view); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := PerformTxSync(tx); err != nil {
+		t.Fatal(err)
+	}
+	got := readAttributeViewItemsTest(t, dest.ID).GetValue(backID, targetID).Relation.BlockIDs
+	expected := dest.GetValue(backID, targetID).Relation.BlockIDs[1:]
+	if !slices.Equal(got, expected) {
+		t.Fatalf("one-way relation retained a deleted entry: %v", got)
+	}
+	replayAttributeViewFieldsTest(t, GlobalUndoLog.Peek(fixture.sourceID).UndoOperationsForReplay())
+	assertAttributeViewFieldsTest(t, source, readAttributeViewItemsTest(t, source.ID))
+	assertAttributeViewFieldsTest(t, dest, readAttributeViewItemsTest(t, dest.ID))
 }
 
 func setupAttributeViewDeletedBlockTest(t *testing.T, mode string) (*fileOperationTestFixture, *av.AttributeView, *Transaction) {

@@ -86,7 +86,7 @@ type RiffCard struct {
 
 func (block *Block) IsContainerBlock() bool {
 	switch block.Type {
-	case "NodeDocument", "NodeBlockquote", "NodeList", "NodeListItem", "NodeSuperBlock", "NodeCallout", "NodeTabs", "NodeTabItem":
+	case "NodeDocument", "NodeBlockquote", "NodeList", "NodeListItem", "NodeSuperBlock", "NodeCallout", "NodeTabs", "NodeTabItem", "NodeMindmap", "NodeMindmapItem":
 		return true
 	}
 	return false
@@ -387,14 +387,15 @@ func hasSurvivingAttributeViewBlock(group *blockRefCheckGroup, boundAVIDs, avBlo
 }
 
 type BlockTreeInfo struct {
-	ID           string `json:"id"`
-	Type         string `json:"type"`
-	ParentID     string `json:"parentID"`
-	ParentType   string `json:"parentType"`
-	PreviousID   string `json:"previousID"`
-	PreviousType string `json:"previousType"`
-	NextID       string `json:"nextID"`
-	NextType     string `json:"nextType"`
+	HeadingChildren *bool  `json:"headingChildren,omitempty"`
+	ID              string `json:"id"`
+	Type            string `json:"type"`
+	ParentID        string `json:"parentID"`
+	ParentType      string `json:"parentType"`
+	PreviousID      string `json:"previousID"`
+	PreviousType    string `json:"previousType"`
+	NextID          string `json:"nextID"`
+	NextType        string `json:"nextType"`
 }
 
 func GetBlockTreeInfos(ids []string) (ret map[string]*BlockTreeInfo) {
@@ -404,18 +405,38 @@ func GetBlockTreeInfos(ids []string) (ret map[string]*BlockTreeInfo) {
 // GetBlockTreeInfosInBox 获取指定笔记本内的块树信息。空 box 仅查询普通全局库。
 func GetBlockTreeInfosInBox(ids []string, boxID string) (ret map[string]*BlockTreeInfo) {
 	ret = map[string]*BlockTreeInfo{}
+	// 同一批查询中的文档只加载和遍历一次，避免多个折叠标题重复读取整棵树。
+	nodesByRoot := map[string]map[string]*ast.Node{}
 	for _, id := range ids {
-		tree := loadTreeForBlockDOM(id, boxID)
-		if nil == tree {
-			continue
+		var nodes map[string]*ast.Node
+		if bt := treenode.GetBlockTreeInBox(id, boxID); nil != bt {
+			nodes = nodesByRoot[bt.RootID]
 		}
-		node := treenode.GetNodeInTree(tree, id)
+		if nil == nodes {
+			tree := loadTreeForBlockDOM(id, boxID)
+			if nil == tree {
+				continue
+			}
+			nodes = map[string]*ast.Node{}
+			ast.Walk(tree.Root, func(node *ast.Node, entering bool) ast.WalkStatus {
+				if entering && "" != node.ID {
+					nodes[node.ID] = node
+				}
+				return ast.WalkContinue
+			})
+			nodesByRoot[tree.Root.ID] = nodes
+		}
+		node := nodes[id]
 		if nil == node {
 			ret[id] = &BlockTreeInfo{ID: id}
 			continue
 		}
 
 		bti := &BlockTreeInfo{ID: id, Type: node.Type.String()}
+		if ast.NodeHeading == node.Type {
+			hasChildren := treenode.HasHeadingChildren(node)
+			bti.HeadingChildren = &hasChildren
+		}
 		ret[id] = bti
 		parent := treenode.ParentBlock(node)
 		if nil != parent {
@@ -740,6 +761,9 @@ func SwapBlockRef(refID, defID string, includeChildren, originalToEmbed bool) (e
 	if nil == defNode {
 		return
 	}
+	if err = validateBlockSwap(refNode, defNode, includeChildren); err != nil {
+		return
+	}
 	swapBlockRefNodes(refNode, defNode, defID, includeChildren, originalToEmbed)
 
 	if err = indexWriteTreeUpsertQueue(refTree); err != nil {
@@ -844,7 +868,7 @@ func swapBlockRefNodes(refNode, defNode *ast.Node, defID string, includeChildren
 			if includeChildren {
 				headingMode = "0"
 			}
-			embed.SetIALAttr("custom-heading-mode", headingMode)
+			embed.SetIALAttr(embedHeadingModeAttr, headingMode)
 		}
 		embed.AppendChild(&ast.Node{Type: ast.NodeBlockQueryEmbedScript, Tokens: []byte("select * from blocks where id='" + defID + "'")})
 		originalRefNode.InsertBefore(embed)
@@ -1303,10 +1327,6 @@ func GetBlockDOMsWithEmbedInBoxWithAccessChecker(ids []string, boxID string, acc
 	return
 }
 
-func resolveEmbedContent(n *ast.Node, luteEngine *lute.Lute) {
-	resolveEmbedContentInBox(n, luteEngine, "", nil)
-}
-
 // loadTreeForBlockDOM 按指定 box 加载树，空 box 不回退搜索已打开的加密笔记本。
 func loadTreeForBlockDOM(id, boxID string) *parse.Tree {
 	bt := treenode.GetBlockTreeInBox(id, boxID)
@@ -1343,7 +1363,7 @@ func resolveEmbedContentInBox(n *ast.Node, luteEngine *lute.Lute, boxID string, 
 		stmt = strings.ReplaceAll(stmt, editor.IALValEscNewLine, "\n")
 
 		// 执行查询获取嵌入的块
-		sqlBlocks := sql.SelectBlocksRawStmtInBox(stmt, 1, Conf.Search.Limit, boxID)
+		sqlBlocks := sql.SelectBlocksRawStmtInBox(stmt, 1, Conf.Search.Load().Limit, boxID)
 		sqlBlocks = filterEmbedBlocksByAccess(sqlBlocks, accessChecker)
 
 		// 收集所有嵌入块的内容 HTML
@@ -1410,16 +1430,16 @@ func filterEmbedBlocksByAccess(blocks []*sql.Block, accessChecker EmbedBlockAcce
 	return
 }
 
+var (
+	embedHTMLPattern    = regexp.MustCompile(`<div[^>]*data-type="NodeBlockQueryEmbed"[^>]*embed-content="[^"]*"[^>]*>`)
+	embedContentPattern = regexp.MustCompile(`embed-content="([^"]*)"`)
+)
+
 func processEmbedHTML(htmlStr string) string {
 	// 使用正则表达式查找所有带有 embed-content 属性的嵌入块
-	embedPattern := `<div[^>]*data-type="NodeBlockQueryEmbed"[^>]*embed-content="[^"]*"[^>]*>`
-	re := regexp.MustCompile(embedPattern)
-
-	return re.ReplaceAllStringFunc(htmlStr, func(match string) string {
+	return embedHTMLPattern.ReplaceAllStringFunc(htmlStr, func(match string) string {
 		// 提取 embed-content 属性值
-		contentPattern := `embed-content="([^"]*)"`
-		contentRe := regexp.MustCompile(contentPattern)
-		contentMatches := contentRe.FindStringSubmatch(match)
+		contentMatches := embedContentPattern.FindStringSubmatch(match)
 
 		if len(contentMatches) > 1 {
 			embedContent := contentMatches[1]
@@ -1427,7 +1447,7 @@ func processEmbedHTML(htmlStr string) string {
 			embedContent = html.UnescapeString(embedContent)
 
 			// 移除 embed-content 属性，避免在最终 HTML 中显示
-			cleanMatch := contentRe.ReplaceAllString(match, "")
+			cleanMatch := embedContentPattern.ReplaceAllString(match, "")
 
 			// 将内容插入到嵌入块内部
 			return cleanMatch + embedContent + "</div>"
@@ -1554,7 +1574,7 @@ func compareBlockKramdownIALAttrNames(a, b string) int {
 }
 
 func isSystemManagedBlockKramdownIALAttr(name string) bool {
-	return "custom-avs" == name || "custom-heading-mode" == name || embedHeadingLevelAttr == name || "custom-reminder-wechat" == name ||
+	return av.NodeAttrNameAvs == name || embedHeadingModeAttr == name || embedHeadingLevelAttr == name || reminderWechatAttr == name ||
 		strings.HasPrefix(name, "custom-riff-") || strings.HasPrefix(name, "custom-sy-")
 }
 

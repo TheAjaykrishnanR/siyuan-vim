@@ -3,7 +3,7 @@ import {setPosition} from "../util/setPosition";
 import {isScrollAboveMenu} from "../util/zIndex";
 import {getAnchoredMenuPosition} from "./menuPosition";
 import {updateMenuGroupsOnMutation, updateMenuItemGroupClasses} from "./menuGroup";
-import {waitForSheetViewport} from "./sheetOpen";
+import {getVisibleSheetViewport, waitForSheetViewport} from "./sheetOpen";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {isMobile} from "../util/functions";
 import {Constants} from "../constants";
@@ -13,6 +13,7 @@ import {escapeAttr} from "../util/escape";
 import {setMenuInputCurrent} from "./menuKeyboard";
 import {forEachPluginSubscriber} from "../plugin/EventBusCore";
 import {activeBlur} from "../mobile/util/keyboardToolbar";
+import {setPopoverMenuOpen} from "../block/popoverLifecycle";
 /// #if !MOBILE
 import {applyMenuEntryVisibility} from "../config/entryVisibility/runtime";
 /// #endif
@@ -43,6 +44,7 @@ export class Menu {
     private targetPositionFrame: number | undefined;
     private cancelSheetOpen: (() => void) | undefined;
     private restoreKeyboard: (() => void) | undefined;
+    private preserveSheetKeyboard = false;
 
     private updateTargetPosition = () => {
         if (typeof this.targetPositionFrame === "number") {
@@ -199,6 +201,10 @@ export class Menu {
         if (target.closest("input:not([type=\"file\"]), textarea, select, [contenteditable=\"true\"]")) {
             return false;
         }
+        // 可排序条目由触摸拖拽桥接处理，避免排序时同时下拉关闭菜单。
+        if (target.closest('[draggable="true"]')) {
+            return false;
+        }
         if (target.closest(".b3-menu__title")) {
             return true;
         }
@@ -328,6 +334,16 @@ export class Menu {
         fullscreenCloseTimeout = window.setTimeout(() => this.removeImmediately(), Constants.TIMEOUT_DBLCLICK);
     }
 
+    // 保留菜单内容和触摸事件，在向菜单外拖拽时临时让出底层区域。
+    public setSheetDragPreview(active: boolean) {
+        if (!this.element.classList.contains("b3-menu--sheet")) {
+            return;
+        }
+        this.element.style.transition = active ? "none" : "";
+        this.element.style.transform = active ? "translateY(100%)" : "translateY(0px)";
+        this.getFullscreenScrim()?.classList.toggle("b3-menu__scrim--open", !active);
+    }
+
     private updateSheetTitle() {
         if (!this.element.classList.contains("b3-menu--sheet")) {
             return;
@@ -350,8 +366,16 @@ export class Menu {
         this.updateSheetTitle();
         const mobileSize = window.siyuan.mobile.size;
         const orientationSize = mobileSize.isLandscape ? mobileSize.landscape : mobileSize.portrait;
-        // 使用当前方向记录的完整视口高度，避免软键盘收起期间菜单高度被压缩
-        const maxHeight = Math.max(window.innerHeight, orientationSize?.height1 || 0) * .56;
+        let maxHeight: number;
+        if (this.preserveSheetKeyboard) {
+            const viewport = getVisibleSheetViewport(window.innerHeight, window.visualViewport);
+            this.element.style.bottom = viewport.bottomOffset + "px";
+            maxHeight = viewport.height * .9;
+        } else {
+            // 使用当前方向记录的完整视口高度，避免软键盘收起期间菜单高度被压缩
+            this.element.style.bottom = "";
+            maxHeight = Math.max(window.innerHeight, orientationSize?.height1 || 0) * .56;
+        }
         if (this.element.classList.contains("b3-menu--fit")) {
             // 内容不足时收缩面板，避免列表下方留白；测量时取消弹性拉伸，否则 scrollHeight 会包含被撑大的空白
             this.element.style.height = "";
@@ -497,6 +521,7 @@ export class Menu {
     private removeImmediately() {
         // 菜单动作和菜单替换只清理状态，避免跳转或弹窗后抢回编辑焦点。
         this.restoreKeyboard = undefined;
+        this.preserveSheetKeyboard = false;
         this.cancelSheetOpen?.();
         this.cancelSheetOpen = undefined;
         const menuName = this.element.getAttribute("data-name");
@@ -520,6 +545,7 @@ export class Menu {
         this.element.lastElementChild.classList.remove("b3-menu__items--menu");
         this.element.lastElementChild.removeAttribute("style");  // 输入框 focus 后 boxShadow 显示不全
         this.element.classList.add("fn__none");
+        setPopoverMenuOpen(this.element, false);
         this.element.classList.remove("b3-menu--list", "b3-menu--fullscreen", "b3-menu--sheet", "b3-menu--fit");
         this.element.removeAttribute("style");  // zIndex
         this.element.removeAttribute("data-name");    // 标识再次点击不消失
@@ -557,6 +583,7 @@ export class Menu {
         if (this.element.lastElementChild.innerHTML === "") {
             return;
         }
+        setPopoverMenuOpen(this.element, true);
         this.emitCommonMenu("common-menu-open", {
             name: this.element.getAttribute("data-name"),
             from: this.element.getAttribute("data-from"),
@@ -628,6 +655,7 @@ export class Menu {
         this.stopTrackingTargetPosition();
         window.addEventListener("resize", this.updateTargetPosition);
         window.visualViewport?.addEventListener("resize", this.updateTargetPosition);
+        window.visualViewport?.addEventListener("scroll", this.updateTargetPosition);
     }
 
     private stopTrackingTargetPosition() {
@@ -640,13 +668,15 @@ export class Menu {
         }
     }
 
-    public fullscreen(position: "bottom" | "all" = "all", restoreKeyboard?: () => void) {
+    public fullscreen(position: "bottom" | "all" = "all", restoreKeyboard?: () => void,
+                      options: {preserveKeyboard?: boolean} = {}) {
         this.cancelSheetOpen?.();
         this.cancelSheetOpen = undefined;
         applyMenuConfig(this.element);
         if (this.element.lastElementChild.innerHTML === "") {
             return;
         }
+        setPopoverMenuOpen(this.element, true);
         this.stopTrackingTargetPosition();
         this.position = undefined;
         this.emitCommonMenu("common-menu-open", {
@@ -671,15 +701,18 @@ export class Menu {
             this.element.lastElementChild.scrollTop = 0;
             return;
         }
-        // 先结束编辑焦点，避免工具栏保留的焦点阻止输入法收起，再跳过键盘弹出保护锁。
         this.restoreKeyboard = restoreKeyboard;
-        (document.activeElement as HTMLElement)?.blur();
-        activeBlur(true);
+        this.preserveSheetKeyboard = Boolean(options.preserveKeyboard);
+        if (!this.preserveSheetKeyboard) {
+            // 普通菜单先结束编辑焦点，等待输入法收起后再展开。
+            (document.activeElement as HTMLElement)?.blur();
+            activeBlur(true);
+        }
         clearTimeout(fullscreenCloseTimeout);
         this.element.querySelectorAll(":scope > .b3-menu__items, .b3-menu__submenu > .b3-menu__items")
             .forEach(updateMenuItemGroupClasses);
         this.element.classList.add("b3-menu--fullscreen", "b3-menu--sheet");
-        if (this.element.classList.contains("b3-menu--fit")) {
+        if (this.preserveSheetKeyboard || this.element.classList.contains("b3-menu--fit")) {
             // 输入法弹出后视口会异步收缩，持续跟踪视口才能按最终可用高度重新适配内容
             this.startTrackingSheetViewport();
         }
@@ -691,6 +724,11 @@ export class Menu {
         window.addEventListener("touchmove", this.preventDefault, {passive: false});
         this.setSheetHeight();
         void this.element.offsetHeight;
+        if (this.preserveSheetKeyboard) {
+            this.element.style.transform = "translateY(0px)";
+            this.element.lastElementChild.scrollTop = 0;
+            return;
+        }
         const mobileSize = window.siyuan.mobile.size;
         const orientationSize = mobileSize.isLandscape ? mobileSize.landscape : mobileSize.portrait;
         this.cancelSheetOpen = waitForSheetViewport({

@@ -26,6 +26,12 @@ class Control {
 
 class Input extends Control {
     type = "text";
+    min = "";
+    max = "";
+    valid = true;
+    reportValidity() {
+        return this.valid;
+    }
 }
 
 const loadDialog = () => {
@@ -150,6 +156,12 @@ it("supports multiline values and lets autocomplete own keyboard events", () => 
     assert.equal(autocomplete.enter, undefined);
 });
 
+it("places caller controls before the primary input", () => {
+    const dialog = loadDialog()({title: "Jump", value: "2026-09-21", prefixContent: "<select data-mode></select>",
+        onConfirm: () => {}});
+    assert.ok(dialog.options.content.indexOf("data-mode") < dialog.options.content.indexOf("data-dialog-input"));
+});
+
 for (const file of ["src/history/doc.ts", "src/history/history.ts"]) {
     it(`${file} keeps all page jump dialogs open for empty input and clamps valid pages`, () => {
         const source = createSourceFile(file, readFileSync(file, "utf8"), ScriptTarget.Latest, true);
@@ -164,7 +176,7 @@ for (const file of ["src/history/doc.ts", "src/history/history.ts"]) {
                 }).outputText, {
                     openInputDialog: (options: typeof dialogs[number]) => dialogs.push(options),
                     window: {siyuan: {languages: {jumpToPage: "Page ${x}"}}},
-                    totalPage: 5, currentPage: 2, pageNumElement: {textContent: "2"}, target: {textContent: "2"},
+                    readonly: false, totalPage: 5, currentPage: 2, pageNumElement: {textContent: "2"}, target: {textContent: "2"},
                     options: {id: "doc"}, fileElement: {}, repoElement: {}, firstPanelElement: {},
                     showMessage: () => messages++,
                     renderDoc: (element: unknown, page: number) => pages.push(page),

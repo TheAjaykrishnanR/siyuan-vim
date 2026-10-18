@@ -6,7 +6,7 @@
 		"id": "20210615213222-vs5tzbd",
 		"title": "Data history",
 		"type": "doc",
-		"updated": "20260914102430"
+		"updated": "20261011203418"
 	},
 	"Children": [
 		{
@@ -1102,7 +1102,7 @@
 			"HeadingLevel": 2,
 			"Properties": {
 				"id": "20220615120602-drz9hwc",
-				"updated": "20260914102430"
+				"updated": "20260927191121"
 			},
 			"Children": [
 				{
@@ -1498,7 +1498,7 @@
 			"HeadingLevel": 3,
 			"Properties": {
 				"id": "20220615120602-nzrp6gt",
-				"updated": "20260914101605"
+				"updated": "20260927191121"
 			},
 			"Children": [
 				{
@@ -1586,6 +1586,20 @@
 				{
 					"Type": "NodeText",
 					"Data": "Local snapshots support searching by file name; searching makes room for the file list and preview. Outside batch management, you can still select two local snapshots to compare them and use individual actions such as tagging, uploading, downloading, and rolling back."
+				}
+			]
+		},
+		{
+			"ID": "20260927191121-n45rqtj",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260927191121-n45rqtj",
+				"updated": "20260927191121"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Enter a file name or snapshot ID directly in the search box to search local snapshots. A hexadecimal ID of 7 to 40 characters is matched against snapshot ID prefixes, ignoring case. If multiple snapshots match, all matches are listed from newest to oldest. If no snapshot ID matches, the same text is used to search file names. Results retain the usual snapshot actions, including rollback. Clear the search text to return to the full list."
 				}
 			]
 		},
@@ -1849,7 +1863,7 @@
 			"HeadingLevel": 3,
 			"Properties": {
 				"id": "20220615120602-nhnnujh",
-				"updated": "20260914102430"
+				"updated": "20261011203418"
 			},
 			"Children": [
 				{
@@ -1864,7 +1878,7 @@
 			"ListData": {},
 			"Properties": {
 				"id": "20230422101614-mdijztr",
-				"updated": "20260914102430"
+				"updated": "20261011203418"
 			},
 			"Children": [
 				{
@@ -1876,7 +1890,7 @@
 					},
 					"Properties": {
 						"id": "20230422101614-5lwp8u3",
-						"updated": "20260914101605"
+						"updated": "20261011203418"
 					},
 					"Children": [
 						{
@@ -1884,7 +1898,7 @@
 							"Type": "NodeParagraph",
 							"Properties": {
 								"id": "20230422101614-5kvwhn7",
-								"updated": "20260914101605"
+								"updated": "20261011203418"
 							},
 							"Children": [
 								{
@@ -1894,7 +1908,7 @@
 								{
 									"Type": "NodeTextMark",
 									"TextMarkType": "kbd",
-									"TextMarkTextContent": "Data repo purge"
+									"TextMarkTextContent": "Local data repo purge"
 								},
 								{
 									"Type": "NodeText",
@@ -1939,7 +1953,7 @@
 								{
 									"Type": "NodeTextMark",
 									"TextMarkType": "kbd",
-									"TextMarkTextContent": "Data repo purge"
+									"TextMarkTextContent": "Local data repo purge"
 								},
 								{
 									"Type": "NodeText",

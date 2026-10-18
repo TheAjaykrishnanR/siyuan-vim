@@ -2,7 +2,7 @@
 
 [中文](SY-FORMAT.zh-CN.md)
 
-> Canonical Spec baseline: `2` for ordinary documents, `3` for documents containing tabs, `4` for documents using table-cell rich text; compatible readers may upgrade older or missing versions.
+> Canonical Spec baseline: `2` for ordinary documents, `3` for documents containing tabs, `4` for documents using table-cell rich text, `5` for documents containing mind map nodes; compatible readers may upgrade older or missing versions.
 > Verified against samples: `20200825162036-4dx365o.sy` (formatting elements), `20200905090211-2vixtlf.sy` (block types).
 > All conclusions are based on real samples and the current Lute / SiYuan kernel source. The cited samples contain a few known legacy artifacts; canonical write rules follow the current source when a sample differs.
 > This guide describes plaintext `.sy` JSON in an ordinary notebook, or the decrypted AST of an unlocked encrypted notebook. An encrypted notebook's on-disk `.sy` file is ciphertext and must not be edited as JSON.
@@ -71,7 +71,7 @@ Division of labor among the four paths:
 | Top-level key | Required | Meaning |
 |---|---|---|
 | `ID` | ✅ | Document block ID. **Equals the filename without `.sy`** |
-| `Spec` | ✅ | `"2"` for ordinary documents, `"3"` for tabs documents, `"4"` for documents using table-cell rich text; older or missing values are compatible input and may be upgraded |
+| `Spec` | ✅ | `"2"` for ordinary documents, `"3"` for tabs documents, `"4"` for documents using table-cell rich text, `"5"` for documents containing mind map nodes; older or missing values are compatible input and may be upgraded |
 | `Type` | ✅ | `"NodeDocument"` |
 | `Properties` | ✅ | Document-level IAL — see §8 |
 | `Children` | ✅ | Array of body child blocks; canonical files contain at least one block |
@@ -115,7 +115,7 @@ Division of labor among the four paths:
 
 **Leaf blocks:** `NodeParagraph`, `NodeHeading`, `NodeThematicBreak`, `NodeHTMLBlock`, `NodeCodeBlock`, `NodeMathBlock`, `NodeTable`, `NodeBlockQueryEmbed`, `NodeAttributeView`, `NodeIFrame`, `NodeVideo`, `NodeAudio`, `NodeWidget`, `NodeCustomBlock`
 
-**Container blocks:** `NodeList`, `NodeListItem`, `NodeBlockquote`, `NodeCallout`, `NodeSuperBlock`, `NodeTabs`, `NodeTabItem`
+**Container blocks:** `NodeList`, `NodeListItem`, `NodeBlockquote`, `NodeCallout`, `NodeSuperBlock`, `NodeTabs`, `NodeTabItem`, `NodeMindmap`, `NodeMindmapItem`
 
 ### Inline / marker nodes (no ID in canonical data)
 
@@ -342,11 +342,15 @@ The table lists the five built-in types and their defaults. However, custom `Cal
 
 `NodeTabs.Properties["tabs-task"] = "true"` enables task status for every direct tab item; items without an explicit marker default to incomplete. `NodeTabItem.Properties["tabs-task"]` optionally preserves the original task-list marker. Without the group setting, absence means an ordinary tab. One ASCII space means incomplete, and other supported single-character task markers (including `X`, `/`, and `?`) retain their exact values. Task status is independent of title content and active-tab selection. Markdown export preserves the group setting in the group IAL and item states in an item IAL immediately after the `@tab` title line, for example `{: tabs-task="/"}`. Attribute values must use the same escaping as other IAL values. Conversion back to a task list restores the current marker; conversion to an ordinary list removes the task attribute. Existing item-only task states and mixed groups remain supported.
 
-Documents containing either node require at least `Spec: "3"`; documents using table-cell rich text use Spec 4. Ordinary documents remain on Spec 2. Never lower the version after removing a feature. Check the raw root `Spec` before passing JSON to a tolerant parser, because unknown node types can otherwise cause their children to be lost. Unsupported versions must not be repaired and written back.
+Documents containing either tab node require at least `Spec: "3"`; documents using table-cell rich text use Spec 4, and documents containing mind map nodes use Spec 5. Ordinary documents remain on Spec 2. Never lower the version after removing a feature. Check the raw root `Spec` before passing JSON to a tolerant parser, because unknown node types can otherwise cause their children to be lost. Unsupported versions must not be repaired and written back.
 
 The internal Markdown syntax uses `::: tabs` to open a group and `@tab <inline title>` to start each item; `@tab:active <inline title>` identifies the selected item. The opening fence requires at least three colons and whitespace (spaces or tabs) before `tabs`; canonical output uses one space. Items have no closing marker; the group closes with a standalone fence containing the same number of colons as its opening fence. Outer fences must be longer than nested fences. Indentation is optional, and canonical output computes fence lengths from nesting depth without adding indentation to tab bodies. Old `:::tabs` and `:::tab` syntax is not recognized; existing `.sy` tab nodes retain the same structure.
 
 An item's IAL appears immediately after its title marker, with no intervening blank line; a blank line separates that metadata from its body. The group's IAL follows its closing fence, and body-block IALs follow their respective blocks. On import, the first valid `@tab:active` marker sets `tabs-active-id`, taking precedence over the group's IAL. Without an active marker, a valid `tabs-active-id` is preserved; a missing or invalid value falls back to the first item. Each nested group has its own selection. Code-block markers are literal; use `\@tab` or `\@tab:active` for literal markers at the start of a body line. Standard Markdown exports title paragraphs followed by every item's body; HTML can enhance the full content into interactive tabs, while print, PDF and Word show all items. See [Tab Block](TAB-BLOCK.md) for the full contract.
+
+### 5.9.2 Mind map container and item (Spec 5)
+
+`NodeMindmap` contains only `NodeMindmapItem` blocks. Each item may contain ordinary content blocks and a nested `NodeMindmap`, but it cannot directly contain `NodeList`, `NodeListItem`, another `NodeMindmapItem`, `NodeDocument`, or `NodeFootnotesDef`. Both new types carry their own block IDs and `ListData` for ordered and task markers. New mind maps use these node types without `custom-sy-list-mindmap="1"`; opening an editable document upgrades existing list blocks with that attribute while preserving block IDs and metadata. Read-only and history content remain readable in the old format. Standard Markdown export represents mind maps as lists, while `.sy` JSON retains the dedicated types.
 
 ### 5.10 Code block (four-part structure; fenced only)
 
@@ -420,7 +424,7 @@ A cell with rich block content additionally contains `"TableCellRich": {"spec": 
 
 Only paragraphs, headings, lists, blockquotes, ordinary code, and math are supported inside the fragment. Nested tables, databases, superblocks, tabs, callouts, query embeds, executable diagrams, media, widgets, and HTML blocks are rejected. BlockDOM stores the source envelope as UTF-8 JSON encoded with unpadded URL-safe Base64 in the cell's `data-sy-table-cell-rich` attribute. Internal Kramdown uses the corresponding `table-cell-rich` cell IAL; neither representation is a standard Markdown interchange format.
 
-Readers validate the source version and content before rebuilding the projection. Missing, null, unknown, or malformed envelope fields are errors, and unsupported input must remain unchanged. Ordinary cells have no envelope and are never reinterpreted as Markdown. Opening a cell or editing only ordinary inline content preserves its existing representation. Adding block content for the first time creates the rich envelope and raises the document `Spec` to `4`. Existing rich envelopes nevertheless remain present when their content becomes inline-only or empty; the document version is never lowered. Standard Markdown uses a readable inline projection, while HTML, PDF, and Word exports expand the fragment only in a transient export tree. Encrypted notebooks authenticate the existing document envelope before parsing this same JSON; key derivation, AAD, and recovery material are unchanged.
+Readers validate the source version and content before rebuilding the projection. Missing, null, unknown, or malformed envelope fields are errors, and unsupported input must remain unchanged. Ordinary stored cells have no envelope and are never reinterpreted as Markdown. Opening a cell or editing only ordinary inline content preserves its existing representation. Adding block content for the first time creates the rich envelope and raises the document `Spec` to `4`. Existing rich envelopes nevertheless remain present when their content becomes inline-only or empty; the document version is never lowered. Standard Markdown represents rich cells with structural HTML on one physical line, encoding pipes and code line breaks as character references; no internal source envelope is included. External Markdown import and paste restore supported structural HTML and explicit leading task-list markers into the existing rich envelope. Escaped markers, inline code, and unsupported or malformed HTML remain ordinary cell content. HTML, PDF, and Word exports expand the fragment only in a transient export tree. Encrypted notebooks authenticate the existing document envelope before parsing this same JSON; key derivation, AAD, and recovery material are unchanged.
 
 ### 5.14 AttributeView block (database; leaf)
 
@@ -592,13 +596,15 @@ A flat `map[string]string`.
 | Container | Can contain | Cannot contain |
 |---|---|---|
 | `NodeList` | **only** `NodeListItem` | any other block (paragraphs/code blocks/sub-lists must be wrapped in `NodeListItem` first) |
-| `NodeListItem` | any non-`NodeListItem` block (paragraph/code block/sub-`NodeList`/super block…) | `NodeListItem` (nesting requires another `NodeList`) |
-| `NodeBlockquote` | any non-`NodeListItem` block + one `NodeBlockquoteMarker` | `NodeListItem` |
-| `NodeCallout` | any non-`NodeListItem` block | `NodeListItem` |
-| `NodeSuperBlock` | Content blocks (incl. nested super blocks), inside its open/layout/close marker envelope | `NodeDocument`, bare `NodeListItem`, bare `NodeTabItem` |
-| `NodeDocument` | any non-`NodeListItem` block | `NodeListItem` |
+| `NodeListItem` | ordinary content blocks, nested `NodeList` and `NodeMindmap` | bare `NodeListItem`, bare `NodeMindmapItem` |
+| `NodeBlockquote` | ordinary content blocks + one `NodeBlockquoteMarker` | bare `NodeListItem`, bare `NodeMindmapItem` |
+| `NodeCallout` | ordinary content blocks | bare `NodeListItem`, bare `NodeMindmapItem` |
+| `NodeSuperBlock` | content blocks (incl. nested super blocks), inside its open/layout/close marker envelope | `NodeDocument`, bare `NodeListItem`, bare `NodeTabItem`, bare `NodeMindmapItem` |
+| `NodeDocument` | ordinary content blocks | bare `NodeListItem`, bare `NodeMindmapItem` |
 | `NodeTabs` | only `NodeTabItem`, at least one | other content blocks |
 | `NodeTabItem` | ordinary content blocks and nested `NodeTabs`, at least one | `NodeDocument`, `NodeListItem`, `NodeTabItem` |
+| `NodeMindmap` | only `NodeMindmapItem` | other content blocks |
+| `NodeMindmapItem` | content blocks and nested `NodeMindmap` | `NodeDocument`, `NodeList`, `NodeListItem`, `NodeMindmapItem`, `NodeFootnotesDef` |
 > `NodeTabItem` must be a direct child of `NodeTabs`; none of the other containers above can directly contain it.
 
 
@@ -636,7 +642,7 @@ Canonical writers must not generate the following syntax or node families. Most 
 
 When generating or compatibly editing a `.sy` that SiYuan can load cleanly, verify item by item:
 
-1. ☐ Root `Type` = `"NodeDocument"`, `Spec` = `"2"`, `"3"` (tabs), or `"4"` (table-cell rich text), without lowering an existing version; root `ID` = filename (without `.sy`) and equals `Properties.id`
+1. ☐ Root `Type` = `"NodeDocument"`, `Spec` = `"2"`, `"3"` (tabs), `"4"` (table-cell rich text), or `"5"` (mind map nodes), without lowering an existing version; root `ID` = filename (without `.sy`) and equals `Properties.id`
 2. ☐ Root `Properties` contains `id`/`title`/`type:"doc"`/`updated`
 3. ☐ Every newly generated ID is fresh and workspace-wide unique; every canonical block has a 22-char `ID`, matching `Properties.id`, and a valid 14-digit `Properties.updated`
 4. ☐ Determine block status from `Type`, not from `ID`; do not add IDs to new inline/marker nodes, and only remove historical non-block IDs as field normalization without deleting the node

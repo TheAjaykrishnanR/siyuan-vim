@@ -7,7 +7,7 @@
 		"id": "20240113110040-7sgw8kl",
 		"title": "Mobile App",
 		"type": "doc",
-		"updated": "20260829104731"
+		"updated": "20261012014930"
 	},
 	"Children": [
 		{
@@ -16,7 +16,7 @@
 			"HeadingLevel": 2,
 			"Properties": {
 				"id": "20240113110114-xav9o1n",
-				"updated": "20250114214300"
+				"updated": "20261012014930"
 			},
 			"Children": [
 				{
@@ -54,6 +54,76 @@
 				{
 					"Type": "NodeText",
 					"Data": "​ in the app store."
+				}
+			]
+		},
+		{
+			"ID": "20261012014537-535lvyo",
+			"Type": "NodeHeading",
+			"Properties": {
+				"id": "20261012014537-535lvyo",
+				"updated": "20261012014859"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Interface navigation"
+				}
+			],
+			"HeadingLevel": 2
+		},
+		{
+			"ID": "20260921090531-lx0v0bv",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20260921090531-lx0v0bv",
+				"updated": "20260921210136"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Swipe right in the editor to open the left sidebar, or swipe left to open the right sidebar. After starting the app, each sidebar initially opens its first visible feature. Subsequent openings restore the last used feature on that side. Change the feature order in "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Settings"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " - "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Appearance"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " - "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Left and right layout"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "."
+				}
+			]
+		},
+		{
+			"ID": "20261010114821-igdube1",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261010114821-igdube1",
+				"updated": "20261010114821"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "When using desktop layout on Android, the system Back button first closes the topmost dialog, menu, editing overlay, image preview or floating drawer. Each press closes one layer and preserves the browsing state underneath. With no dismissible layer open, Back performs the original page navigation."
 				}
 			]
 		},
@@ -779,7 +849,7 @@
 			"HeadingLevel": 2,
 			"Properties": {
 				"id": "20260613174243-53h143k",
-				"updated": "20260803171606"
+				"updated": "20261004052629"
 			},
 			"Children": [
 				{
@@ -808,7 +878,7 @@
 			"HeadingLevel": 3,
 			"Properties": {
 				"id": "20260613174243-r1hbexb",
-				"updated": "20260613174243"
+				"updated": "20261004052629"
 			},
 			"Children": [
 				{
@@ -891,6 +961,79 @@
 							]
 						}
 					]
+				}
+			]
+		},
+		{
+			"ID": "20261004052629-w95ysdy",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261004052629-w95ysdy",
+				"updated": "20261004052629"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "New shorthands use the Markdown syntax switches in "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Settings"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " - "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "kbd",
+					"TextMarkTextContent": "Editor"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " when imported. Enabled inline syntax, middle-dot code fences ("
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "code",
+					"TextMarkTextContent": "···"
+				},
+				{
+					"Type": "NodeText",
+					"Data": "), and full-width task shortcuts ("
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "code",
+					"TextMarkTextContent": "【】"
+				},
+				{
+					"Type": "NodeText",
+					"Data": " and "
+				},
+				{
+					"Type": "NodeTextMark",
+					"TextMarkType": "code",
+					"TextMarkTextContent": "【X】"
+				},
+				{
+					"Type": "NodeText",
+					"Data": ") are converted immediately, without editing the imported text again."
+				}
+			]
+		},
+		{
+			"ID": "20261004052629-inj9eiy",
+			"Type": "NodeParagraph",
+			"Properties": {
+				"id": "20261004052629-inj9eiy",
+				"updated": "20261004052629"
+			},
+			"Children": [
+				{
+					"Type": "NodeText",
+					"Data": "Each shorthand is parsed separately, so an unclosed code block cannot affect the next one. Previously imported documents are not re-parsed."
 				}
 			]
 		},

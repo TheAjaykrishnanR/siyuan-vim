@@ -1,3 +1,8 @@
+import {isAVSelectType} from "./capabilities";
+import {renderCalendar} from "./calendar/render";
+import {isFoldedRenderContent} from "../foldedContent";
+import {getCalendarRequestRange} from "./calendar/state";
+import {isTableLikeView} from "./viewType";
 import {isAVRenderData} from "./renderData";
 import {fetchSyncPost} from "../../../util/fetch";
 import {getColIconByType} from "./col";
@@ -10,7 +15,7 @@ import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {getRowHTML, stickyRow, updateAVSelectionStatus, updateHeader} from "./row";
 import {getCalcValue} from "./calc";
 import {renderAVAttribute} from "./blockAttr";
-import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
+import {escapeAriaLabel, escapeAttr, escapeHtml, escapeHtmlTextAndAttr} from "../../../util/escape";
 import {isInMobileApp} from "../../util/compatibility";
 import {isMobile} from "../../../util/functions";
 import {renderGallery} from "./gallery/render";
@@ -34,6 +39,8 @@ import {
     setAVLocateRequest
 } from "./locate";
 import {setGroupFoldedStates, updateGroupFoldedStates} from "./groupFold";
+import {getPublishAVView} from "./publishState";
+import {getReadonlyAVView} from "./readonlyState";
 import {updateHotkeyTip} from "../../util/compatibility";
 import {inspectAVInsertedItem} from "./filteredTip";
 import {
@@ -59,6 +66,9 @@ import {getAVHeaderEditingState} from "./headerEditing";
 import {getAVColorStyle} from "./color";
 import {getContextFilterKeyID} from "./contextFilterState";
 import {isAVCellPanelForBlock} from "./panelTarget";
+import {replaceAVContainer} from "./container";
+import {updateFrozenColumns} from "./frozenColumns";
+import {updateAVTableColumnWidths} from "./columnWidth";
 
 interface IIds {
     groupId: string,
@@ -129,7 +139,8 @@ export const genTabHeaderHTML = (data: IAV, showSearch: boolean, editable: boole
     });
     const defaultTemplate = data.newItemTemplates?.find(item => item.id === data.defaultTemplateID);
     const defaultTemplateID = defaultTemplate && (defaultTemplate.targetType !== "detached" ||
-        defaultTemplate.primaryKeyTemplate || Object.keys(defaultTemplate.fieldValues || {}).length) ? defaultTemplate.id : "";
+        defaultTemplate.icon || defaultTemplate.primaryKeyTemplate ||
+        Object.keys(defaultTemplate.fieldValues || {}).length) ? defaultTemplate.id : "";
     const editingState = getAVHeaderEditingState(editable, includeEditingControls);
     return `<div class="av__header" data-default-template-id="${defaultTemplateID}" data-current-view-id="${escapeAttr(data.viewID)}" data-view-count="${data.views.length}" data-view-ids="${data.views.map((view) => view.id).join(",")}" data-view-pages="${escapeAttr(serializeAVViewPageSizes(data.views))}">
         <div class="fn__flex av__views${isMobile() ? " av__views--mobile" : ""}${showSearch ? " av__views--show av__views--search" : ""}">
@@ -189,18 +200,18 @@ export const genTabHeaderHTML = (data: IAV, showSearch: boolean, editable: boole
             <div class="fn__space"></div>
             ${editingState.newItemHTML}
         </div>
-        <div contenteditable="${editingState.contenteditable}" spellcheck="${window.siyuan.config.editor.spellcheck.toString()}" class="av__title${viewData.hideAttrViewName ? " fn__none" : ""}" data-title="${Lute.EscapeHTMLStr(data.name || "")}" data-tip="${window.siyuan.languages._kernel[267]}">${Lute.EscapeHTMLStr(data.name || "")}</div>
+        <div contenteditable="${editingState.contenteditable}" spellcheck="${window.siyuan.config.editor.spellcheck.toString()}" class="av__title${viewData.hideAttrViewName ? " fn__none" : ""}" data-title="${escapeHtmlTextAndAttr(data.name || "")}" data-tip="${window.siyuan.languages._kernel[267]}">${escapeHtmlTextAndAttr(data.name || "")}</div>
     </div>`;
 };
 
 const getTableHTMLs = (data: IAVTable, e: HTMLElement, virtualData: IAVVirtualData,
                        reserveVirtualHeight = false) => {
-    const freezeDragHTML = `<div class="av__freeze-drag ariaLabel" data-position="east" aria-label="${escapeAttr(window.siyuan.languages.freezeDrag)}"></div>`;
+    const viewType = e.dataset.avType === "list" ? "list" : "table";
     let calcHTML = "";
-    let contentHTML = `<div class="av__row av__row--header"><div class="av__colsticky"><div class="av__firstcol"><svg><use xlink:href="#iconUncheck"></use></svg></div>${freezeDragHTML}</div>`;
+    let contentHTML = '<div class="av__row av__row--header"><div class="av__colsticky"><div class="av__firstcol"><svg><use xlink:href="#iconUncheck"></use></svg></div></div>';
     let freezeIndex = -1;
     data.columns.forEach((item, index) => {
-        if (!item.hidden && item.pin) {
+        if (viewType === "table" && !item.hidden && item.pin) {
             freezeIndex = index;
         }
     });
@@ -225,7 +236,7 @@ style="width: ${escapeAttr(column.width) || "200px"};">
     <div class="av__widthdrag"></div>
 </div>`;
         if (pinIndex === index) {
-            contentHTML += `${freezeDragHTML}</div>`;
+            contentHTML += "</div>";
         }
         if (column.type === "lineNumber") {
             // lineNumber type 不参与计算操作
@@ -267,7 +278,7 @@ style="width: ${escapeAttr(column.width) || "200px"}">${getCalcValue(column) || 
             e.setAttribute(Constants.ATTRIBUTE_V_SCROLL, "true");
             return true;
         }
-        contentHTML += getRowHTML({data, row, rowIndex: rowIndex + (virtualData?.rowOffset || 0), pinIndex, type: "table"});
+        contentHTML += getRowHTML({data, row, rowIndex: rowIndex + (virtualData?.rowOffset || 0), pinIndex, type: viewType});
     });
     let bottomSpacerHTML = "";
     if (reserveVirtualHeight && virtualData && virtualData.renderedEnd < data.rows.length - 1) {
@@ -293,7 +304,7 @@ style="width: ${escapeAttr(column.width) || "200px"}">${getCalcValue(column) || 
 
 export const getGroupTitleHTML = (group: IAVView, counter: number) => {
     let nameHTML = "";
-    if (["mSelect", "select"].includes(group.groupValue.type)) {
+    if (isAVSelectType(group.groupValue.type)) {
         group.groupValue.mSelect.forEach((item) => {
             nameHTML += `<span class="b3-chip" style="${getAVColorStyle(item)}">${escapeHtml(item.content)}</span>`;
         });
@@ -334,17 +345,17 @@ const renderGroupTable = (options: ITableOptions) => {
             const virtualData = plan.virtualData[group.id];
             const renderBody = !group.groupFolded || virtualData?.locate;
             avBodyHTML += `${getGroupTitleHTML(group, group.rowCount)}
-<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}"${virtualData?.locate ? ' data-av-locate-window="true"' : ""} style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${renderBody ? getTableHTMLs(group, options.blockElement, virtualData, true) : ""}</div>`;
+<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${escapeHtmlTextAndAttr(group.groupValue.text?.content || "")}"${virtualData?.locate ? ' data-av-locate-window="true"' : ""} style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${renderBody ? getTableHTMLs(group, options.blockElement, virtualData, true) : ""}</div>`;
         }
     });
     if (options.renderAll) {
-        options.blockElement.firstElementChild.outerHTML = `<div class="av__container">
+        replaceAVContainer(options.blockElement, `<div class="av__container av__container--grouped">
     ${genTabHeaderHTML(options.data, isSearching || !!query, !options.protyle.disabled, options.blockElement)}
     <div class="av__scroll">
         ${avBodyHTML}
     </div>
     <div class="av__cursor" contenteditable="true">${Constants.ZWSP}</div>
-</div>`;
+</div>`);
     } else {
         options.blockElement.firstElementChild.querySelector(".av__scroll").innerHTML = avBodyHTML;
     }
@@ -358,7 +369,7 @@ export const setAVGroupFolded = (foldElement: HTMLElement, folded: boolean) => {
     foldElement.setAttribute("aria-label", getGroupFoldTip(folded));
 
     const blockElement = foldElement.closest<HTMLElement>(".av");
-    if (blockElement?.dataset.avType !== "table") {
+    if (!isTableLikeView(blockElement?.dataset.avType)) {
         return;
     }
     const groupID = bodyElement.dataset.groupId;
@@ -374,7 +385,7 @@ export const setAVGroupFolded = (foldElement: HTMLElement, folded: boolean) => {
 };
 
 export const initUnfoldedGroupTables = (blockElement: HTMLElement, protyle: IProtyle) => {
-    if (blockElement.dataset.avType !== "table") {
+    if (!isTableLikeView(blockElement.dataset.avType)) {
         return;
     }
     const data = getAVData(blockElement);
@@ -414,11 +425,13 @@ export const initUnfoldedGroupTables = (blockElement: HTMLElement, protyle: IPro
         totalLoadedRows > GROUP_TABLE_INITIAL_ROW_BUDGET || bodies.some(bodyElement =>
             bodyElement.querySelector(".av__spacer")));
     renderAVRichTextElements(blockElement);
+    updateFrozenColumns(blockElement);
     initVirtualScroll({protyle, blockElement, data, selectedItemPoints});
     restoreAVCellSelection(blockElement);
 };
 
 const afterRenderTable = (options: ITableOptions) => {
+    updateFrozenColumns(options.blockElement);
     setAVData(options.blockElement, options.data);
     renderAVRichTextElements(options.blockElement);
     if (!refreshAVCellSelection(options.blockElement, options.data)) {
@@ -525,10 +538,6 @@ const afterRenderTable = (options: ITableOptions) => {
             }
         }
     }
-    const focusViewElement = options.blockElement.querySelector(".layout-tab-bar .item--focus") as HTMLElement;
-    if (focusViewElement) {
-        options.blockElement.querySelector(".layout-tab-bar").scrollLeft = focusViewElement.offsetLeft - 30;
-    }
     if (options.cb) {
         options.cb(options.data);
     }
@@ -565,6 +574,9 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
     }
     for (let i = 0; i < avElements.length; i++) {
         const e = avElements[i] as HTMLElement;
+        if (e.closest(".mindmap-view__preview-block") || isFoldedRenderContent(e)) {
+            continue;
+        }
         e.removeAttribute("data-rendering");
         if (e.getAttribute("data-render") === "true" || hasClosestByClassName(e, "av__gallery-content")) {
             continue;
@@ -672,10 +684,14 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
         const locateParams = getAVLocateParams(e, !created && !snapshot);
         let data: IAV;
         if (!avData) {
+            // 未引用数据库预览没有实际载体，不向内核传递临时块 ID。
+            const standalone = protyle.block.action?.includes(Constants.CB_GET_AV_NO_CREATE);
             const common = {
+                calendarRange: getCalendarRequestRange(e, locateParams?.viewID || undefined),
                 id: e.getAttribute("data-av-id"),
-                blockID: e.getAttribute("data-node-id"),
-                viewID: locateParams?.viewID || "",
+                blockID: standalone ? "" : e.getAttribute("data-node-id"),
+                viewID: locateParams?.viewID || (window.siyuan.isPublish ? getPublishAVView(e) :
+                    protyle.disabled ? getReadonlyAVView(e) : ""),
             };
             const paging = {
                 pageSize: avPageSize.unGroupPageSize,
@@ -690,7 +706,7 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
             }, undefined, false) : fetchSyncPost("/api/av/renderAttributeView", {
                 ...common, ...paging,
                 initialLayout: e.getAttribute("data-av-type"),
-                createIfNotExist: !protyle.block.action?.includes(Constants.CB_GET_AV_NO_CREATE),
+                createIfNotExist: !window.siyuan.isPublish && !standalone,
                 targetItemID: locateParams?.targetItemID || "",
                 targetGroupID: locateParams?.targetGroupID || "",
             }, undefined, false));
@@ -698,7 +714,9 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
                 continue;
             }
             if (response.code !== 0 || !isAVRenderData(response.data)) {
-                failAVRender(e, response);
+                if (failAVRender(e, response)) {
+                    await avRender(e, protyle, cb, renderAll);
+                }
                 continue;
             }
             data = response.data;
@@ -716,6 +734,10 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
             setAVVisibleViewIDs(e, getAVVisibleViewIDs(e, data.views));
         }
         prepareAVLocate(e, data, resetData);
+        if (data.viewType === "calendar") {
+            await renderCalendar(e, protyle, data, cb);
+            continue;
+        }
         if (data.viewType === "gallery") {
             await renderGallery({blockElement: e, protyle, cb, renderAll, data});
             continue;
@@ -733,13 +755,13 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
     ${getTableHTMLs(view, e, resetData.virtualData.all)}
 </div>`;
         if (renderAll) {
-            e.firstElementChild.outerHTML = `<div class="av__container">
+            replaceAVContainer(e, `<div class="av__container">
     ${genTabHeaderHTML(data, resetData.isSearching || !!resetData.query, !protyle.disabled, e)}
     <div class="av__scroll">
         ${avBodyHTML}
     </div>
     <div class="av__cursor" contenteditable="true">${Constants.ZWSP}</div>
-</div>`;
+</div>`);
         } else {
             e.firstElementChild.querySelector(".av__scroll").innerHTML = avBodyHTML;
         }
@@ -771,7 +793,8 @@ const refreshTimeouts: {
 } = {};
 
 const getAVElements = (protyle: IProtyle, avID: string, viewID?: string): HTMLElement[] => {
-    const elements = Array.from(protyle.wysiwyg.element.querySelectorAll(`.av[data-av-id="${avID}"]`)) as HTMLElement[];
+    const elements = Array.from(protyle.wysiwyg.element.querySelectorAll<HTMLElement>(`.av[data-av-id="${avID}"]`))
+        .filter(item => !item.closest(".mindmap-view__preview-block"));
     if (viewID) {
         return elements.filter((item) => getViewIDByAVElement(item) === viewID);
     }
@@ -863,6 +886,21 @@ const waitForAddingCellPosition = async (options: {
 };
 
 export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
+    if (operation.action === "setAttrViewBlockView" && operation.blockID) {
+        getAVElements(protyle, operation.avID).forEach(item => {
+            if (item.dataset.nodeId !== operation.blockID) return;
+            const pageSize = getAVViewPageSize(
+                item.querySelector(".av__header")?.getAttribute("data-view-pages"), operation.id
+            );
+            item.querySelectorAll<HTMLElement>(".av__body").forEach(body => {
+                if (pageSize) body.dataset.pageSize = pageSize;
+                else body.removeAttribute("data-page-size");
+            });
+            item.removeAttribute("data-render");
+            void avRender(item, protyle);
+        });
+        return;
+    }
     if (operation.action === "insertAttrViewBlock") {
         inspectAVInsertedItem(protyle, operation);
     }
@@ -909,37 +947,30 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
         });
         return;
     }
-    if (operation.action === "setAttrViewColWidth") {
+    if (operation.action === "setAttrViewColWidth" || operation.action === "setAttrViewColsWidth") {
+        const widths = operation.action === "setAttrViewColWidth" ?
+            {[operation.id]: operation.data} : operation.data as Record<string, string>;
         getAVElements(protyle, operation.avID, operation.viewID).forEach((item) => {
-            const cellElement = item.querySelector(`.av__cell[data-col-id="${operation.id}"]`) as HTMLElement;
-            if (!cellElement || cellElement.style.width === operation.data) {
-                return;
+            const data = getAVData(item);
+            if (data && isTableLikeView(data.viewType)) {
+                // 折叠分组和虚拟滚动从缓存创建单元格，列宽需同步更新到全部分组。
+                updateAVTableColumnWidths(data.view as IAVTable, widths);
             }
             item.querySelectorAll(".av__row, .av__row--footer").forEach(rowItem => {
-                const columnElement = rowItem.querySelector(`[data-col-id="${operation.id}"]`) as HTMLElement;
-                if (columnElement) {
-                    columnElement.style.width = operation.data;
-                }
-            });
-        });
-        return;
-    }
-    if (operation.action === "setAttrViewColsWidth") {
-        getAVElements(protyle, operation.avID, operation.viewID).forEach((item) => {
-            item.querySelectorAll(".av__row, .av__row--footer").forEach(rowItem => {
-                Object.entries(operation.data as Record<string, string>).forEach(([columnID, width]) => {
+                Object.entries(widths).forEach(([columnID, width]) => {
                     const columnElement = rowItem.querySelector(`[data-col-id="${columnID}"]`) as HTMLElement;
                     if (columnElement) {
                         columnElement.style.width = width;
                     }
                 });
             });
+            updateFrozenColumns(item);
         });
         return;
     }
     if (operation.action === "setAttrViewColAlign") {
         getAVElements(protyle, operation.avID, operation.viewID).forEach((item) => {
-            item.querySelectorAll(`.av__cell[data-col-id="${operation.id}"]`).forEach((cellElement: HTMLElement) => {
+            item.querySelectorAll(`.av__cell[data-col-id="${operation.id}"], .av__calendar-field[data-col-id="${operation.id}"]`).forEach((cellElement: HTMLElement) => {
                 cellElement.dataset.align = operation.data;
             });
         });
@@ -970,7 +1001,7 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
     }
     if (operation.action === "setAttrViewWrapField") {
         getAVElements(protyle, operation.avID, operation.viewID).forEach((item) => {
-            item.querySelectorAll(".av__cell").forEach(fieldItem => {
+            item.querySelectorAll(".av__cell, .av__calendar-field").forEach(fieldItem => {
                 fieldItem.setAttribute("data-wrap", operation.data.toString());
             });
         });
@@ -1026,10 +1057,10 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
     }
     if (operation.action === "setAttrViewShowIcon") {
         getAVElements(protyle, operation.avID, operation.viewID).forEach((item) => {
-            item.querySelectorAll('.av__cell[data-dtype="block"] .b3-menu__avemoji').forEach(cellItem => {
+            item.querySelectorAll('.av__cell[data-dtype="block"] .b3-menu__avemoji, .av__calendar-field[data-dtype="block"] .b3-menu__avemoji').forEach(cellItem => {
                 cellItem.classList.toggle("fn__none", !operation.data);
             });
-            item.querySelectorAll('.av__cell[data-dtype="relation"] .av__cell--relation').forEach(cellItem => {
+            item.querySelectorAll('.av__cell[data-dtype="relation"] .av__cell--relation, .av__calendar-field[data-dtype="relation"] .av__cell--relation').forEach(cellItem => {
                 cellItem.firstElementChild.classList.toggle("fn__none", !operation.data);
             });
         });
@@ -1037,7 +1068,7 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
     }
     if (operation.action === "setAttrViewColWrap") {
         getAVElements(protyle, operation.avID, operation.viewID).forEach((item) => {
-            item.querySelectorAll(`.av__cell[data-col-id="${operation.id}"],.av__cell[data-field-id="${operation.id}"]`).forEach(cellItem => {
+            item.querySelectorAll(`.av__cell[data-col-id="${operation.id}"],.av__cell[data-field-id="${operation.id}"],.av__calendar-field[data-field-id="${operation.id}"]`).forEach(cellItem => {
                 cellItem.setAttribute("data-wrap", operation.data.toString());
             });
         });
@@ -1090,7 +1121,7 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
         getAVElements(protyle, avID).forEach((item) => {
             item.removeAttribute("data-render");
             if (["setAttrViewCardSize", "setAttrViewCardWidth", "setAttrViewCardAspectRatio",
-                "setAttrViewCardAspectRatioValue", "setAttrViewCardLayout", "setAttrViewColFullRow",
+                "setAttrViewConditionalColors", "setAttrViewCalendar", "setAttrViewCardAspectRatioValue", "setAttrViewCardLayout", "setAttrViewColFullRow",
                 "setAttrViewDisplayFieldName"].includes(operation.action) &&
                 (!operation.viewID || getViewIDByAVElement(item) === operation.viewID)) {
                 // 卡片尺寸或字段布局变化后原虚拟滚动占位高度已失效，重渲时从首项重新初始化。
@@ -1168,7 +1199,7 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
                             if (popCellElement && popCellElement.getAttribute("data-detached") === "true" &&
                                 !genCellValueByElement("block", popCellElement).block?.content &&
                                 popCellElement.getBoundingClientRect().height !== 0 && hasGhost) {
-                                if (item.getAttribute("data-av-type") !== "table") {
+                                if (!isTableLikeView(item.getAttribute("data-av-type"))) {
                                     if (addingFocusTokens.get(addingFocusKey) === addingFocusToken) {
                                         addingFocusTokens.delete(addingFocusKey);
                                         popTextCell(protyle, [popCellElement], "block");

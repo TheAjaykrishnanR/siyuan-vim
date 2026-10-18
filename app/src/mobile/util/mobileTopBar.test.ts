@@ -58,18 +58,30 @@ describe("mobile top bar layout", () => {
         const toolbarName = new TestElement();
         const toolbarNameReadonly = new TestElement();
         const toolbarSync = new TestElement();
+        const toolbarSidebarLeft = new TestElement();
+        const toolbarSidebarRight = new TestElement();
         const elements = new Map<string, TestElement>([
             ["mobileTopBar", topBarElement],
             ["editor", editorElement],
             ["toolbarName", toolbarName],
             ["toolbarNameReadonly", toolbarNameReadonly],
             ["toolbarSync", toolbarSync],
+            ["toolbarSidebarLeft", toolbarSidebarLeft],
+            ["toolbarSidebarRight", toolbarSidebarRight],
         ]);
         editorElement.breadcrumbSpace = breadcrumbSpace;
+        topBarElement.appendChild(toolbarSidebarLeft);
         topBarElement.appendChild(toolbarName);
         topBarElement.appendChild(toolbarNameReadonly);
         topBarElement.appendChild(toolbarSync);
-        let landscape = true;
+        topBarElement.appendChild(toolbarSidebarRight);
+        const screen = {orientation: {type: "landscape-primary"}, width: 1200, height: 800};
+        const browser = {
+            screen,
+            innerWidth: 1200,
+            innerHeight: 800,
+            matchMedia: () => ({matches: browser.innerWidth > browser.innerHeight}),
+        };
 
         Object.defineProperty(globalThis, "document", {
             configurable: true,
@@ -80,40 +92,52 @@ describe("mobile top bar layout", () => {
         });
         Object.defineProperty(globalThis, "window", {
             configurable: true,
-            value: {
-                matchMedia: () => ({matches: landscape}),
-            },
+            value: browser,
         });
 
         try {
             updateMobileTopBarLayout();
             assert.equal(bodyElement.classList.contains("mobile-topbar--merged"), true);
             assert.equal(breadcrumbSpace.classList.contains("protyle-breadcrumb__space--mobile-title"), true);
-            assert.deepEqual(breadcrumbSpace.children, [toolbarName, toolbarNameReadonly, toolbarSync]);
+            assert.deepEqual(breadcrumbSpace.children, [toolbarSidebarLeft, toolbarName, toolbarNameReadonly, toolbarSync, toolbarSidebarRight]);
 
             restoreMobileTopBarLayout();
             assert.equal(bodyElement.classList.contains("mobile-topbar--merged"), false);
             assert.equal(breadcrumbSpace.classList.contains("protyle-breadcrumb__space--mobile-title"), false);
-            assert.deepEqual(topBarElement.children, [toolbarName, toolbarNameReadonly, toolbarSync]);
+            assert.deepEqual(topBarElement.children, [toolbarSidebarLeft, toolbarName, toolbarNameReadonly, toolbarSync, toolbarSidebarRight]);
 
             const replacementBreadcrumbSpace = new TestElement();
             editorElement.breadcrumbSpace = replacementBreadcrumbSpace;
             updateMobileTopBarLayout();
             assert.equal(bodyElement.classList.contains("mobile-topbar--merged"), true);
             assert.equal(replacementBreadcrumbSpace.classList.contains("protyle-breadcrumb__space--mobile-title"), true);
-            assert.deepEqual(replacementBreadcrumbSpace.children, [toolbarName, toolbarNameReadonly, toolbarSync]);
+            assert.deepEqual(replacementBreadcrumbSpace.children, [toolbarSidebarLeft, toolbarName, toolbarNameReadonly, toolbarSync, toolbarSidebarRight]);
 
-            landscape = false;
+            screen.orientation.type = "portrait-primary";
+            screen.width = 800;
+            screen.height = 1200;
+            browser.innerWidth = 800;
+            browser.innerHeight = 1200;
             updateMobileTopBarLayout();
             assert.equal(bodyElement.classList.contains("mobile-topbar--merged"), false);
             assert.equal(replacementBreadcrumbSpace.classList.contains("protyle-breadcrumb__space--mobile-title"), false);
-            assert.deepEqual(topBarElement.children, [toolbarName, toolbarNameReadonly, toolbarSync]);
+            assert.deepEqual(topBarElement.children, [toolbarSidebarLeft, toolbarName, toolbarNameReadonly, toolbarSync, toolbarSidebarRight]);
 
-            landscape = true;
+            // 软键盘压缩视口后媒体查询会变成横屏，但屏幕方向和标题栏布局保持竖屏。
+            for (const height of [450, 1200, 450]) {
+                browser.innerHeight = height;
+                updateMobileTopBarLayout();
+                assert.equal(bodyElement.classList.contains("mobile-topbar--merged"), false);
+                assert.deepEqual(topBarElement.children, [toolbarSidebarLeft, toolbarName, toolbarNameReadonly, toolbarSync, toolbarSidebarRight]);
+            }
+
+            screen.orientation.type = "landscape-primary";
+            updateMobileTopBarLayout();
+            assert.equal(bodyElement.classList.contains("mobile-topbar--merged"), true);
             editorElement.classList.add("fn__none");
             updateMobileTopBarLayout();
             assert.equal(bodyElement.classList.contains("mobile-topbar--merged"), false);
-            assert.deepEqual(topBarElement.children, [toolbarName, toolbarNameReadonly, toolbarSync]);
+            assert.deepEqual(topBarElement.children, [toolbarSidebarLeft, toolbarName, toolbarNameReadonly, toolbarSync, toolbarSidebarRight]);
         } finally {
             Object.defineProperty(globalThis, "document", {configurable: true, value: originalDocument});
             Object.defineProperty(globalThis, "window", {configurable: true, value: originalWindow});

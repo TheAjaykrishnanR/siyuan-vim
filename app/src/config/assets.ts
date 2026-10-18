@@ -1,18 +1,21 @@
 import {escapeAttr, escapeHtml} from "../util/escape";
+import {runSettingsMaintenance} from "./setting/maintenance";
 import {confirmDialog} from "../dialog/confirmDialog";
 import {isBrowser, isMobile} from "../util/functions";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {fetchPost} from "../util/fetch";
+import {SIYUAN_APP_ID_HEADER} from "../util/fetchAppId";
 /// #if !MOBILE
 import {getAllModels} from "../layout/getAll";
 import * as path from "path";
 /// #endif
 import {openBy} from "../editor/util";
-import {renderAssetsPreview} from "../asset/renderAssets";
+import {AssetPreview} from "./assetPreview";
 import {writeText} from "../protyle/util/compatibility";
 import {Constants} from "../constants";
 import {showMessage} from "../dialog/message";
 import {Protyle} from "../protyle";
+import {ensureLute} from "../protyle/util/lute";
 import type {App} from "../index";
 import {disabledProtyle, onGet} from "../protyle/util/onGet";
 import {removeLoading} from "../protyle/ui/initUI";
@@ -32,19 +35,38 @@ export const collectAssetsTabSearchStrings = (): string[] => [
     window.siyuan.languages.missingAssets,
 ];
 
+const pendingAssetsMounts = new WeakMap<Element, object>();
+
 /** 资源 Tab 挂载（面板页，不走注册表渲染） */
-export const mountAssetsTab = (root: HTMLElement, keywords?: string, app?: App) => {
+export const mountAssetsTab = async (root: HTMLElement, keywords?: string, app?: App) => {
     if (assets.element && assets.element !== root) {
         unmountAssetsTab(assets.element);
     }
+    assets.element = root;
+    if (!root.innerHTML && app && typeof Lute === "undefined") {
+        const pending = {};
+        pendingAssetsMounts.set(root, pending);
+        try {
+            await ensureLute();
+        } catch (error) {
+            if (pendingAssetsMounts.get(root) === pending && root.isConnected) {
+                pendingAssetsMounts.delete(root);
+                console.error("Could not initialize assets settings", error);
+                showMessage(window.siyuan.languages._kernel["258"], 6000, "error");
+            }
+            return;
+        }
+        // 等待引擎期间关闭面板或再次挂载时，只保留最新的挂载请求。
+        if (pendingAssetsMounts.get(root) !== pending || assets.element !== root || !root.isConnected) {
+            return;
+        }
+        pendingAssetsMounts.delete(root);
+    }
     if (root.innerHTML === "") {
-        assets.element = root;
         root.innerHTML = assets.genHTML();
         if (app) {
             assets.bindEvent(app);
         }
-    } else {
-        assets.element = root;
     }
     if (keywords) {
         switchSettingPanelSubTab(root, keywords, [
@@ -57,10 +79,13 @@ export const mountAssetsTab = (root: HTMLElement, keywords?: string, app?: App) 
 
 /** 释放资源 Tab 内嵌编辑器及根节点引用 */
 export const unmountAssetsTab = (root: Element) => {
+    pendingAssetsMounts.delete(root);
     if (assets.element !== root) {
         return;
     }
     assets.editor?.destroy();
+    assets.disposePreview?.();
+    assets.disposePreview = undefined;
     assets.editor = undefined;
     assets.element = undefined;
 };
@@ -68,6 +93,7 @@ export const unmountAssetsTab = (root: Element) => {
 const assets = {
     element: undefined as Element | undefined,
     editor: undefined as Protyle | undefined,
+    disposePreview: undefined as (() => void) | undefined,
     genHTML: () => {
         const mobile = isMobile();
         return `<div class="fn__flex-column" style="height: 100%">
@@ -102,7 +128,7 @@ const assets = {
             <ul class="b3-list b3-list--background config-assets__list">
                 <li class="fn__loading"><img src="/stage/loading-pure.svg"></li>
             </ul>
-            <div class="config-assets__preview"></div>
+            <div class="config-assets__preview fn__none"></div>
         </div>
         <div class="fn__none config-assets${mobile ? " b3-list--mobile" : ""}" data-type="removeAV">
             <div class="fn__hr--b"></div>
@@ -117,7 +143,7 @@ const assets = {
             <ul class="b3-list b3-list--background config-assets__list">
                 <li class="fn__loading"><img src="/stage/loading-pure.svg"></li>
             </ul>
-            <div class="config-assets__preview" style="display: block;padding: 8px;"></div>
+            <div class="config-assets__preview fn__none" style="display: block;padding: 8px;"></div>
         </div>
         <div class="fn__none config-assets${mobile ? " b3-list--mobile" : ""}" data-type="missing">
             <div class="fn__hr"></div>
@@ -136,6 +162,30 @@ const assets = {
         }
         const assetsListElement = root.querySelector('.config-assets[data-type="remove"] .config-assets__list');
         const avListElement = root.querySelector('.config-assets[data-type="removeAV"] .config-assets__list');
+        const mobile = isMobile();
+        const assetsPreviewElement = assetsListElement.nextElementSibling as HTMLElement;
+        const avPreviewElement = avListElement.nextElementSibling as HTMLElement;
+        const preview = new AssetPreview(assetsPreviewElement);
+        const hidePreview = (listElement: Element, previewElement: HTMLElement) => {
+            listElement.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
+            previewElement.classList.add("fn__none");
+            previewElement.removeAttribute("data-item");
+        };
+        const clearAssetPreview = () => {
+            preview.clear();
+            assetsListElement.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
+            hidePreview(assetsListElement, assetsPreviewElement);
+        };
+        const visibilityObserver = new MutationObserver(() => {
+            if (root.classList.contains("fn__none")) {
+                clearAssetPreview();
+            }
+        });
+        visibilityObserver.observe(root, {attributes: true, attributeFilter: ["class"]});
+        assets.disposePreview = () => {
+            visibilityObserver.disconnect();
+            clearAssetPreview();
+        };
         const editor = new Protyle(app, avListElement.nextElementSibling as HTMLElement, {
             blockId: "",
             action: [Constants.CB_GET_HISTORY],
@@ -156,7 +206,7 @@ const assets = {
                 const type = target.getAttribute("data-type");
                 if (target.id === "removeAll") {
                     confirmDialog(window.siyuan.languages.deleteOpConfirm, `${window.siyuan.languages.clearAll}`, () => {
-                        fetchPost("/api/asset/removeUnusedAssets", {}, response => {
+                        void runSettingsMaintenance(() => fetchPost("/api/asset/removeUnusedAssets", {}, response => {
                             /// #if !MOBILE
                             getAllModels().asset.forEach(item => {
                                 if (response.data.paths.includes(item.path)) {
@@ -165,23 +215,28 @@ const assets = {
                             });
                             /// #endif
                             assetsListElement.innerHTML = `<li class="b3-list--empty">${window.siyuan.languages.emptyContent}</li>`;
-                            assetsListElement.nextElementSibling.innerHTML = "";
-                        });
+                            clearAssetPreview();
+                        }));
                     }, undefined, true);
                     event.preventDefault();
                     event.stopPropagation();
                     break;
                 } else if (target.id === "removeAVAll") {
                     confirmDialog(window.siyuan.languages.deleteOpConfirm, `${window.siyuan.languages.clearAllAV}`, () => {
-                        fetchPost("/api/av/removeUnusedAttributeViews", {}, () => {
+                        void runSettingsMaintenance(() => fetchPost("/api/av/removeUnusedAttributeViews", {}, () => {
                             avListElement.innerHTML = `<li class="b3-list--empty">${window.siyuan.languages.emptyContent}</li>`;
-                            avListElement.nextElementSibling.innerHTML = "";
-                        });
+                            avPreviewElement.innerHTML = "";
+                            hidePreview(avListElement, avPreviewElement);
+                        }));
                     }, undefined, true);
                     event.preventDefault();
                     event.stopPropagation();
                     break;
                 } else if (target.classList.contains("item") && !target.classList.contains("item--focus")) {
+                    clearAssetPreview();
+                    if (mobile) {
+                        hidePreview(avListElement, avPreviewElement);
+                    }
                     root.querySelector(".layout-tab-bar .item--focus").classList.remove("item--focus");
                     target.classList.add("item--focus");
                     root.querySelectorAll(".config-assets").forEach(item => {
@@ -190,7 +245,7 @@ const assets = {
                             if (type === "remove") {
                                 fetchPost("/api/asset/getUnusedAssets", {}, response => {
                                     assets._renderList(response.data, assetsListElement, "unrefAssets");
-                                });
+                                }, {[SIYUAN_APP_ID_HEADER]: Constants.SIYUAN_APPID});
                             } else if (!item.getAttribute("data-init")) {
                                 if (type === "removeAV") {
                                     fetchPost("/api/av/getUnusedAttributeViews", {}, response => {
@@ -210,9 +265,31 @@ const assets = {
                     event.preventDefault();
                     event.stopPropagation();
                     break;
+                } else if (target.getAttribute("data-tab-type") === "unrefAssets") {
+                    const selected = target.classList.contains("b3-list-item--focus");
+                    assetsListElement.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
+                    if (!selected) {
+                        target.classList.add("b3-list-item--focus");
+                        assetsPreviewElement.classList.remove("fn__none");
+                        preview.show(target.dataset.path || "", target.dataset.item);
+                    } else if (mobile) {
+                        clearAssetPreview();
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    break;
                 } else if (target.getAttribute("data-tab-type") === "unRefAV") {
+                    const selected = mobile && target.classList.contains("b3-list-item--focus");
                     avListElement.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
+                    if (selected) {
+                        hidePreview(avListElement, avPreviewElement);
+                        event.preventDefault();
+                        event.stopPropagation();
+                        break;
+                    }
                     target.classList.add("b3-list-item--focus");
+                    avPreviewElement.setAttribute("data-item", target.dataset.item || "");
+                    avPreviewElement.classList.remove("fn__none");
                     onGet({
                         data: {
                             data: {
@@ -295,6 +372,9 @@ const assets = {
                                         action: [Constants.CB_GET_HISTORY, Constants.CB_GET_HTML],
                                     });
                                 }
+                                if (avPreviewElement.getAttribute("data-item") === id) {
+                                    hidePreview(avListElement, avPreviewElement);
+                                }
                             });
                         } else {
                             fetchPost("/api/asset/removeUnusedAsset", {
@@ -312,7 +392,7 @@ const assets = {
                                 } else {
                                     liElement.remove();
                                 }
-                                assetsListElement.nextElementSibling.innerHTML = "";
+                                clearAssetPreview();
                             });
                         }
                     }, undefined, true);
@@ -324,17 +404,22 @@ const assets = {
             }
         });
 
-        assetsListElement.addEventListener("mouseover", (event) => {
-            const liElement = hasClosestByClassName(event.target as Element, "b3-list-item");
-            if (liElement && liElement.getAttribute("data-item") !== assetsListElement.nextElementSibling.getAttribute("data-item")) {
-                const item = liElement.getAttribute("data-item");
-                assetsListElement.nextElementSibling.setAttribute("data-item", item);
-                assetsListElement.nextElementSibling.innerHTML = renderAssetsPreview(liElement.getAttribute("data-path"), item);
-            }
-        });
+        if (!mobile) {
+            assetsListElement.addEventListener("mouseover", (event) => {
+                if (assetsListElement.querySelector(".b3-list-item--focus")) {
+                    return;
+                }
+                const liElement = hasClosestByClassName(event.target as Element, "b3-list-item");
+                if (liElement && liElement.getAttribute("data-item") !== assetsPreviewElement.getAttribute("data-item")) {
+                    const item = liElement.getAttribute("data-item");
+                    assetsPreviewElement.classList.remove("fn__none");
+                    preview.show(liElement.getAttribute("data-path"), item, 250);
+                }
+            });
+        }
         fetchPost("/api/asset/getUnusedAssets", {}, response => {
             assets._renderList(response.data, assetsListElement, "unrefAssets");
-        });
+        }, {[SIYUAN_APP_ID_HEADER]: Constants.SIYUAN_APPID});
     },
     _renderList: (data: {
         item: string,

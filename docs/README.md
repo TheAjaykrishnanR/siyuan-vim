@@ -7,8 +7,10 @@
 | Document | English | 中文 |
 |---|---|---|
 | Kernel API type contracts | [API-CONTRACTS.md](API-CONTRACTS.md) | [API-CONTRACTS.zh-CN.md](API-CONTRACTS.zh-CN.md) |
+| Theme and icon synchronization | [APPEARANCE-SYNC.md](APPEARANCE-SYNC.md) | [APPEARANCE-SYNC.zh-CN.md](APPEARANCE-SYNC.zh-CN.md) |
 | On-demand asset downloads | [ASSET-DOWNLOAD.md](ASSET-DOWNLOAD.md) | [ASSET-DOWNLOAD.zh-CN.md](ASSET-DOWNLOAD.zh-CN.md) |
 | Encrypted notebooks | [ENCRYPTED-NOTEBOOK.md](ENCRYPTED-NOTEBOOK.md) | [ENCRYPTED-NOTEBOOK.zh-CN.md](ENCRYPTED-NOTEBOOK.zh-CN.md) |
+| Document titles and addressing (design draft) | [DOCUMENT-ADDRESSING.md](DOCUMENT-ADDRESSING.md) | [DOCUMENT-ADDRESSING.zh-CN.md](DOCUMENT-ADDRESSING.zh-CN.md) |
 | Pinned documents | [PINNED-DOCUMENTS.md](PINNED-DOCUMENTS.md) | [PINNED-DOCUMENTS.zh-CN.md](PINNED-DOCUMENTS.zh-CN.md) |
 | Tab blocks | [TAB-BLOCK.md](TAB-BLOCK.md) | [TAB-BLOCK.zh-CN.md](TAB-BLOCK.zh-CN.md) |
 | Template manager | [TEMPLATE-MANAGER.md](TEMPLATE-MANAGER.md) | [TEMPLATE-MANAGER.zh-CN.md](TEMPLATE-MANAGER.zh-CN.md) |
@@ -23,7 +25,7 @@ Except for public API documentation, maintain paired English `NAME.md` and Simpl
 
 ## Feature design structure
 
-On-demand assets, encrypted notebooks, pinned documents, tab blocks, and template management use these second-level sections. Place topic-specific details under third-level headings within the appropriate section.
+Theme and icon synchronization, on-demand assets, encrypted notebooks, pinned documents, tab blocks, and template management use these second-level sections. Place topic-specific details under third-level headings within the appropriate section.
 
 | Section | Content |
 |---|---|

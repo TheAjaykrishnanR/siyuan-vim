@@ -36,6 +36,10 @@ export const isMobileBlockSelecting = () => {
 const isPanelOpen = () => PANEL_IDS.some((id) => Boolean(document.getElementById(id)?.style.transform));
 
 const renderMobileBars = () => {
+    // 标题输入框位于顶栏内，编辑标题时保持栏位可见和可交互。
+    if (document.activeElement?.id === "toolbarName") {
+        barsState = reduceMobileBarsState(barsState, {type: "set-reading-bars", visible: true});
+    }
     const visibility = getMobileBarsVisibility(barsState);
     const immersive = !visibility.topbarVisible;
     document.body.classList.toggle("mobile-chrome--hidden", immersive);
@@ -44,18 +48,18 @@ const renderMobileBars = () => {
 
     const progress = MOBILE_BARS_SCROLL_OPTIONS.maxOffset === 0 ? 0 :
         barsState.readingBarsOffset / MOBILE_BARS_SCROLL_OPTIONS.maxOffset;
+    // 顶栏和面包屑整体滑出，使完全隐藏时的底边与滚动视口顶部重合。
+    const breadcrumbTranslateY = `calc(${0 - progress} * (var(--mobile-topbar-height) + var(--mobile-breadcrumb-height)))`;
     const topbarElement = document.getElementById("mobileTopBar");
     if (topbarElement) {
-        topbarElement.style.setProperty("--mobile-bar-translate-y", `${0 - barsState.readingBarsOffset}px`);
+        topbarElement.style.setProperty("--mobile-bar-translate-y", breadcrumbTranslateY);
         topbarElement.toggleAttribute("inert", immersive);
         topbarElement.setAttribute("aria-hidden", immersive ? "true" : "false");
     }
     const breadcrumbElement = document.querySelector<HTMLElement>("#editor > .protyle-breadcrumb");
-    const breadcrumbTranslateY = `${0 - barsState.readingBarsOffset}px`;
     const breadcrumbPositionChanged = breadcrumbElement &&
         breadcrumbElement.style.getPropertyValue("--mobile-bar-translate-y") !== breadcrumbTranslateY;
     breadcrumbElement?.style.setProperty("--mobile-bar-translate-y", breadcrumbTranslateY);
-    breadcrumbElement?.style.setProperty("--mobile-bar-opacity", (1 - progress).toString());
     breadcrumbElement?.toggleAttribute("inert", immersive);
     breadcrumbElement?.setAttribute("aria-hidden", immersive ? "true" : "false");
     if (breadcrumbPositionChanged) {
@@ -203,13 +207,24 @@ export const initMobileBars = () => {
     }
     initialized = true;
     window.addEventListener("siyuan-mobile-keyboard-change", ((event: CustomEvent<boolean>) => {
+        pauseMobileBarsScroll();
         barsState = reduceMobileBarsState(barsState, {
             type: "set-editing",
             active: event.detail,
             scrollTop: scrollElement?.scrollTop,
         });
+        if (!isMobileBarsAutoHide()) {
+            barsState = reduceMobileBarsState(barsState, {type: "set-reading-bars", visible: true});
+        }
         renderMobileBars();
     }) as EventListener);
+    window.addEventListener("resize", () => pauseMobileBarsScroll());
+    window.visualViewport?.addEventListener("resize", () => pauseMobileBarsScroll());
+    document.addEventListener("focusin", () => {
+        if (document.activeElement?.id === "toolbarName") {
+            showMobileBars();
+        }
+    });
     document.addEventListener("selectionchange", onSelectionChange);
 
     panelObserver?.disconnect();

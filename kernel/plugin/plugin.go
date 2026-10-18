@@ -39,6 +39,8 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/apicontract"
 	"github.com/siyuan-note/siyuan/kernel/mcp/tools"
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/plugin/formdata"
+	"github.com/siyuan-note/siyuan/kernel/plugin/streams"
 	"github.com/siyuan-note/siyuan/kernel/util"
 	"github.com/smallnest/chanx"
 )
@@ -102,6 +104,9 @@ type KernelPlugin struct {
 
 	worker  Worker               // Worker for serializing plugin js-call-go (e.g. logger) and go-call-js (e.g. RPC calls) tasks on a single goroutine
 	runtime *eventloop.EventLoop // goja event loop runtime for this plugin
+
+	formDataHost *formdata.Host // 当前 runtime 中 Blob、File 与 FormData 的宿主状态，由 EnableExtendModules 设置
+	streamsHost  *streams.Host  // 当前 runtime 中 ReadableStream/WritableStream/TransformStream 的宿主状态，由 EnableExtendModules 设置
 
 	watcherMu   sync.Mutex
 	watcher     *fsnotify.Watcher // watcher for kernel plugin storage file changes
@@ -470,7 +475,11 @@ func (p *KernelPlugin) pluginEventHandler(event any) {
 func (p *KernelPlugin) subscribeEventHandlers() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = r.(error)
+			if recoveredErr, ok := r.(error); ok {
+				err = recoveredErr
+			} else {
+				err = fmt.Errorf("%v", r)
+			}
 		}
 	}()
 
@@ -483,7 +492,11 @@ func (p *KernelPlugin) subscribeEventHandlers() (err error) {
 func (p *KernelPlugin) unsubscribeEventHandlers() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = r.(error)
+			if recoveredErr, ok := r.(error); ok {
+				err = recoveredErr
+			} else {
+				err = fmt.Errorf("%v", r)
+			}
 		}
 	}()
 
@@ -546,7 +559,7 @@ func (p *KernelPlugin) BroadcastNotification(method string, params util.Optional
 
 // dispatchRpcRequests dispatches multiple JSON-RPC requests concurrently.
 // Returns responses in the same order as requests. Nil responses indicate notifications.
-func (p *KernelPlugin) dispatchRpcRequests(requests []*JsonRpcProcessingRequest) []*JsonRpcProcessingResponse {
+func (p *KernelPlugin) dispatchRpcRequests(ctx context.Context, requests []*JsonRpcProcessingRequest) []*JsonRpcProcessingResponse {
 	responses := make([]*JsonRpcProcessingResponse, len(requests))
 	var wg sync.WaitGroup
 
@@ -560,7 +573,7 @@ func (p *KernelPlugin) dispatchRpcRequests(requests []*JsonRpcProcessingRequest)
 		// For notifications, dispatch without waiting for a response.
 		if request.Request.IsNotification() {
 			go func(request *JsonRpcRequest) {
-				p.dispatchRpcRequest(request)
+				p.dispatchRpcRequest(p.context, request)
 			}(request.Request)
 			responses[i] = nil
 			continue
@@ -575,7 +588,7 @@ func (p *KernelPlugin) dispatchRpcRequests(requests []*JsonRpcProcessingRequest)
 		wg.Add(1)
 		go func(index int, request *JsonRpcRequest) {
 			defer wg.Done()
-			responses[index] = p.dispatchRpcRequest(request)
+			responses[index] = p.dispatchRpcRequest(ctx, request)
 		}(i, request.Request)
 	}
 
@@ -585,7 +598,7 @@ func (p *KernelPlugin) dispatchRpcRequests(requests []*JsonRpcProcessingRequest)
 
 // dispatchRpcRequest routes a single JSON-RPC request to the plugin's registered JS method.
 // Returns nil for notifications (no ID field).
-func (p *KernelPlugin) dispatchRpcRequest(request *JsonRpcRequest) *JsonRpcProcessingResponse {
+func (p *KernelPlugin) dispatchRpcRequest(ctx context.Context, request *JsonRpcRequest) *JsonRpcProcessingResponse {
 	// Validate request structure
 	if rpcError := request.Validate(); rpcError != nil {
 		// For notifications, return nil (no response).
@@ -605,12 +618,13 @@ func (p *KernelPlugin) dispatchRpcRequest(request *JsonRpcRequest) *JsonRpcProce
 
 	// For notifications, call the method without waiting for a response and return nil.
 	if request.IsNotification() {
-		go p.callRpcMethod(request.Method, request.Params.Value)
+		// 通知由插件生命周期管理，HTTP 返回后仍可继续执行。
+		go p.callRpcMethod(p.context, request.Method, request.Params.Value)
 		return nil
 	}
 
 	// For normal requests, call the method and return response or error.
-	rpcResult, rpcError := p.callRpcMethod(request.Method, request.Params.Value)
+	rpcResult, rpcError := p.callRpcMethod(ctx, request.Method, request.Params.Value)
 	if rpcError == nil {
 		return &JsonRpcProcessingResponse{
 			Response: &JsonRpcRequestResponse{
@@ -630,8 +644,8 @@ func (p *KernelPlugin) dispatchRpcRequest(request *JsonRpcRequest) *JsonRpcProce
 	}
 }
 
-// callRpcMethod invokes a registered JS RPC method via the event bus and awaits the response.
-func (p *KernelPlugin) callRpcMethod(method string, params any) (rpcResult any, rpcError *JsonRpcError) {
+// callRpcMethod 在事件循环中调用 RPC 方法，等待结果、请求取消或插件停止。
+func (p *KernelPlugin) callRpcMethod(ctx context.Context, method string, params any) (rpcResult any, rpcError *JsonRpcError) {
 	defer func() {
 		if r := recover(); r != nil {
 			logging.LogDebugf("[plugin:%s] panic in RPC method [%s]: %v", p.Name, method, r)
@@ -673,8 +687,22 @@ func (p *KernelPlugin) callRpcMethod(method string, params any) (rpcResult any, 
 	}
 
 	done := make(chan *TaskResult, 1)
+	var completeOnce sync.Once
+	complete := func(result *TaskResult) {
+		// 仅接收首次结果，等待者退出后的回调也不会阻塞事件循环。
+		completeOnce.Do(func() { done <- result })
+	}
 
-	p.worker.Run(func(rt *goja.Runtime) (result any, err error) {
+	runErr := p.worker.Run(func(rt *goja.Runtime) (result any, err error) {
+		// 排队期间取消的调用不再进入脚本，已执行的脚本不会被强制中断。
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-p.context.Done():
+			return nil, p.context.Err()
+		default:
+		}
+
 		rpcParams := []goja.Value{}
 		jsParams := rt.ToValue(params)
 		if isJsArray(rt, jsParams) {
@@ -691,12 +719,26 @@ func (p *KernelPlugin) callRpcMethod(method string, params any) (rpcResult any, 
 		}
 
 		invokeFunction(func(_ *goja.Runtime, result *CallResult) {
-			done <- result.TaskResult()
+			complete(result.TaskResult())
 		}, rt, true, rpcMethod.Method, rt.GlobalObject(), rpcParams...)
 		return
-	}, nil)
+	}, func(_ *goja.Runtime, _ any, err error) {
+		if err != nil {
+			complete(&TaskResult{err: err})
+		}
+	})
+	if runErr != nil {
+		complete(&TaskResult{err: runErr})
+	}
 
-	result := <-done
+	var result *TaskResult
+	select {
+	case result = <-done:
+	case <-ctx.Done():
+		result = &TaskResult{err: ctx.Err()}
+	case <-p.context.Done():
+		result = &TaskResult{err: p.context.Err()}
+	}
 	if result.err != nil {
 		rpcError = &JsonRpcError{
 			Code:    JsonRpcErrorCodeInternalError,
@@ -843,7 +885,7 @@ func storageWatchOperations(event fsnotify.Event) (ret []string) {
 	return
 }
 
-// invokeHook calls a lifecycle hook (e.g. onload) if it exists, awaiting if it returns a Promise.
+// invokeHook 调用已绑定的生命周期钩子，等待其返回的 Promise；未实现的可选钩子直接跳过。
 func (p *KernelPlugin) invokeHook(name string) {
 	var err error
 	defer func() {
@@ -875,6 +917,10 @@ func (p *KernelPlugin) invokeHook(name string) {
 		}
 
 		hookValue := pluginObj.Get(name)
+		if hookValue == nil || goja.IsNull(hookValue) || goja.IsUndefined(hookValue) {
+			done <- TaskResult{}
+			return
+		}
 		hook, ok := goja.AssertFunction(hookValue)
 		if !ok {
 			err = fmt.Errorf("globalThis.siyuan.plugin.lifecycle.%s not bound to a function", name)
@@ -930,8 +976,11 @@ func (p *KernelPlugin) handleHttpRequest(c *gin.Context, request *Request, scope
 				return
 			}
 
-			// convert response.body?.raw?.data from (string | Buffer | ArrayBuffer) to []byte
+			// convert response.body?.raw?.data from (string | Buffer | ArrayBuffer) to []byte, and pull out
+			// response.body?.stream?.stream (a ReadableStream instance) before the JSON round trip below:
+			// 两者都不能走 JSON 编解码，前者要转换成 []byte，后者是活的流对象，序列化不出有意义的结果。
 			var raw *[]byte
+			var stream *goja.Object
 			if bodyValue := responseObj.Get("body"); isJsValueNotNull(bodyValue) {
 				// response.body
 				if bodyObj := bodyValue.ToObject(rt); bodyObj != nil {
@@ -944,6 +993,18 @@ func (p *KernelPlugin) handleHttpRequest(c *gin.Context, request *Request, scope
 								if convertErr == nil {
 									raw = &dataBytes
 									rawObj.Set("data", goja.Null())
+								}
+							}
+						}
+					}
+					if streamValue := bodyObj.Get("stream"); isJsValueNotNull(streamValue) {
+						// response.body.stream
+						if streamObj := streamValue.ToObject(rt); streamObj != nil {
+							if innerValue := streamObj.Get("stream"); isJsValueNotNull(innerValue) {
+								// response.body.stream.stream
+								if innerObj := innerValue.ToObject(rt); innerObj != nil && p.streamsHost.IsReadableStream(innerObj) {
+									stream = innerObj
+									streamObj.Set("stream", goja.Null())
 								}
 							}
 						}
@@ -972,6 +1033,9 @@ func (p *KernelPlugin) handleHttpRequest(c *gin.Context, request *Request, scope
 
 			if raw != nil && response.Body != nil && response.Body.Raw != nil {
 				response.Body.Raw.Data = *raw
+			}
+			if stream != nil && response.Body != nil && response.Body.Stream != nil {
+				response.Body.Stream.Stream = stream
 			}
 
 			done <- &handleResult{Value: &response}
@@ -1397,7 +1461,10 @@ func (p *KernelPlugin) handleServerSentEventRequest(c *gin.Context, request *Req
 						e.Retry = uint(retry.ToInteger())
 					}
 
-					events.In <- e
+					select {
+					case events.In <- e:
+					case <-ctx.Done():
+					}
 					return goja.Undefined()
 				}
 			}

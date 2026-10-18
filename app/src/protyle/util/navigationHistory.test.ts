@@ -25,6 +25,7 @@ const navigate = (action: string[], tablet = true, suppressFocus = false) => {
         isPhablet: () => tablet,
         hasFocusOffsets: () => false,
         isInEmbedBlock: () => false,
+        resolveVisibleListMindmapBlock: (): undefined => undefined,
         hasClosestByAttribute: () => false,
         getContenteditableElement: () => element,
         document: {createRange: () => range},
@@ -34,6 +35,7 @@ const navigate = (action: string[], tablet = true, suppressFocus = false) => {
         },
         focusBlock: () => { focused++; return range; },
         preventScroll: () => {},
+        recordRestoredSpellcheckFocus: () => {},
         bgFade: () => {},
         scrollCenter: () => {},
         setTimeout: (callback: () => void, delay: number) => { if (!delay) { callback(); } },
@@ -42,8 +44,9 @@ const navigate = (action: string[], tablet = true, suppressFocus = false) => {
     };
     runInNewContext(compiled, context);
     context.navigate({
+        element: {addEventListener: () => {}},
         block: {id: "block", rootID: "root"},
-        wysiwyg: {element: {querySelectorAll: () => [element], firstElementChild: element}},
+        wysiwyg: {element: {ownerDocument: {activeElement: null}, querySelectorAll: () => [element], firstElementChild: element}},
         contentElement: {addEventListener: () => {}},
         observer: {unobserve: () => {}},
     }, action, undefined, undefined, false, suppressFocus);

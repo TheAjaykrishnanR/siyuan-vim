@@ -1,9 +1,12 @@
-import {focusBlock, focusByOffset, focusByWbr, getEditorRange, getSelectionOffset} from "../util/selection";
+import {focusBlock, focusByOffset, focusByWbr, getEditorRange} from "../util/selection";
+import {getSelectionOffset} from "../util/selectionOffsets";
 import {Constants} from "../../constants";
 import * as dayjs from "dayjs";
 import {transaction, turnsOneInto, updateTransaction, wrapBlockInBlockquote} from "./transaction";
 import {mathRender} from "../render/mathRender";
 import {highlightRender} from "../render/highlightRender";
+import {restoreInlineElementBoundaryHTML} from "../util/inlineElementBoundary";
+import {suspendLongTextRuns} from "../util/longTextWrap";
 import {
     fixAdjacentTags,
     getContenteditableElement,
@@ -31,12 +34,23 @@ import {
 } from "../util/inlineElementMarker";
 import {normalizeInlineFontFamilyStyle} from "../toolbar/fontFamilyCore";
 import {sanitizeKernelHTML} from "../../util/hostCapabilities";
+import {isProtyleListItemFirstParagraph} from "../runtimeCapabilities";
+import {isMobile} from "../../util/functions";
+import {scheduleCaretScroll} from "./caretScroll";
 
 interface IInputOperations {
     doOperations: IOperation[];
     undoOperations: IOperation[];
     undoContext?: Record<string, string>;
 }
+
+const updateGutterAfterInput = (protyle: IProtyle, blockElement: HTMLElement) => {
+    if (!isMobile()) {
+        hideElements(["gutter"], protyle);
+    } else if (protyle.gutter && !protyle.gutter.element.classList.contains("fn__none")) {
+        protyle.gutter.render(protyle, blockElement);
+    }
+};
 
 const normalizeInlineFontFamilyStyles = (element: ParentNode) => {
     element.querySelectorAll<HTMLElement>("span[style]").forEach(item => {
@@ -111,7 +125,7 @@ export const beforeBlockquoteInput = (protyle: IProtyle, event: InputEvent) => {
     return true;
 };
 
-export const input = async (protyle: IProtyle, blockElement: HTMLElement, range: Range, needRender = true,
+const inputBlock = async (protyle: IProtyle, blockElement: HTMLElement, range: Range, needRender = true,
                             event?: InputEvent, inputOperations?: IInputOperations) => {
     if (!blockElement.parentElement) {
         // 不同 windows 版本下输入法会多次触发 input，导致 outerhtml 赋值的块丢失
@@ -243,7 +257,7 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
         }
         focusByWbr(protyle.wysiwyg.element, range);
         protyle.hint.render(protyle);
-        hideElements(["gutter"], protyle);
+        updateGutterAfterInput(protyle, blockElement);
         updateInput(html, protyle, id, inputOperations);
         return;
     }
@@ -402,6 +416,7 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
         // 相邻标签之间插入空格区隔，避免 SpinBlockDOM 解析时合并为一个标签 https://github.com/siyuan-note/siyuan/issues/18191
         // 使用迭代替换处理多个连续相邻标签（全局正则无法匹配重叠情况）
         // 若中间含有 <wbr>（光标标记），替换后需保留 <wbr>，否则 focusByWbr 无法定位光标
+        html = restoreInlineElementBoundaryHTML(html);
         let prevHTML: string;
         do {
             prevHTML = html;
@@ -420,8 +435,9 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
     tempElement.innerHTML = html;
     // 列表项内紧挨标记的首个段落块不生成子列表，仅移除触发标记并保留现有内容
     // https://github.com/siyuan-note/siyuan/issues/17890 https://github.com/siyuan-note/siyuan/issues/18355
-    if (blockElement.closest('[data-type="NodeListItem"]') &&
-        blockElement.previousElementSibling?.classList.contains("protyle-action")) {
+    if ((blockElement.closest('[data-type="NodeListItem"]') &&
+        blockElement.previousElementSibling?.classList.contains("protyle-action")) ||
+        isProtyleListItemFirstParagraph(protyle, blockElement)) {
         if (tempElement.content.firstElementChild.classList.contains("list")) {
             if (editElement.contains(wbrElement)) {
                 const markerRange = document.createRange();
@@ -445,7 +461,7 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
     ) {
         if (blockElement.getAttribute("data-type") === "NodeHeading" && blockElement.getAttribute("fold") === "1" &&
             tempElement.content.firstElementChild.getAttribute("data-subtype") !== blockElement.dataset.subtype) {
-            setFold(protyle, blockElement, undefined, undefined, false, false, false);
+            setFold(protyle, blockElement, undefined, undefined, false, false);
             html = html.replace(' fold="1"', "");
             protyle.wysiwyg.lastHTMLs[id] = blockElement.outerHTML;
         }
@@ -559,8 +575,21 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
         focusByWbr(protyle.wysiwyg.element, range);
         protyle.hint.render(protyle);
     }
-    hideElements(["gutter"], protyle);
+    updateGutterAfterInput(protyle, blockElement);
     updateInput(html, protyle, id, inputOperations);
+};
+
+export const input = async (...args: Parameters<typeof inputBlock>) => {
+    const resume = suspendLongTextRuns(args[0].wysiwyg.element, args[1], args[2]);
+    try {
+        await inputBlock(...args);
+    } finally {
+        resume();
+    }
+    if (args[0].options.typewriterMode && !args[4]?.isComposing &&
+        ["insertParagraph", "insertLineBreak"].includes(args[4]?.inputType)) {
+        scheduleCaretScroll(args[0], "down");
+    }
 };
 
 const updateInput = (html: string, protyle: IProtyle, id: string, inputOperations?: IInputOperations) => {

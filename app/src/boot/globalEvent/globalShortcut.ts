@@ -4,11 +4,18 @@ import {isWindow} from "../../util/functions";
 import {clearDisallowedTextInputHotkey} from "../../util/hotKeyPolicy";
 import {getKeymapBindings} from "../../util/keymapBindings";
 import {syncAppMenuShortcuts} from "./commonHotkey";
+import {getSettingsWindowHost} from "../../config/setting/windowContext";
 /// #if !BROWSER
 import {ipcRenderer} from "electron";
 /// #endif
 
 export const sendGlobalShortcut = (app: App) => {
+    const host = getSettingsWindowHost();
+    if (host) {
+        if (document.activeElement?.matches(".config-keymap__record, #searchByKey")) host.suspendShortcuts();
+        else host.restoreShortcuts();
+        return;
+    }
     /// #if !BROWSER
     if (document.activeElement?.matches(".config-keymap__record, #searchByKey")) {
         sendUnregisterGlobalShortcut(app);
@@ -16,6 +23,11 @@ export const sendGlobalShortcut = (app: App) => {
     }
     syncAppMenuShortcuts();
     if (isWindow()) {
+        return;
+    }
+    const languages = window.siyuan.languages?.["_trayMenu"];
+    if (!languages) {
+        // 插件可能在语言包加载完成前注册命令，由 onGetConfig 在布局初始化后补发。
         return;
     }
     const toggleHotkeys = getKeymapBindings(window.siyuan.config.keymap.general.toggleWin)
@@ -35,7 +47,7 @@ export const sendGlobalShortcut = (app: App) => {
         });
     });
     ipcRenderer.send(Constants.SIYUAN_HOTKEY, {
-        languages: window.siyuan.languages["_trayMenu"],
+        languages,
         hotkeys: Array.from(hotkeys),
         toggleHotkeys,
     });
@@ -43,6 +55,11 @@ export const sendGlobalShortcut = (app: App) => {
 };
 
 export const sendUnregisterGlobalShortcut = (app: App) => {
+    const host = getSettingsWindowHost();
+    if (host) {
+        host.suspendShortcuts();
+        return;
+    }
     /// #if !BROWSER
     if (app) {
         syncAppMenuShortcuts(true);

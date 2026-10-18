@@ -114,6 +114,8 @@ func calcField(collection Collection, field Field, fieldIndex int, attrView *Att
 		calcFieldURL(collection, field, fieldIndex)
 	case KeyTypeEmail:
 		calcFieldEmail(collection, field, fieldIndex)
+	case KeyTypeLocation:
+		calcFieldLocation(collection, field, fieldIndex)
 	case KeyTypePhone:
 		calcFieldPhone(collection, field, fieldIndex)
 	case KeyTypeMAsset:
@@ -216,28 +218,28 @@ func calcFieldTemplate(collection Collection, field Field, fieldIndex int) {
 			calc.Result = &Value{Number: NewFormattedValueNumber(float64(countUniqueValues)/float64(len(collection.GetItems())), NumberFormatPercent)}
 		}
 	case CalcOperatorSum:
-		sum := 0.0
+		var sum decimalSum
 		for _, item := range collection.GetItems() {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Template && "" != values[fieldIndex].Template.Content {
 				val, _ := util.Convert2Float(values[fieldIndex].Template.Content)
-				sum += val
+				sum.add(val)
 			}
 		}
-		calc.Result = &Value{Number: NewFormattedValueNumber(sum, field.GetNumberFormat())}
+		calc.Result = &Value{Number: NewFormattedValueNumber(sum.float64(), field.GetNumberFormat())}
 	case CalcOperatorAverage:
-		sum := 0.0
+		var sum decimalSum
 		count := 0
 		for _, item := range collection.GetItems() {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Template && "" != values[fieldIndex].Template.Content {
 				val, _ := util.Convert2Float(values[fieldIndex].Template.Content)
-				sum += val
+				sum.add(val)
 				count++
 			}
 		}
 		if 0 != count {
-			calc.Result = &Value{Number: NewFormattedValueNumber(sum/float64(count), field.GetNumberFormat())}
+			calc.Result = &Value{Number: NewFormattedValueNumber(sum.average(count), field.GetNumberFormat())}
 		}
 	case CalcOperatorMedian:
 		calcValues := []float64{}
@@ -251,7 +253,7 @@ func calcFieldTemplate(collection Collection, field Field, fieldIndex int) {
 		sort.Float64s(calcValues)
 		if len(calcValues) > 0 {
 			if len(calcValues)%2 == 0 {
-				calc.Result = &Value{Number: NewFormattedValueNumber((calcValues[len(calcValues)/2-1]+calcValues[len(calcValues)/2])/2, field.GetNumberFormat())}
+				calc.Result = &Value{Number: NewFormattedValueNumber(numberMean(calcValues[len(calcValues)/2-1], calcValues[len(calcValues)/2]), field.GetNumberFormat())}
 			} else {
 				calc.Result = &Value{Number: NewFormattedValueNumber(calcValues[len(calcValues)/2], field.GetNumberFormat())}
 			}
@@ -300,7 +302,7 @@ func calcFieldTemplate(collection Collection, field Field, fieldIndex int) {
 			}
 		}
 		if math.MaxFloat64 != minVal && -math.MaxFloat64 != maxVal {
-			calc.Result = &Value{Number: NewFormattedValueNumber(maxVal-minVal, field.GetNumberFormat())}
+			calc.Result = &Value{Number: NewFormattedValueNumber(numberDifference(maxVal, minVal), field.GetNumberFormat())}
 		}
 	case CalcOperatorTemplate:
 		calcFieldByTemplate(collection, field, fieldIndex)
@@ -804,26 +806,26 @@ func calcFieldNumber(collection Collection, field Field, fieldIndex int) {
 			calc.Result = &Value{Number: NewFormattedValueNumber(float64(countUniqueValues)/float64(len(collection.GetItems())), NumberFormatPercent)}
 		}
 	case CalcOperatorSum:
-		sum := 0.0
+		var sum decimalSum
 		for _, item := range collection.GetItems() {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Number && values[fieldIndex].Number.IsNotEmpty {
-				sum += values[fieldIndex].Number.Content
+				sum.add(values[fieldIndex].Number.Content)
 			}
 		}
-		calc.Result = &Value{Number: NewFormattedValueNumber(sum, field.GetNumberFormat())}
+		calc.Result = &Value{Number: NewFormattedValueNumber(sum.float64(), field.GetNumberFormat())}
 	case CalcOperatorAverage:
-		sum := 0.0
+		var sum decimalSum
 		count := 0
 		for _, item := range collection.GetItems() {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Number && values[fieldIndex].Number.IsNotEmpty {
-				sum += values[fieldIndex].Number.Content
+				sum.add(values[fieldIndex].Number.Content)
 				count++
 			}
 		}
 		if 0 != count {
-			calc.Result = &Value{Number: NewFormattedValueNumber(sum/float64(count), field.GetNumberFormat())}
+			calc.Result = &Value{Number: NewFormattedValueNumber(sum.average(count), field.GetNumberFormat())}
 		}
 	case CalcOperatorMedian:
 		calcValues := []float64{}
@@ -836,7 +838,7 @@ func calcFieldNumber(collection Collection, field Field, fieldIndex int) {
 		sort.Float64s(calcValues)
 		if len(calcValues) > 0 {
 			if len(calcValues)%2 == 0 {
-				calc.Result = &Value{Number: NewFormattedValueNumber((calcValues[len(calcValues)/2-1]+calcValues[len(calcValues)/2])/2, field.GetNumberFormat())}
+				calc.Result = &Value{Number: NewFormattedValueNumber(numberMean(calcValues[len(calcValues)/2-1], calcValues[len(calcValues)/2]), field.GetNumberFormat())}
 			} else {
 				calc.Result = &Value{Number: NewFormattedValueNumber(calcValues[len(calcValues)/2], field.GetNumberFormat())}
 			}
@@ -882,7 +884,7 @@ func calcFieldNumber(collection Collection, field Field, fieldIndex int) {
 			}
 		}
 		if math.MaxFloat64 != minVal && -math.MaxFloat64 != maxVal {
-			calc.Result = &Value{Number: NewFormattedValueNumber(maxVal-minVal, field.GetNumberFormat())}
+			calc.Result = &Value{Number: NewFormattedValueNumber(numberDifference(maxVal, minVal), field.GetNumberFormat())}
 		}
 	case CalcOperatorTemplate:
 		calcFieldByTemplate(collection, field, fieldIndex)
@@ -1882,32 +1884,32 @@ func calcFieldRollup(collection Collection, field Field, fieldIndex int) {
 			calc.Result = &Value{Number: NewFormattedValueNumber(float64(countUniqueValues)/float64(len(collection.GetItems())), NumberFormatPercent)}
 		}
 	case CalcOperatorSum:
-		sum := 0.0
+		var sum decimalSum
 		for _, item := range collection.GetItems() {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Rollup && 0 < len(values[fieldIndex].Rollup.Contents) {
 				for _, content := range values[fieldIndex].Rollup.Contents {
-					val, _ := util.Convert2Float(content.String(false))
-					sum += val
+					val := calculationNumber(content)
+					sum.add(val)
 				}
 			}
 		}
-		calc.Result = &Value{Number: NewFormattedValueNumber(sum, field.GetNumberFormat())}
+		calc.Result = &Value{Number: NewFormattedValueNumber(sum.float64(), field.GetNumberFormat())}
 	case CalcOperatorAverage:
-		sum := 0.0
+		var sum decimalSum
 		count := 0
 		for _, item := range collection.GetItems() {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Rollup && 0 < len(values[fieldIndex].Rollup.Contents) {
 				for _, content := range values[fieldIndex].Rollup.Contents {
-					val, _ := util.Convert2Float(content.String(false))
-					sum += val
+					val := calculationNumber(content)
+					sum.add(val)
 					count++
 				}
 			}
 		}
 		if 0 != count {
-			calc.Result = &Value{Number: NewFormattedValueNumber(sum/float64(count), field.GetNumberFormat())}
+			calc.Result = &Value{Number: NewFormattedValueNumber(sum.average(count), field.GetNumberFormat())}
 		}
 	case CalcOperatorMedian:
 		calcValues := []float64{}
@@ -1915,7 +1917,7 @@ func calcFieldRollup(collection Collection, field Field, fieldIndex int) {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Rollup && 0 < len(values[fieldIndex].Rollup.Contents) {
 				for _, content := range values[fieldIndex].Rollup.Contents {
-					val, _ := util.Convert2Float(content.String(false))
+					val := calculationNumber(content)
 					calcValues = append(calcValues, val)
 				}
 			}
@@ -1923,7 +1925,7 @@ func calcFieldRollup(collection Collection, field Field, fieldIndex int) {
 		sort.Float64s(calcValues)
 		if 0 < len(calcValues) {
 			if 0 == len(calcValues)%2 {
-				calc.Result = &Value{Number: NewFormattedValueNumber((calcValues[len(calcValues)/2-1]+calcValues[len(calcValues)/2])/2, field.GetNumberFormat())}
+				calc.Result = &Value{Number: NewFormattedValueNumber(numberMean(calcValues[len(calcValues)/2-1], calcValues[len(calcValues)/2]), field.GetNumberFormat())}
 			} else {
 				calc.Result = &Value{Number: NewFormattedValueNumber(calcValues[len(calcValues)/2], field.GetNumberFormat())}
 			}
@@ -1934,7 +1936,7 @@ func calcFieldRollup(collection Collection, field Field, fieldIndex int) {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Rollup && 0 < len(values[fieldIndex].Rollup.Contents) {
 				for _, content := range values[fieldIndex].Rollup.Contents {
-					val, _ := util.Convert2Float(content.String(false))
+					val := calculationNumber(content)
 					if val < minVal {
 						minVal = val
 					}
@@ -1950,7 +1952,7 @@ func calcFieldRollup(collection Collection, field Field, fieldIndex int) {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Rollup && 0 < len(values[fieldIndex].Rollup.Contents) {
 				for _, content := range values[fieldIndex].Rollup.Contents {
-					val, _ := util.Convert2Float(content.String(false))
+					val := calculationNumber(content)
 					if val > maxVal {
 						maxVal = val
 					}
@@ -1967,7 +1969,7 @@ func calcFieldRollup(collection Collection, field Field, fieldIndex int) {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Rollup && 0 < len(values[fieldIndex].Rollup.Contents) {
 				for _, content := range values[fieldIndex].Rollup.Contents {
-					val, _ := util.Convert2Float(content.String(false))
+					val := calculationNumber(content)
 					if val < minVal {
 						minVal = val
 					}
@@ -1978,7 +1980,7 @@ func calcFieldRollup(collection Collection, field Field, fieldIndex int) {
 			}
 		}
 		if math.MaxFloat64 != minVal && -math.MaxFloat64 != maxVal {
-			calc.Result = &Value{Number: NewFormattedValueNumber(maxVal-minVal, field.GetNumberFormat())}
+			calc.Result = &Value{Number: NewFormattedValueNumber(numberDifference(maxVal, minVal), field.GetNumberFormat())}
 		}
 	case CalcOperatorTemplate:
 		// 自定义模板统计：对整列已汇总的值执行用户编写的 .action{...} 模板
@@ -1989,7 +1991,7 @@ func calcFieldRollup(collection Collection, field Field, fieldIndex int) {
 			values := item.GetValues()
 			if nil != values[fieldIndex] && nil != values[fieldIndex].Rollup && 0 < len(values[fieldIndex].Rollup.Contents) {
 				for _, content := range values[fieldIndex].Rollup.Contents {
-					val, _ := util.Convert2Float(content.String(false))
+					val := calculationNumber(content)
 					nums = append(nums, val)
 					strs = append(strs, content.String(false))
 					raw = append(raw, content)

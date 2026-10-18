@@ -185,13 +185,39 @@ export const isLastPointerMouse = (): boolean => {
 
 let touchResizeHandle: HTMLElement | null = null;
 let touchResizeEdges: HTMLElement[] = [];
+let touchResizeInput = false;
+
+const setTouchResizeInput = (touch: boolean) => {
+    if (touchResizeInput === touch) {
+        return;
+    }
+    touchResizeInput = touch;
+    document.body.classList.toggle("body--touch-resize", touch);
+};
+
+const updateResizePointerInput = (event: PointerEvent) => {
+    if (["mouse", "touch", "pen"].includes(event.pointerType)) {
+        setTouchResizeInput(event.pointerType !== "mouse");
+    }
+};
 
 // 触摸起始：先判断是否命中原生 Drag API（draggable="true"），命中则走原生路径；否则判断手动 mousedown 白名单
 const handleTouchStart = (e: TouchEvent) => {
     if (e.touches.length !== 1) return;
 
-    const target = e.target as HTMLElement;
+    let target = e.target as HTMLElement;
     const touch = e.touches[0];
+    setTouchResizeInput(!isMouseInput(touch));
+    if (!isMouseInput(touch) &&
+        (target.classList.contains("b3-dialog__scrim") || target.classList.contains("b3-dialog"))) {
+        // 首次触摸启用外侧把手后重新命中，只接管当前弹窗的缩放边缘。
+        const resizeTarget = document.elementFromPoint(touch.clientX, touch.clientY)?.closest<HTMLElement>(
+            ".resize__rd, .resize__ld, .resize__rt, .resize__lt, .resize__r, .resize__l, .resize__t, .resize__d",
+        );
+        if (resizeTarget && resizeTarget.closest(".b3-dialog") === target.closest(".b3-dialog")) {
+            target = resizeTarget;
+        }
+    }
 
     // 部分 Android WebView 会在鼠标 Pointer 事件后继续合成 Touch 事件，此时沿用候选状态并切换为 Touch 驱动。
     if (dragState?.inputType === "pointer" && isMouseInput(touch)) {
@@ -207,7 +233,7 @@ const handleTouchStart = (e: TouchEvent) => {
     if (!target.classList.contains("av__widthdrag") && !target.classList.contains("av__freeze-drag")) {
         const draggable = getDraggableAncestor(target);
         if (draggable) {
-            dragState = createDragState(draggable, touch, "touch", isMouseInput(touch));
+            dragState = createDragState(draggable, target, touch, "touch", isMouseInput(touch));
             // WebKit 会接管 draggable 元素的长按并取消触摸序列，临时关闭原生拖拽以保留 touchend。
             suspendNativeDrag(dragState);
             return;
@@ -361,8 +387,11 @@ const getDraggableAncestor = (el: Element): HTMLElement | null => {
     return null;
 };
 
-const createDragState = (draggableElement: HTMLElement, point: DragPoint, inputType: "touch" | "pointer",
+const createDragState = (draggableElement: HTMLElement, target: Element, point: DragPoint, inputType: "touch" | "pointer",
                          isMouse: boolean, pointerId?: number): DragState & LongPressGate => {
+    // 菜单和列表正文优先滚动，抓手仍可直接拖拽。
+    const isListContent = (draggableElement.classList.contains("b3-menu__item") ||
+        draggableElement.classList.contains("b3-list-item")) && !target.closest(".fn__grab");
     return {
         dataTransfer: null,
         ghostElement: null,
@@ -374,7 +403,7 @@ const createDragState = (draggableElement: HTMLElement, point: DragPoint, inputT
         startY: point.clientY,
         touchStartTime: Date.now(),
         // 触摸操作和 Android 外接鼠标在文件树、画廊、页签和列表操作中需长按，以避免与滚动冲突。
-        requireLongPress: shouldRequireLongPress(draggableElement.closest(".sy__file") !== null ||
+        requireLongPress: shouldRequireLongPress(isListContent || draggableElement.closest(".sy__file") !== null ||
             draggableElement.closest(".sy__outline") !== null ||
             draggableElement.closest(".av__gallery-item") !== null ||
             draggableElement.closest(".av__group-title") !== null ||
@@ -445,7 +474,7 @@ const handlePointerDown = (event: PointerEvent) => {
         return;
     }
 
-    dragState = createDragState(draggable, event, "pointer", true, event.pointerId);
+    dragState = createDragState(draggable, event.target as Element, event, "pointer", true, event.pointerId);
     // 原生 dragstart 会取消 Pointer 流，临时关闭 draggable 以保留 pointermove 和 pointerup。
     suspendNativeDrag(dragState);
 };
@@ -1114,7 +1143,10 @@ export const initTouchDragBridge = () => {
     // 所有平台都需记录输入源，供 Touch 回调识别鼠标合成事件。
     document.addEventListener("pointerdown", (event: PointerEvent) => {
         lastPointerType = event.pointerType;
+        updateResizePointerInput(event);
     }, {capture: true, passive: true});
+    document.addEventListener("pointerover", updateResizePointerInput, {capture: true, passive: true});
+    document.addEventListener("pointermove", updateResizePointerInput, {capture: true, passive: true});
 
     let enablePointerBridge = !!isInAndroid();
     /// #if !BROWSER

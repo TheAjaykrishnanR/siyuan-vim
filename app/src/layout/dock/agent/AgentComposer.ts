@@ -1,7 +1,8 @@
 import {Constants} from "../../../constants";
 import {escapeHtml} from "../../../util/escape";
 import {fetchPost} from "../../../util/fetch";
-import {hintRef} from "../../../protyle/hint/extend";
+import {hintRef, hintSlash} from "../../../protyle/hint/extend";
+import {registerBuiltinSlashHint} from "../../../protyle/hint/builtinSlash";
 import {blockRender} from "../../../protyle/render/blockRender";
 import {matchHotKey} from "../../../protyle/util/hotKey";
 import {isSkillHintRequestActive, shouldYieldSkillHint} from "./agentHintState";
@@ -9,6 +10,8 @@ import {uploadFiles} from "../../../protyle/upload";
 import {previewImages} from "../../../protyle/preview/image";
 import {removeCompressURL} from "../../../util/image";
 import {mountProtyleLiteFragment} from "../../../protyle/lite/fragmentEditor";
+import {AGENT_SKILL_SELECTOR, deleteAgentSkill, expandAgentSkillSelection, normalizeAgentSkills} from "./agentSkill";
+import {focusByRange} from "../../../protyle/util/selectionOffsets";
 
 export interface AgentComposerData {
     text: string;
@@ -35,8 +38,8 @@ interface ComposerHandle {
 type OnChangeCallback = () => void;
 
 const AGENT_HINT_OVERLAY_CLASS = "protyle-hint--agent-overlay";
-const AGENT_SKILL_SELECTOR = '[data-type~="text"][custom-agent-skill="true"]';
 const skillHintRequestIDs = new WeakMap<IProtyle, number>();
+const skillSlashCommands = new WeakMap<IProtyle, Set<string>>();
 
 interface ComposerOptions {
     initialContent?: string;
@@ -71,7 +74,7 @@ const hintAgentRef = (key: string, protyle: IProtyle, source: THintSource): IHin
 
 // / 技能菜单：异步拉取 lsSkills，选中后把技能名作为带持久标识的智能体行级元素插入。
 // 返回 [] 占位，数据在 fetch 回调里通过 protyle.hint.genHTML 填充（与 hintRef 异步模式一致）。
-const hintSkill = (key: string, protyle: IProtyle): IHintData[] => {
+const hintSkill = registerBuiltinSlashHint((key: string, protyle: IProtyle): IHintData[] => {
     const requestID = (skillHintRequestIDs.get(protyle) || 0) + 1;
     skillHintRequestIDs.set(protyle, requestID);
     if (shouldYieldSkillHint(key, protyle.options.hint.extend.map((item) => item.key))) {
@@ -80,9 +83,15 @@ const hintSkill = (key: string, protyle: IProtyle): IHintData[] => {
         return [];
     }
     prepareAgentHint(protyle);
-    // 每次查询都切换到加载状态，避免已有候选项让异步占位结果关闭菜单。
-    protyle.hint.genHTML([], protyle, true, "hint");
-    protyle.hint.genLoading(protyle);
+    // 加号面板保留精简编辑器支持的插入项，直接输入斜杠时仍只查询技能。
+    const insertItems = protyle.hint.element.closest("#keyboardToolbar") ? hintSlash("", protyle, "hint") : [];
+    skillSlashCommands.set(protyle, new Set(insertItems.filter(item => item.html !== "separator").map(item => item.value)));
+    if (insertItems.length > 0) {
+        protyle.hint.genHTML(insertItems, protyle, false, "hint");
+    } else {
+        protyle.hint.genHTML([], protyle, true, "hint");
+        protyle.hint.genLoading(protyle);
+    }
     fetchPost("/api/ai/agent/lsSkills", {}, (response) => {
         // 异步响应返回时输入状态可能已变化，避免 Esc 或其他提示触发后重新打开旧菜单。
         if (!isSkillHintRequestActive({
@@ -102,20 +111,26 @@ const hintSkill = (key: string, protyle: IProtyle): IHintData[] => {
             .filter((s: Record<string, string>) => !q ||
                 (s.name || "").toLowerCase().includes(q) || (s.description || "").toLowerCase().includes(q))
             .map((s: Record<string, string>) => ({
-                value: '<span data-type="text" custom-agent-skill="true">' +
+                value: '<span data-type="text" custom-agent-skill="true" contenteditable="false">' +
                     escapeHtml(s.name) + "</span> ",
-                html: '<div class="b3-list-item__first"><svg class="b3-list-item__graphic">' +
+                html: '<div class="b3-list-item__first" data-type="agent-skill"><svg class="b3-list-item__graphic">' +
                     '<use xlink:href="#iconSparkles"></use></svg><span class="b3-list-item__text">' +
                     escapeHtml(s.name) + "</span></div>" +
                     (s.description ? '<div class="b3-list-item__meta b3-list-item__showall">' + escapeHtml(s.description) + "</div>" : ""),
             }));
+        if (insertItems.length > 0) {
+            if (dataList.length > 0) {
+                dataList.unshift({value: "", html: "separator"});
+            }
+            dataList.unshift(...insertItems);
+        }
         if (dataList.length === 0) {
             dataList.push({value: "", html: window.siyuan.languages.emptyContent});
         }
         protyle.hint.genHTML(dataList, protyle, false, "hint");
     });
     return [];
-};
+}, (value, protyle) => skillSlashCommands.get(protyle)?.has(value) ?? false);
 
 // 已发送消息历史（↑↓ 翻阅），独立于 protyle 的 undo/redo。
 class ComposerHistory {
@@ -196,7 +211,10 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
         placeholder: options.placeholder || L.agentInputPlaceholder,
         emptyClass: "agent-composer--empty",
         hintOverlayClass: AGENT_HINT_OVERLAY_CLASS,
-        onChange,
+        onChange: () => {
+            normalizeAgentSkills(host);
+            onChange?.();
+        },
         protyleOptions: {
             hint: {
                 // / 技能菜单（覆盖默认的块插入菜单 hintSlash）；[[ 块引用由 protyle 默认 extend 提供
@@ -225,6 +243,7 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
             websocket: false,
         },
         afterSetContent: (protyle, element) => {
+            normalizeAgentSkills(element);
             resetEmbedBlocks(element);
             blockRender(protyle, element);
         },
@@ -232,6 +251,40 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
     const protyle = fragment.instance;
     const p = fragment.protyle;
     const wysiwyg = p.wysiwyg!;
+
+    const prepareSkillSelection = () => {
+        const selection = getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            if (wysiwyg.element.contains(range.commonAncestorContainer)) {
+                expandAgentSkillSelection(range);
+            }
+        }
+    };
+    let skillDeletionRange: Range;
+    const handleSkillDeletion = (event: InputEvent) => {
+        if (!deleteAgentSkill(p, event)) {
+            return false;
+        }
+        skillDeletionRange = getSelection().getRangeAt(0).cloneRange();
+        return true;
+    };
+    wysiwyg.element.addEventListener("beforeinput", (event: InputEvent) => {
+        if (!handleSkillDeletion(event)) {
+            prepareSkillSelection();
+        }
+    }, true);
+    ["cut", "paste"].forEach(type => {
+        wysiwyg.element.addEventListener(type, prepareSkillSelection, true);
+    });
+    wysiwyg.element.addEventListener("keyup", (event: KeyboardEvent) => {
+        // Android 软键盘可能在退格后的 keyup 再次清空选区，恢复本次删除后的光标。
+        if (event.key === "Unidentified" && skillDeletionRange && getSelection().rangeCount === 0 &&
+            wysiwyg.element.contains(skillDeletionRange.startContainer)) {
+            focusByRange(skillDeletionRange);
+        }
+        skillDeletionRange = undefined;
+    });
 
     // 智能体输入框没有文档 ID，直接预览输入框中的图片，避免走依赖文档资源列表的默认逻辑。
     wysiwyg.element.addEventListener("dblclick", (event: MouseEvent) => {
@@ -253,9 +306,18 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
 
     // capture 阶段拦截 hint 选择、发送快捷键、历史翻页；undo/redo 交给 protyle 的 keydown（调 LocalUndo）。
     wysiwyg.element.addEventListener("keydown", (event: KeyboardEvent) => {
+        skillDeletionRange = undefined;
         if (event.isComposing) {
             return;
         }
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && ["Backspace", "Delete"].includes(event.key) &&
+            handleSkillDeletion(new InputEvent("beforeinput", {cancelable: true,
+                inputType: event.key === "Backspace" ? "deleteContentBackward" : "deleteContentForward"}))) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+        }
+        prepareSkillSelection();
         // hint 面板可见时，Enter/方向键主动调 hint.select 完成选择，避免 capture 与冒泡的时序问题。
         const hintEl = p.hint?.element;
         if (hintEl && !hintEl.classList.contains("fn__none")) {
@@ -283,7 +345,7 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
 
         // ↑ 翻历史：仅在空输入或已处于历史浏览时触发
         if (enableHistory && event.key === "ArrowUp" && !event.shiftKey) {
-            const isEmpty = (wysiwyg.element.textContent || "").replace(new RegExp(Constants.ZWSP, "g"), "").trim() === "";
+            const isEmpty = (wysiwyg.element.textContent || "").replaceAll(Constants.ZWSP, "").trim() === "";
             if ((history.isBrowsing() || isEmpty) && history.has()) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -322,7 +384,50 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
     };
 
     const getBlockHTML = (): string => {
-        return fragment.getBlockHTML(resetEmbedBlocks);
+        return fragment.getBlockHTML((element) => {
+            resetEmbedBlocks(element);
+            // 仅清理消息边界的段落空白，保留内部空行和非文本内容。
+            const trimBoundary = (fromStart: boolean) => {
+                const trimNode = (node: Node): boolean => {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        const pattern = fromStart ? `^[\\s${Constants.ZWSP}]+` : `[\\s${Constants.ZWSP}]+$`;
+                        node.textContent = (node.textContent || "").replace(new RegExp(pattern), "");
+                        return !node.textContent;
+                    }
+                    if (!(node instanceof HTMLElement)) {
+                        return false;
+                    }
+                    if (node.tagName === "BR") {
+                        node.remove();
+                        return true;
+                    }
+                    const types = (node.getAttribute("data-type") || "").split(" ").filter(Boolean);
+                    if (node.tagName !== "SPAN" || types.some(type =>
+                        !["strong", "em", "s", "u", "mark", "sup", "sub", "text"].includes(type))) {
+                        return false;
+                    }
+                    return trimChildren(node);
+                };
+                const trimChildren = (parent: HTMLElement): boolean => {
+                    const nodes = Array.from(parent.childNodes);
+                    if (!fromStart) {
+                        nodes.reverse();
+                    }
+                    return nodes.every(trimNode);
+                };
+                let block = fromStart ? element.firstElementChild : element.lastElementChild;
+                while (block?.getAttribute("data-type") === "NodeParagraph") {
+                    const content = block.querySelector<HTMLElement>('[contenteditable="true"]');
+                    if (!content || !trimChildren(content)) {
+                        break;
+                    }
+                    block.remove();
+                    block = fromStart ? element.firstElementChild : element.lastElementChild;
+                }
+            };
+            trimBoundary(true);
+            trimBoundary(false);
+        });
     };
 
     return {

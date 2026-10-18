@@ -1,13 +1,14 @@
+import {escapeHtmlTextAndAttr} from "../../util/escape";
+import {Constants} from "../../constants";
 import {openInputDialog} from "../../dialog/inputDialog";
 import {updateTransaction} from "../wysiwyg/transaction";
 import {
     focusBlock,
-    focusByRange,
     focusByWbr,
     getEditorRange,
-    getSelectionOffset,
     getUndoFocusContext,
 } from "./selection";
+import {focusByRange, getSelectionOffset} from "./selectionOffsets";
 import {hasClosestBlock, hasClosestByClassName, hasClosestByTag} from "./hasClosest";
 import {matchHotKey} from "./hotKey";
 import {isNotCtrl} from "./compatibility";
@@ -52,12 +53,12 @@ export const getOrCreateTableBody = (tableElement: HTMLTableElement) => {
 };
 
 export const isTableHeaderEnabled = (nodeElement: Element, type: "row" | "column") => {
-    return type === "row" ? nodeElement.getAttribute("custom-sy-table-header-row") !== "false" :
-        nodeElement.getAttribute("custom-sy-table-header-column") === "true";
+    return type === "row" ? nodeElement.getAttribute(Constants.CUSTOM_SY_TABLE_HEADER_ROW) !== "false" :
+        nodeElement.getAttribute(Constants.CUSTOM_SY_TABLE_HEADER_COLUMN) === "true";
 };
 
 const setTableHeaderEnabled = (nodeElement: Element, type: "row" | "column", enabled: boolean) => {
-    const attribute = `custom-sy-table-header-${type}`;
+    const attribute = type === "row" ? Constants.CUSTOM_SY_TABLE_HEADER_ROW : Constants.CUSTOM_SY_TABLE_HEADER_COLUMN;
     if (type === "row") {
         if (enabled) {
             nodeElement.removeAttribute(attribute);
@@ -73,7 +74,7 @@ const setTableHeaderEnabled = (nodeElement: Element, type: "row" | "column", ena
 
 export const toggleTableHeader = (protyle: IProtyle, nodeElement: Element, type: "row" | "column") => {
     const html = nodeElement.outerHTML;
-    const attribute = `custom-sy-table-header-${type}`;
+    const attribute = type === "row" ? Constants.CUSTOM_SY_TABLE_HEADER_ROW : Constants.CUSTOM_SY_TABLE_HEADER_COLUMN;
     if (isTableHeaderEnabled(nodeElement, type)) {
         if (type === "row") {
             nodeElement.setAttribute(attribute, "false");
@@ -113,38 +114,36 @@ const goPreviousCell = (cellElement: HTMLElement, range: Range, isSelected = tru
 };
 
 export const setTableAlign = (protyle: IProtyle, cellElements: HTMLElement[], nodeElement: Element, type: string,
-                              range: Range, clearCellStyle = false) => {
+                              range: Range, alignWholeTable = false) => {
     range.insertNode(document.createElement("wbr"));
     const html = nodeElement.outerHTML;
-
     const tableElement = nodeElement.querySelector("table");
-    if (clearCellStyle) {
-        tableElement.querySelectorAll<HTMLElement>("th, td").forEach(cell => {
+    const grid = buildTableGrid(tableElement);
+    const columns = new Set<number>();
+    grid.cellInfos.forEach(info => {
+        if (cellElements.includes(info.cell)) {
+            for (let column = info.col; column < info.col + info.colspan; column++) {
+                columns.add(column);
+            }
+        }
+    });
+    const cells = new Set<HTMLTableCellElement>();
+    grid.cellInfos.forEach(info => {
+        if (alignWholeTable || Array.from({length: info.colspan}, (_, index) => info.col + index).some(column => columns.has(column))) {
+            cells.add(info.cell);
+        }
+    });
+    cells.forEach(cell => {
+        cell.removeAttribute("align");
+        if (type) {
+            cell.style.setProperty("text-align", type);
+        } else {
             cell.style.removeProperty("text-align");
             if (!cell.getAttribute("style")) {
                 cell.removeAttribute("style");
             }
-        });
-    }
-    const columnCnt = tableElement.rows[0].cells.length;
-    const rowCnt = tableElement.rows.length;
-    const currentColumns: number[] = [];
-
-    for (let i = 0; i < rowCnt; i++) {
-        for (let j = 0; j < columnCnt; j++) {
-            if (tableElement.rows[i].cells[j] === cellElements[currentColumns.length]) {
-                currentColumns.push(j);
-            }
         }
-        if (currentColumns.length > 0) {
-            break;
-        }
-    }
-    for (let k = 0; k < rowCnt; k++) {
-        currentColumns.forEach(item => {
-            tableElement.rows[k].cells[item].setAttribute("align", type);
-        });
-    }
+    });
     updateTransaction(protyle, nodeElement, html);
     focusByWbr(tableElement, range);
 };
@@ -157,7 +156,9 @@ export const insertRow = (protyle: IProtyle, range: Range, cellElement: HTMLElem
 
     let rowHTML = "";
     for (let m = 0; m < cellElement.parentElement.childElementCount; m++) {
-        rowHTML += `<td align="${cellElement.parentElement.children[m].getAttribute("align") || ""}"></td>`;
+        const source = cellElement.parentElement.children[m] as HTMLTableCellElement;
+        const align = source.style.textAlign || source.getAttribute("align");
+        rowHTML += `<td${["left", "center", "right"].includes(align) ? ` style="text-align: ${align}"` : ""}></td>`;
     }
     let newRowElement: HTMLTableRowElement;
     if (cellElement.tagName === "TH") {
@@ -192,7 +193,8 @@ export const insertRowAbove = (protyle: IProtyle, range: Range, cellElement: HTM
         // 不需要空格，否则列宽调整后在空格后插入图片会换行 https://github.com/siyuan-note/siyuan/issues/7631
         const classAttr = className ? ` class="${className}"` : "";
         const tag = cellElement.tagName === "TH" ? "th" : "td";
-        rowHTML += `<${tag}${classAttr} colspan="${currentCellElement.colSpan}" align="${currentCellElement.getAttribute("align") || ""}"></${tag}>`;
+        const align = currentCellElement.style.textAlign || currentCellElement.getAttribute("align");
+        rowHTML += `<${tag}${classAttr} colspan="${currentCellElement.colSpan}"${["left", "center", "right"].includes(align) ? ` style="text-align: ${align}"` : ""}></${tag}>`;
     }
 
     if (hasNone) {
@@ -452,25 +454,10 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
     }
 
     if (!nodeElement.classList.contains("protyle-wysiwyg--select") && !hasClosestByClassName(nodeElement, "protyle-wysiwyg--select")) {
-        // enter 光标跳转到下一行同列
+        // 未进入编辑状态的单元格先挂载内部编辑器，再按正文规则处理回车。
         if (isNotCtrl(event) && !event.shiftKey && !event.altKey && event.key === "Enter") {
             event.preventDefault();
-            const trElement = cellElement.parentElement as HTMLTableRowElement;
-            if ((!trElement.nextElementSibling && trElement.parentElement.tagName === "TBODY") ||
-                (trElement.parentElement.tagName === "THEAD" && !trElement.parentElement.nextElementSibling)) {
-                insertEmptyBlock(protyle, "afterend", nodeElement.getAttribute("data-node-id"));
-                return true;
-            }
-            let nextElement = trElement.nextElementSibling as HTMLTableRowElement;
-            if (!nextElement) {
-                nextElement = trElement.parentElement.nextElementSibling.firstChild as HTMLTableRowElement;
-            }
-            if (!nextElement) {
-                return true;
-            }
-            range.selectNodeContents(nextElement.cells[getColIndex(cellElement)]);
-            range.collapse(true);
-            scrollCenter(protyle);
+            void import("../render/tableCellRichEditor").then(module => module.enterTableCellRichEditor(protyle, cellElement));
             return true;
         }
         // 表格后无内容时，按右键需新建空块
@@ -786,13 +773,13 @@ export const updateTableTitle = (protyle: IProtyle, nodeElement: Element) => {
             const title = value.trim();
             const location = (dialog.element.querySelector("select") as HTMLSelectElement).value;
             if (title) {
-                const html = `<caption contenteditable="false" ${location === "bottom" ? 'style="caption-side: bottom;"' : ""}>${Lute.EscapeHTMLStr(title)}</caption>`;
+                const html = `<caption contenteditable="false" ${location === "bottom" ? 'style="caption-side: bottom;"' : ""}>${escapeHtmlTextAndAttr(title)}</caption>`;
                 if (captionElement) {
                     captionElement.outerHTML = html;
                 } else {
                     nodeElement.querySelector("table").insertAdjacentHTML("afterbegin", html);
                 }
-                nodeElement.setAttribute("caption", Lute.EscapeHTMLStr(html));
+                nodeElement.setAttribute("caption", escapeHtmlTextAndAttr(html));
             } else {
                 if (captionElement) {
                     captionElement.remove();
@@ -1252,6 +1239,15 @@ export const getTableRangeCells = (tableElement: HTMLElement, startCell?: HTMLEl
         }
     });
     return ret;
+};
+
+export const getTableClipboardBlockDOM = (html: string) => {
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    const table = container.querySelector("table");
+    table.setAttribute("contenteditable", "true");
+    table.setAttribute("spellcheck", "false");
+    return `<div data-node-id="${Lute.NewNodeID()}" data-type="NodeTable" class="table"><div contenteditable="false">${table.outerHTML}<div class="protyle-action__table"><div class="table__resize"></div><div class="table__select"></div></div></div><div class="protyle-attr" contenteditable="false">\u200b</div></div>`;
 };
 
 // getTableRangeHTML 根据起始单元格到结束单元格的矩形区域，重建一个合法的 <table> HTML。

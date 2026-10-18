@@ -1,5 +1,6 @@
 import {fetchPost} from "../../util/fetch";
 import {registerBuiltinSlashHint} from "./builtinSlash";
+import {getSuperBlockCommand} from "../../block/superBlock";
 import {insertHTML} from "../util/insertHTML";
 import {TABLE_CELL_SLASH_IDS} from "../util/tableCellRichMenu";
 import {getIconByType} from "../../editor/getIcon";
@@ -8,7 +9,8 @@ import {blockRender} from "../render/blockRender";
 import {Constants} from "../../constants";
 import {processRender} from "../util/processCode";
 import {highlightRender} from "../render/highlightRender";
-import {focusBlock, focusByRange, getEditorRange} from "../util/selection";
+import {focusBlock, getEditorRange} from "../util/selection";
+import {focusByRange} from "../util/selectionOffsets";
 import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";
 import {
     getContenteditableElement,
@@ -17,7 +19,6 @@ import {
     getSbChildBlockCount,
     getTopAloneElement
 } from "../wysiwyg/getBlock";
-import {replaceFileName} from "../../editor/rename";
 import {transaction} from "../wysiwyg/transaction";
 import {getAssetExtension, getAssetName, getDisplayName, isEncryptedBox} from "../../util/pathName";
 import {cancelSB, genEmptyElement, rebalanceSbWidth, refreshSbResize} from "../../block/util";
@@ -35,10 +36,11 @@ import {
     refreshSlashMenuCatalog,
     SLASH_MENU_ROOT_PATH,
 } from "../../config/entryVisibility/catalog";
-import {getEntryOrder, isEntryVisible} from "../../config/entryVisibility/runtime";
+import {getConfiguredEntryVisibility, getEntryOrder} from "../../config/entryVisibility/runtime";
 import {resolveSlashMenuItems, TSlashMenuItem} from "./slashMenu";
 import {
     getBuiltinInlineStylePropertyValue,
+    getBuiltinInlineStylePreview,
     isBuiltinInlineStyleVisible,
     TBuiltinInlineStyleID,
 } from "../toolbar/inlineStyle";
@@ -54,6 +56,7 @@ import {
 } from "../wysiwyg/blockSelection";
 import {countBlockWord} from "../../layout/status";
 import {genTemplateDocTreePlanHTML} from "../../template/docTree";
+import {getDailyNoteHints} from "./dailyNote";
 
 const slashBuiltinStyleIDs: Partial<Record<string, TBuiltinInlineStyleID>> = {
     infoStyle: "info",
@@ -62,9 +65,13 @@ const slashBuiltinStyleIDs: Partial<Record<string, TBuiltinInlineStyleID>> = {
     errorStyle: "error",
 };
 
-const getBuiltinStyleCSS = (id: TBuiltinInlineStyleID) =>
-    `color: ${getBuiltinInlineStylePropertyValue(id, "color")};` +
-    `background-color: ${getBuiltinInlineStylePropertyValue(id, "backgroundColor")};`;
+const getBuiltinStyleCSS = (id: TBuiltinInlineStyleID, preview = false) => {
+    const colors = preview ? getBuiltinInlineStylePreview(id) : {
+        color: getBuiltinInlineStylePropertyValue(id, "color"),
+        backgroundColor: getBuiltinInlineStylePropertyValue(id, "backgroundColor"),
+    };
+    return `color: ${colors.color};background-color: ${colors.backgroundColor};`;
+};
 
 const getHotkeyOrMarker = (hotkey: string, marker: string) => {
     if (hotkey) {
@@ -176,10 +183,25 @@ export const getBuiltinSlashMenuItems = (protyle: IProtyle): IHintData[] => {
         value: "> " + Lute.Caret,
         html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconQuote"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.quote}</span>${getHotkeyOrMarker(window.siyuan.config.keymap.editor.insert.quote.custom, ">")}</div>`,
     }, {
+        filter: [window.siyuan.languages.horizontalSuperBlock, window.siyuan.languages.superBlock, "horizontal super block", "columns", "layout", "横向超级块", "hengxiangchaojikuai", "hx", "超级块", "chaojikuai", "cjk", "分栏", "fenlan", "fl"],
+        id: "horizontalSuperBlock",
+        value: getSuperBlockCommand("col"),
+        html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconSuper"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.horizontalSuperBlock}</span></div>`,
+    }, {
+        filter: [window.siyuan.languages.verticalSuperBlock, window.siyuan.languages.superBlock, "vertical super block", "columns", "layout", "纵向超级块", "zongxiangchaojikuai", "zx", "超级块", "chaojikuai", "cjk", "分栏", "fenlan", "fl"],
+        id: "verticalSuperBlock",
+        value: getSuperBlockCommand("row"),
+        html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconSuper"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.verticalSuperBlock}</span></div>`,
+    }, {
         filter: [window.siyuan.languages.tabs, "tabs", "页签", "yeqian", "yq"],
         id: "tabs",
         value: `::: tabs\n@tab\n\n${Lute.Caret}\n\n@tab\n\n:::\n`,
         html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconTabs"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.tabs}</span></div>`,
+    }, {
+        filter: [window.siyuan.languages.mindmap, "mindmap", "思维导图", "siweidaotu", "swdt", "脑图", "naotu", "nt"],
+        id: "mindmap",
+        value: `- ${Lute.Caret}\n{: ${Constants.CUSTOM_SY_LIST_MINDMAP}="1"}`,
+        html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconMindmap"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.mindmap}</span>${getHotkeyOrMarker(window.siyuan.config.keymap.editor.insert.mindmap?.custom, "")}</div>`,
     }, {
         filter: [window.siyuan.languages.callout, "callout", "ts", "提示", "tishi", "note"],
         id: "calloutNote",
@@ -236,15 +258,25 @@ export const getBuiltinSlashMenuItems = (protyle: IProtyle): IHintData[] => {
         value: '<div data-type="NodeAttributeView" data-av-type="table"></div>',
         html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconTable"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.databaseTableView}</span></div>`,
     }, {
-        filter: [window.siyuan.languages.databaseKanbanView, "database kanban view", "数据库看板视图", "shujukukanbanshitu", "sjkkbs"],
-        id: "databaseKanbanView",
-        value: '<div data-type="NodeAttributeView" data-av-type="kanban"></div>',
-        html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconBoard"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.databaseKanbanView}</span></div>`,
+        filter: [window.siyuan.languages.databaseListView, "database list view", "数据库列表视图", "shujukuliebiaoshitu", "sjklbs"],
+        id: "databaseListView",
+        value: '<div data-type="NodeAttributeView" data-av-type="list"></div>',
+        html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconList"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.databaseListView}</span></div>`,
     }, {
         filter: [window.siyuan.languages.databaseGalleryView, "database card view", "database gallery view", "数据库卡片视图", "shujukukapianshitu", "sjkkps"],
         id: "databaseGalleryView",
         value: '<div data-type="NodeAttributeView" data-av-type="gallery"></div>',
         html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconGallery"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.databaseGalleryView}</span></div>`,
+    }, {
+        filter: [window.siyuan.languages.databaseKanbanView, "database kanban view", "数据库看板视图", "shujukukanbanshitu", "sjkkbs"],
+        id: "databaseKanbanView",
+        value: '<div data-type="NodeAttributeView" data-av-type="kanban"></div>',
+        html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconBoard"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.databaseKanbanView}</span></div>`,
+    }, {
+        filter: [window.siyuan.languages.databaseCalendarView, "database calendar view", "日历", "rili"],
+        id: "databaseCalendarView",
+        value: '<div data-type="NodeAttributeView" data-av-type="calendar"></div>',
+        html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconCalendar"></use></svg><span class="b3-list-item__text">${window.siyuan.languages.databaseCalendarView}</span></div>`,
     }, {
         value: "",
         id: "separator_2",
@@ -380,11 +412,6 @@ export const getBuiltinSlashMenuItems = (protyle: IProtyle): IHintData[] => {
         value: "```mermaid\n```",
         html: '<div class="b3-list-item__first"><span class="b3-list-item__text">Mermaid</span><span class="b3-list-item__meta">Mermaid</span></div>',
     }, {
-        filter: [window.siyuan.languages.mindmap, "mindmap", "脑图", "naotu", "nt"],
-        id: "mindmap",
-        value: "```mindmap\n```",
-        html: `<div class="b3-list-item__first"><span class="b3-list-item__text">Mind map</span><span class="b3-list-item__meta">${window.siyuan.languages.mindmap}</span></div>`,
-    }, {
         filter: ["plantuml", "建模语言", "jianmoyuyan", "jmyy"],
         id: "UML",
         value: "```plantuml\n```",
@@ -397,22 +424,22 @@ export const getBuiltinSlashMenuItems = (protyle: IProtyle): IHintData[] => {
         filter: [window.siyuan.languages.infoStyle, "info style", "信息样式", "xinxiyangshi", "xxys"],
         id: "infoStyle",
         value: `style${Constants.ZWSP}${getBuiltinStyleCSS("info")}`,
-        html: `<div class="b3-list-item__first"><div style="${getBuiltinStyleCSS("info")}" class="color__square color__square--list">A</div><span class="b3-list-item__text">${window.siyuan.languages.infoStyle}</span></div>`,
+        html: `<div class="b3-list-item__first"><div style="${getBuiltinStyleCSS("info", true)}" class="color__square color__square--list">A</div><span class="b3-list-item__text">${window.siyuan.languages.infoStyle}</span></div>`,
     }, {
         filter: [window.siyuan.languages.successStyle, "success style", "成功样式", "chenggongyangshi", "cgys"],
         id: "successStyle",
         value: `style${Constants.ZWSP}${getBuiltinStyleCSS("success")}`,
-        html: `<div class="b3-list-item__first"><div style="${getBuiltinStyleCSS("success")}" class="color__square color__square--list">A</div><span class="b3-list-item__text">${window.siyuan.languages.successStyle}</span></div>`,
+        html: `<div class="b3-list-item__first"><div style="${getBuiltinStyleCSS("success", true)}" class="color__square color__square--list">A</div><span class="b3-list-item__text">${window.siyuan.languages.successStyle}</span></div>`,
     }, {
         filter: [window.siyuan.languages.warningStyle, "warning style", "警告样式", "jinggaoyangshi", "jgys"],
         id: "warningStyle",
         value: `style${Constants.ZWSP}${getBuiltinStyleCSS("warning")}`,
-        html: `<div class="b3-list-item__first"><div style="${getBuiltinStyleCSS("warning")}" class="color__square color__square--list">A</div><span class="b3-list-item__text">${window.siyuan.languages.warningStyle}</span></div>`,
+        html: `<div class="b3-list-item__first"><div style="${getBuiltinStyleCSS("warning", true)}" class="color__square color__square--list">A</div><span class="b3-list-item__text">${window.siyuan.languages.warningStyle}</span></div>`,
     }, {
         filter: [window.siyuan.languages.errorStyle, "error style", "错误样式", "cuowuyangshi", "cwys"],
         id: "errorStyle",
         value: `style${Constants.ZWSP}${getBuiltinStyleCSS("error")}`,
-        html: `<div class="b3-list-item__first"><div style="${getBuiltinStyleCSS("error")}" class="color__square color__square--list">A</div><span class="b3-list-item__text">${window.siyuan.languages.errorStyle}</span></div>`,
+        html: `<div class="b3-list-item__first"><div style="${getBuiltinStyleCSS("error", true)}" class="color__square color__square--list">A</div><span class="b3-list-item__text">${window.siyuan.languages.errorStyle}</span></div>`,
     }, {
         filter: [window.siyuan.languages.clearFontStyle, "clear style", "清除样式", "qingchuyangshi", "qcys"],
         id: "clearFontStyle",
@@ -425,8 +452,13 @@ export const getBuiltinSlashMenuItems = (protyle: IProtyle): IHintData[] => {
     }];
 };
 
-export const hintSlash = registerBuiltinSlashHint((key: string, protyle: IProtyle, sourceOrHideConfiguredCreate: THintSource | boolean = false) => {
-    const enabled = isEntryVisible(SLASH_MENU_ROOT_PATH);
+export const hintSlash = registerBuiltinSlashHint((key: string, protyle: IProtyle,
+                                                 sourceOrHideConfiguredCreate: THintSource | boolean = false,
+                                                 options: {visibilityRoot?: string} = {}) => {
+    // 加号面板由用户主动打开，复用插入项配置但不受输入斜杠的提示开关影响。
+    const visibilityRoot = options.visibilityRoot ||
+        (protyle.hint.element.closest("#keyboardToolbar") ? SLASH_MENU_ROOT_PATH : undefined);
+    const enabled = getConfiguredEntryVisibility(SLASH_MENU_ROOT_PATH, visibilityRoot);
     if (!enabled) {
         return [];
     }
@@ -435,6 +467,7 @@ export const hintSlash = registerBuiltinSlashHint((key: string, protyle: IProtyl
     const allList = builtinList.map<TSlashMenuItem>((item) => ({
         ...item,
         entryKey: item.id || "",
+        frequentEligible: key === "",
     }));
     let hasPlugin = false;
     if (areProtylePluginExtensionsEnabled(protyle)) {
@@ -446,6 +479,7 @@ export const hintSlash = registerBuiltinSlashHint((key: string, protyle: IProtyl
                     id: slash.id,
                     entryKey: getPluginSlashEntryKey(plugin.name, slash.id,
                         slash.html === "separator" ? "separator" : "entry"),
+                    frequentEligible: key === "",
                     value: `plugin${Constants.ZWSP}${plugin.name}${Constants.ZWSP}${slash.id}`,
                     html: slash.html
                 });
@@ -474,7 +508,7 @@ export const hintSlash = registerBuiltinSlashHint((key: string, protyle: IProtyl
         canUpload: !!(protyle.options.upload.handler || (protyle.options.upload.url && protyle.upload)),
         key,
         order: getEntryOrder(SLASH_MENU_ROOT_PATH),
-        visible: (entryKey) => isEntryVisible(getSlashMenuEntryPath(entryKey)),
+        visible: (entryKey) => getConfiguredEntryVisibility(getSlashMenuEntryPath(entryKey), visibilityRoot),
     });
 });
 
@@ -547,12 +581,19 @@ export const genHintItemHTML = (item: IBlock) => {
 };
 
 export const hintRef = (key: string, protyle: IProtyle, source: THintSource): IHintData[] => {
-    const nodeElement = hasClosestBlock(getEditorRange(protyle.wysiwyg.element).startContainer);
+    const nodeElement = hasClosestBlock((source === "av" ? protyle.toolbar.range :
+        getEditorRange(protyle.wysiwyg.element)).startContainer);
     const createTarget = protyle.hint.prepareCreateTarget(protyle, "ref");
-    protyle.hint.genLoading(protyle);
+    protyle.hint.genLoading(protyle, 0, source);
     let refParam: import("../../types/api").SearchRefBlockRequestInput;
     if (protyle.lite) {
         refParam = {k: key, id: "", rootID: "", beforeLen: 48, isDatabase: false, isSquareBrackets: true};
+        // 单元格内的临时块不在块树中，使用所属表格提供搜索和新建文档的上下文
+        if (protyle.path && protyle.block.parentID) {
+            refParam.id = protyle.block.parentID;
+            refParam.rootID = protyle.block.rootID;
+            refParam.isSquareBrackets = ["[[", "【【"].includes(protyle.hint.splitChar);
+        }
     } else {
         refParam = {
             k: key,
@@ -569,15 +610,18 @@ export const hintRef = (key: string, protyle: IProtyle, source: THintSource): IH
     if (protyle.lite && isEncryptedBox(protyle.notebookId)) {
         refParam.notebook = protyle.notebookId;
     }
+    const dailyNotes = source === "hint" ? getDailyNoteHints(key, protyle).catch((): IHintData[] => []) : Promise.resolve([] as IHintData[]);
     fetchPost("/api/search/searchRefBlock", refParam, (response) => {
-        createTarget.promise.then((hideConfiguredCreate) => {
+        Promise.all([createTarget.promise, dailyNotes]).then(([hideConfiguredCreate, dateHints]) => {
             if (!createTarget.isCurrent()) {
                 return;
             }
             const dataList: IHintData[] = [];
             let createItemCount = 0;
+            dataList.push(...dateHints);
+            createItemCount += dateHints.length;
             if (response.data.newDoc) {
-                const newFileName = Lute.UnEscapeHTMLStr(replaceFileName(response.data.k));
+                const newFileName = Lute.UnEscapeHTMLStr(response.data.k);
                 if (!hideConfiguredCreate) {
                     dataList.push({
                         value: `((newFile "${newFileName}"${Constants.ZWSP}'${newFileName}${Lute.Caret}'))`,
@@ -592,16 +636,22 @@ export const hintRef = (key: string, protyle: IProtyle, source: THintSource): IH
 <span class="b3-list-item__text">${window.siyuan.languages.newSubDoc} <mark>${response.data.k}</mark></span></div>`,
                 });
                 createItemCount++;
+                dataList.push({
+                    value: `((newFileAtPath "${newFileName}"${Constants.ZWSP}'${newFileName}${Lute.Caret}'))`,
+                    html: `<div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconFolder"></use></svg>
+<span class="b3-list-item__text">${window.siyuan.languages.newFileAtPath} <mark>${response.data.k}</mark></span></div>`,
+                });
+                createItemCount++;
             }
             response.data.blocks.forEach((item: IBlock) => {
-                const name = item.name ? stripSearchMark(escapeSearchHighlight(item.name)) : item.refText.replace(new RegExp(Constants.ZWSP, "g"), "");
+                const name = item.name ? stripSearchMark(escapeSearchHighlight(item.name)) : item.refText.replaceAll(Constants.ZWSP, "");
                 let value = `<span data-type="block-ref" data-id="${item.id}" data-subtype="d">${name}</span>`;
                 if (source === "search") {
                     value = `<span data-type="block-ref" data-id="${item.id}" data-subtype="s">${key}${Constants.ZWSP}${name}</span>`;
                 } else if (source === "av") {
                     let refText = name;
                     if (nodeElement) {
-                        refText = escapeHtml(item.ial["custom-sy-av-s-text-" + nodeElement.getAttribute("data-av-id")] || "") || refText;
+                        refText = escapeHtml(item.ial[Constants.CUSTOM_SY_AV_STATIC_TEXT + nodeElement.getAttribute("data-av-id")] || "") || refText;
                     }
                     value = `<span data-type="block-ref" data-id="${item.id}" data-subtype="s">${refText}</span>`;
                 }

@@ -49,6 +49,7 @@ var copyStdMarkdown = contractHandler(apicontract.CopyStdMarkdown, func(c *gin.C
 	id := request.ID
 	assetsDestSpace2Underscore, fillCSSVar, adjustHeadingLevel, imgTag := request.AssetsDestSpace2Underscore, request.FillCSSVar, request.AdjustHeadingLevel, request.ImgTag
 	isReadOnlyRole := model.IsReadOnlyRoleContext(c)
+	avPublishFilter := model.NewAVExportPublishFilter(c)
 	var publishAccess model.PublishAccess
 	var accessChecker model.EmbedBlockAccessChecker
 	if isReadOnlyRole {
@@ -57,7 +58,16 @@ var copyStdMarkdown = contractHandler(apicontract.CopyStdMarkdown, func(c *gin.C
 			return model.CheckBlockIdAccessableByPublishAccess(c, publishAccess, blockID)
 		}
 	}
-	markdownContent := model.ExportStdMarkdown(id, assetsDestSpace2Underscore, fillCSSVar, adjustHeadingLevel, imgTag, accessChecker)
+	markdownContent := model.ExportStdMarkdown(id, &model.ExportOptions{
+		Render: model.ExportRenderOptions{
+			AssetsDestSpace2Underscore: assetsDestSpace2Underscore,
+			FillCSSVar:                 fillCSSVar,
+			AdjustHeadingLevel:         adjustHeadingLevel,
+			ImgTag:                     imgTag,
+			AVPublishFilter:            avPublishFilter,
+			AccessCheckers:             []model.EmbedBlockAccessChecker{accessChecker},
+		},
+	})
 	if isReadOnlyRole {
 		bt := treenode.GetBlockTree(id)
 		if bt != nil {
@@ -167,7 +177,7 @@ var html2BlockDOM = contractHandler(apicontract.HTML2BlockDOM, func(c *gin.Conte
 		}
 	}
 
-	if util.ContainerStd == model.Conf.System.Container && !skipLocalAssets {
+	if util.ContainerStd == model.Conf.System.Load().Container && !skipLocalAssets {
 		// 处理本地资源文件复制
 		ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
 			if !entering || ast.NodeLinkDest != n.Type {

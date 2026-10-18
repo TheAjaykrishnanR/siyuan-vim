@@ -7,12 +7,14 @@ import {restoreUndoFocus} from "../util/selection";
 import {ipcRenderer} from "electron";
 import {getUndoRootID, markMirror, refreshUndoButtons, requestRedo, requestUndo} from "./globalUndo";
 import {scrollCenter} from "../../util/highlightById";
+import {countBlockWord} from "../../layout/status";
+import {getBlockSelectionStatusIDs} from "../wysiwyg/blockSelection";
 
 // 撤销/重做统一契约：kernel 模式由 Undo 实现（转发 kernel），lite 模式由 LocalUndo 实现（前端操作日志）。
 export interface IUndo {
-    undo(protyle: IProtyle): void;
+    undo(protyle: IProtyle): void | Promise<void>;
 
-    redo(protyle: IProtyle): void;
+    redo(protyle: IProtyle): void | Promise<void>;
 
     add(doOperations: IOperation[], undoOperations: IOperation[], protyle: IProtyle): void;
 
@@ -48,7 +50,7 @@ export class Undo implements IUndo {
         this.lastHistoryRootID = rootID;
         protyle.wysiwyg.flushPendingInput();
         // 转发到全局 Manager，由 kernel 弹栈 + 广播，发起窗口本地乐观应用
-        requestUndo(protyle, rootID);
+        return requestUndo(protyle, rootID);
     }
 
     public redo(protyle: IProtyle) {
@@ -58,7 +60,7 @@ export class Undo implements IUndo {
         const rootID = getUndoRootID(protyle, undefined, this.lastHistoryRootID);
         this.lastHistoryRootID = rootID;
         protyle.wysiwyg.flushPendingInput();
-        requestRedo(protyle, rootID);
+        return requestRedo(protyle, rootID);
     }
 
     // renderLocal 仅在发起窗口本地应用操作（isUndo=true），不 POST 到 kernel
@@ -78,14 +80,14 @@ export class Undo implements IUndo {
             }
         }
         onTransaction(protyle, operations, true);
-        if (restoreUndoFocus(protyle, operations)) {
-            scrollCenter(protyle);
-        }
+        restoreUndoFocus(protyle, operations);
         document.querySelector(".av__panel")?.remove();
         preventScroll(protyle);
         // 同步 toolbar range，避免 undo/redo 替换 DOM 后 range 变为 detached，
         // 导致后续异步操作（如 F3 创建子文档）读到无效 range 而报错 https://github.com/siyuan-note/siyuan/issues/17896
         syncToolbarRange(protyle);
+        scrollCenter(protyle);
+        countBlockWord(getBlockSelectionStatusIDs(protyle.wysiwyg.element), protyle, true);
     }
 
     // add 降级为：不压栈（kernel 已在 commit 后 Record），仅置位本地镜像 + 刷新按钮态。

@@ -1296,10 +1296,10 @@ export class ProtyleVimAdapter implements CM5EditorInterface {
         this.lastCursor = this.getCursor();
 
         // 移除任何旧的命令栏，防止重复出现
-        document.body.querySelectorAll(".protyle-vim__dialog").forEach(el => el.remove());
+        document.body.querySelectorAll(".vim-dialog").forEach(el => el.remove());
 
         const dialog = document.createElement("div");
-        dialog.className = "protyle-vim__dialog";
+        dialog.className = "vim-dialog";
         dialog.style.cssText = [
             "position: fixed",
             "bottom: 0",

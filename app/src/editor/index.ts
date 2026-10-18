@@ -9,12 +9,14 @@ import {countBlockWord} from "../layout/status";
 import type {App} from "../index";
 import {fetchPost} from "../util/fetch";
 import {Backlink} from "../layout/dock/Backlink";
+import type {IDatabaseRowOpenData} from "../protyle/render/av/openDatabaseRow";
 
 export class Editor extends Model {
     public element: HTMLElement;
     public editor: Protyle;
     public headElement: HTMLElement;
     public backlink?: Backlink;
+    public databaseRow?: IDatabaseRowOpenData;
     private backlinkElement?: HTMLElement;
     private backlinkIntersectionObserver?: IntersectionObserver;
     private backlinkMutationObserver?: MutationObserver;
@@ -29,7 +31,8 @@ export class Editor extends Model {
         mode?: TEditorMode,
         action?: TProtyleAction[],
         afterInitProtyle?: (editor: Protyle) => void,
-        scrollPosition?: ScrollLogicalPosition
+        scrollPosition?: ScrollLogicalPosition,
+        scrollAttr?: IScrollAttr,
     }) {
         super({
             app: options.app,
@@ -51,6 +54,7 @@ export class Editor extends Model {
         notebookId?: string,
         mode?: TEditorMode,
         scrollPosition?: ScrollLogicalPosition,
+        scrollAttr?: IScrollAttr,
         afterInitProtyle?: (editor: Protyle) => void,
     }) {
         this.editor = new Protyle(this.app, this.element, {
@@ -67,6 +71,7 @@ export class Editor extends Model {
             },
             typewriterMode: true,
             scrollPosition: options.scrollPosition,
+            scrollAttr: options.scrollAttr,
             after: (editor) => {
                 if (window.siyuan.editorIsFullscreen) {
                     editor.setFullscreen(true);

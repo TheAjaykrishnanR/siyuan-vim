@@ -1,5 +1,30 @@
 document.body.insertAdjacentHTML('afterbegin', `<svg id="iconsLitheness" style="position: absolute; width: 0; height: 0; overflow: hidden;">
 <defs>
+  <symbol id="iconOCR" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+    <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+    <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+    <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+    <path d="M7 8h8" />
+    <path d="M7 12h10" />
+    <path d="M7 16h6" />
+  </symbol>
+  <symbol id="iconZap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" />
+  </symbol>
+  <symbol id="iconMindmap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="rotate(-90 12 12)">
+      <rect x="16" y="16" width="6" height="6" rx="1" />
+      <rect x="2" y="16" width="6" height="6" rx="1" />
+      <rect x="9" y="2" width="6" height="6" rx="1" />
+      <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+      <path d="M12 12V8" />
+    </g>
+  </symbol>
+  <symbol id="iconRoute" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M6 15C7.65685 15 9 16.3431 9 18C9 19.6569 7.65685 21 6 21C4.34315 21 3 19.6569 3 18C3 16.3431 4.34315 15 6 15ZM6 16.5C5.17157 16.5 4.5 17.1716 4.5 18C4.5 18.8284 5.17157 19.5 6 19.5C6.82843 19.5 7.5 18.8284 7.5 18C7.5 17.1716 6.82843 16.5 6 16.5Z" />
+    <path d="M18.501 6.39551C18.501 6.18457 18.4277 6.00586 18.2812 5.85938C18.1289 5.71289 17.9531 5.63965 17.7539 5.63965L8.63086 5.64844C7.79297 5.64844 7.06641 5.80664 6.45117 6.12305C5.83008 6.44531 5.34961 6.88477 5.00977 7.44141C4.66992 8.00391 4.5 8.64844 4.5 9.375C4.5 10.1016 4.66992 10.7461 5.00977 11.3086C5.34375 11.877 5.82129 12.3223 6.44238 12.6445C7.05762 12.9668 7.78711 13.1279 8.63086 13.1279H16.1807C16.9541 13.1279 17.5664 13.3418 18.0176 13.7695C18.4629 14.2031 18.6855 14.7422 18.6855 15.3867C18.6855 16.0313 18.46 16.5615 18.0088 16.9775C17.5518 17.3994 16.9424 17.6104 16.1807 17.6104L8.38184 17.6104C8.17676 17.6104 8.00098 17.6836 7.85449 17.8301C7.70801 17.9766 7.63477 18.1523 7.63477 18.3574C7.63477 18.5625 7.70801 18.7383 7.85449 18.8848C8.00098 19.0371 8.17676 19.1133 8.38184 19.1133L16.0488 19.1133C16.8926 19.1133 17.625 18.9521 18.2461 18.6299C18.8672 18.3135 19.3447 17.874 19.6787 17.3115C20.0186 16.7549 20.1885 16.1133 20.1885 15.3867C20.1885 14.6602 20.0186 14.0127 19.6787 13.4443C19.3447 12.8818 18.8672 12.4395 18.2461 12.1172C17.625 11.7949 16.8926 11.6338 16.0488 11.6338H8.50781C7.73437 11.6338 7.125 11.417 6.67969 10.9834C6.22852 10.5557 6.00293 10.0195 6.00293 9.375C6.00293 8.73047 6.23145 8.19727 6.68848 7.77539C7.13965 7.35938 7.74609 7.15137 8.50781 7.15137L17.7539 7.14258C17.9531 7.14258 18.1289 7.06934 18.2812 6.92285C18.4277 6.77637 18.501 6.60059 18.501 6.39551ZM16.9277 4.37402V8.4082C16.9277 8.71875 17.0215 8.91211 17.209 8.98828C17.3906 9.07031 17.6016 9.02637 17.8418 8.85645L20.6455 6.8877C20.8447 6.74707 20.9443 6.58301 20.9443 6.39551C20.9502 6.20801 20.8506 6.04102 20.6455 5.89453L17.8506 3.92578C17.6045 3.75586 17.3906 3.70898 17.209 3.78516C17.0215 3.86133 16.9277 4.05762 16.9277 4.37402Z" />
+  </symbol>
   <symbol id="iconAlignTop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
     <g transform="rotate(90 12 12)"><path d="M21 5H3"/><path d="M15 12H3"/><path d="M17 19H3"/></g>
   </symbol>
@@ -114,12 +139,13 @@ document.body.insertAdjacentHTML('afterbegin', `<svg id="iconsLitheness" style="
   <symbol id="iconTurnInto" stroke-width="1.7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
     <path d="m15.194 13.707 3.814 1.86-1.86 3.814"/><path d="M16.47214 7.52786 A 5 10 0 1 0 13 21.79796"/><path d="M21.79796 11 A 10 5 0 1 0 19 15.57071"/>
   </symbol>   
-  <symbol id="iconTurnInto" stroke-width="1.7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-    <path d="m15.194 13.707 3.814 1.86-1.86 3.814"/><path d="M16.47214 7.52786 A 5 10 0 1 0 13 21.79796"/><path d="M21.79796 11 A 10 5 0 1 0 19 15.57071"/>
-  </symbol>   
   <symbol id="iconGlobe" stroke-width="1.7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
   </symbol>      
+  <symbol id="iconMapPin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" />
+    <circle cx="12" cy="10" r="3" />
+  </symbol>
   <symbol id="iconPublish" stroke-width="1.7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
     <path d="M7 3.34V5a3 3 0 0 0 3 3"/><path d="M11 21.95V18a2 2 0 0 0-2-2 2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"/><path d="M21.54 15H17a2 2 0 0 0-2 2v4.54"/><path d="M12 2a10 10 0 1 0 9.54 13"/><path d="M20 6V4a2 2 0 1 0-4 0v2"/><rect width="8" height="5" x="14" y="6" rx="1"/>
   </symbol>    
@@ -180,7 +206,7 @@ document.body.insertAdjacentHTML('afterbegin', `<svg id="iconsLitheness" style="
   <symbol id="iconBoard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
     <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>
   </symbol>
-  <symbol id="iconTerminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  <symbol id="iconTerminal" viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
     <path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
   </symbol>
   <symbol id="iconSoftWrap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -416,6 +442,9 @@ document.body.insertAdjacentHTML('afterbegin', `<svg id="iconsLitheness" style="
   </symbol>
   <symbol id="iconHand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
     <path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1"/><path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
+  </symbol>
+  <symbol id="iconPan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
   </symbol>
   <symbol id="iconShieldCheck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
     <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>

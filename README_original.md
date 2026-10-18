@@ -43,6 +43,7 @@
   - [Installation Package](#installation-package)
   - [Package Manager](#package-manager)
   - [Docker Hosting](#docker-hosting)
+  - [Kubernetes Hosting](#kubernetes-hosting)
   - [Unraid Hosting](#unraid-hosting)
   - [TrueNAS Hosting](#truenas-hosting)
   - [Test Channels](#test-channels)
@@ -113,7 +114,7 @@ Some features are only available to paid members, for more details please refer 
 
 ## 🏗️ Architecture and Ecosystem
 
-![SiYuan Arch](screenshots/SiYuan_Arch.png "SiYuan Arch")
+![SiYuan Arch](screenshots/SiYuan_Arch.svg "SiYuan Arch")
 
 | Project                                                  | Description           | Forks                                                                           | Stars                                                                                | 
 |----------------------------------------------------------|-----------------------|---------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
@@ -283,6 +284,7 @@ If you use custom `PUID` and `PGID` values, the entrypoint script will ensure th
 Use an NGINX reverse proxy to hide port 6806. Please note:
 
 - Configure the WebSocket reverse proxy for `/ws`
+- Preserve the original `Host` header, including the port, for both regular requests and `/ws`. In NGINX, configure `proxy_set_header Host $http_host;` in both proxy locations. Using `$host` drops non-standard ports (such as `8443`), which can cause Origin validation to fail, leaving the page stuck on the logo with repeated reloads, API responses of `401`, or failed WebSocket connections
 
 #### Note
 
@@ -295,6 +297,35 @@ Use an NGINX reverse proxy to hide port 6806. Please note:
 - Does not support desktop and mobile application connections, only supports use on browsers
 - Export to PDF, HTML and Word formats is not supported
 - Import Markdown file is not supported
+
+</details>
+
+### Kubernetes Hosting
+
+<details>
+<summary>Kubernetes Deployment</summary>
+
+The [HelmForge SiYuan chart](https://github.com/helmforgedev/charts/tree/main/charts/siyuan) is community-maintained by HelmForge, uses the official `b3log/siyuan` image, and is not an official SiYuan chart. Please report chart issues to [HelmForge](https://github.com/helmforgedev/charts/issues).
+
+Prepare Helm, kubectl, and a Kubernetes cluster with a default StorageClass that can provision a 10Gi ReadWriteOnce volume, then run the following commands:
+
+```bash
+helm repo add helmforge https://repo.helmforge.dev
+helm repo update
+helm install siyuan helmforge/siyuan --namespace siyuan --create-namespace --wait
+kubectl -n siyuan get secret siyuan-siyuan-auth -o go-template='{{index .data "access-code" | base64decode}}{{"\n"}}'
+kubectl -n siyuan port-forward service/siyuan-siyuan 6806:6806
+```
+
+Open <http://localhost:6806> and enter the generated lock screen password. Keep this password secure; it is distinct from the API token. The names above assume the default chart values and release name `siyuan`.
+
+For remote access, use a dedicated HTTPS hostname and an Ingress controller that proxies WebSockets on `/ws`, without URL rewriting. Configure `ingress` and allow the controller's namespace through `networkPolicy.ingressFrom`; the default policy allows same-namespace ingress and DNS egress only. Add explicit egress rules for cloud sync or other external services. See the [chart guide and production example](https://helmforge.dev/docs/charts/siyuan) for TLS, existing Secrets, and storage configuration.
+
+- **One workspace, one writer:** Never scale replicas or mount the same workspace in another running instance, even with ReadWriteMany storage. The chart uses `Recreate`, so upgrades stop the old writer before starting the new one and cause downtime.
+- **Persistence:** The complete workspace is mounted at `/siyuan/workspace`. The chart retains its generated PVC on uninstall by default; deleting the namespace or PVC can still destroy data. Reuse a retained or restored claim with `persistence.existingClaim`.
+- **Backups and upgrades:** Gracefully stop the writer before backing up the complete workspace, or use an application-consistent backup procedure. A copy of the live SQLite index alone is insufficient. Securely preserve authentication Secrets, encryption keys, and encrypted-notebook recovery passwords, and test restores into a separate PVC. Back up before upgrades and review storage-format changes: Helm rollback does not undo data migrations.
+
+The Docker hosting limitations also apply: browser use only, no desktop or mobile application connections, no PDF/HTML/Word export, and no Markdown file import.
 
 </details>
 
@@ -402,24 +433,17 @@ Run `siyuan --help` for the full command tree. Use `-f json` (default is `-f tab
 
 The CLI binary is `<install-dir>/resources/kernel/SiYuan-Kernel`, invoked via the `siyuan` command.
 
-- **Windows**: the installer automatically adds the kernel directory to `PATH`, so `siyuan` works out of the box. The Microsoft Store edition runs in an MSIX sandbox and cannot modify `PATH`; deploy a `siyuan.cmd` shim once (survives Store updates):
+- **Windows**: the installer automatically adds the kernel directory to `PATH`, so `siyuan` works out of the box. The Microsoft Store edition (3.8.7+) registers the `siyuan.exe` app execution alias on Windows 10 1607 (build 14393) or later. After installing or updating, open a new terminal and run `siyuan --help`
   ```powershell
-  # Microsoft Store edition only — run once in PowerShell
-  $shimDir = "$env:LOCALAPPDATA\Microsoft\WindowsApps"   # already in PATH by default
-  @(
-      '@echo off'
-      'setlocal'
-      'set "ROOT="'
-      'for /f "delims=" %%i in (''powershell -NoProfile -Command "(Get-AppxPackage *SiYuan*).InstallLocation"'') do set "ROOT=%%i"'
-      'if not defined ROOT goto :noshim'
-      '"%ROOT%\app\resources\kernel\SiYuan-Kernel.exe" %*'
-      'exit /b %ERRORLEVEL%'
-      ':noshim'
-      '1>&2 echo siyuan: Microsoft Store edition not found'
-      'exit /b 1'
-  ) | Set-Content "$shimDir\siyuan.cmd"
+  siyuan --help
+
+  # Check which command is being used
+  Get-Command siyuan -All
+  where.exe siyuan
   ```
-  To remove on uninstall: `Remove-Item "$env:LOCALAPPDATA\Microsoft\WindowsApps\siyuan.cmd"`.
+  If the command is unavailable, check that the SiYuan app execution alias is enabled in Windows and `%LOCALAPPDATA%\Microsoft\WindowsApps` is in `PATH`. The commands above show command resolution; multiple SiYuan editions or `PATH` order may select another executable
+
+  If you created the old `siyuan.cmd` shim, first verify the Store alias directly with `& "$env:LOCALAPPDATA\Microsoft\WindowsApps\siyuan.exe" --help`, then optionally remove the shim: `Remove-Item "$env:LOCALAPPDATA\Microsoft\WindowsApps\siyuan.cmd"`
 - **macOS**: create a symlink after installing:
   ```bash
   ln -s /Applications/SiYuan.app/Contents/Resources/kernel/SiYuan-Kernel /usr/local/bin/siyuan

@@ -24,15 +24,26 @@ const rendererModules = () => {
         import {getAtomicVerticalNavigationOwner} from "../wysiwyg/verticalNavigationState";
         import {getContenteditableElement} from "../wysiwyg/getBlock";
         import {hasClosestBlock} from "./hasClosest";\n` +
-        extract("util/selection", ["setFirstNodeRange", "setLastNodeRange", "focusByRange", "focusBlock", "getEditorRange"])
+        (extract("util/selectionOffsets", ["setLastNodeRange", "focusByRange"]) +
+        extract("util/selection", ["setFirstNodeRange", "focusBlock", "getEditorRange"]))
             .replace(/\/\/\/ #else[\s\S]*?\/\/\/ #endif/g, "");
     modules["util/hasClosest"] = readFileSync(path.join(root, "util/hasClosest.ts"), "utf8");
+    modules["util/selectionOffsets"] = "const revealTabsForTarget = () => {};\n" +
+        extract("util/selectionOffsets", ["focusByRange", "setLastNodeRange"]);
     modules["util/documentRange"] = readFileSync(path.join(root, "util/documentRange.ts"), "utf8");
     modules["wysiwyg/getBlock"] = 'import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";\n' +
         extract("wysiwyg/getBlock", ["getContenteditableElement", "isContainerBlock", "getNextBlock", "getPreviousBlock"]);
-    modules["render/tabsRender"] = "export const setTabTitleNavigationEditing = () => false;";
+    modules["render/tabsRender"] = `export const setTabTitleNavigationEditing = (item, editing) => {
+        item.querySelector(".tab-item-info").style.display = editing ? "block" : "none";
+        item.dataset.tabsEditing = String(editing);
+        return true;
+    };`;
+    modules["util/tableExit"] = 'import {focusAdjacentVerticalRegion} from "../wysiwyg/verticalNavigation";\n' +
+        'import {getAdjacentVerticalBlock} from "../wysiwyg/verticalTarget";\n' +
+        'import {focusBlock} from "./selection";\n' + extract("util/tableCellRichNavigation", ["leaveRichTableCell"]);
     modules["../util/highlightById"] = "export const scrollCenter = () => {};";
     modules["render/av/focus"] = 'import {focusEditableAtGoalX} from "../../wysiwyg/verticalCaret";\n' +
+        'import {isTableLikeView} from "./viewType";\n' +
         'import {ensureAVTableBoundaryRow, getAVData} from "./virtualScroll";\n' +
         "const clearSelect = () => {};\n" +
         extract("render/av/focus", ["getVisibleAVTitle", "focusAVTitleByVerticalArrow", "focusAVVerticalRegion",
@@ -76,11 +87,13 @@ const rendererModules = () => {
     visitKeyup(wysiwyg);
     assert.ok(keyupStatements);
     modules["wysiwyg/navigationKeyup"] = `import {getEditorRange} from "../util/selection";
+        import {getBlockSelectionModeElement} from "./blockSelection";
         import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";
         import {shouldRunAVKeyupFallback} from "../render/av/verticalNavigation";
         const getAVTemplateInteractiveElement = () => false;
         const focusAVByArrow = () => { throw new Error("Unexpected legacy AV keyup fallback"); };
         export function bind(protyle) {
+            const isComposition = false;
             let arrowStartElement = protyle.wysiwyg.element;
             const handler = function(event) { ${keyupStatements} };
             protyle.wysiwyg.element.addEventListener("keyup", handler.bind(protyle.wysiwyg));
@@ -90,9 +103,10 @@ const rendererModules = () => {
     modules["util/selectionFocus"] = readFileSync(path.join(root, "util/selectionFocus.ts"), "utf8");
     modules["util/restoreNavigationFocus"] = `import {getUndoFocusElement} from "./selectionFocus";
         import {isInEmbedBlock} from "./hasClosest";
+        const restoreListMindmapFocus = () => false;
         const focusByOffset = element => { window.restoredFocusElement = element; return true; };\n` +
         extract("util/selection", ["restoreFocusContext"]);
-    for (const name of ["virtualScroll", "selectionState", "rangeSelect", "groupTableVirtual", "backlinkScroll"]) {
+    for (const name of ["virtualScroll", "selectionState", "rangeSelect", "groupTableVirtual", "backlinkScroll", "viewType", "capabilities", "capabilities.generated"]) {
         modules[`render/av/${name}`] = readFileSync(path.join(root, "render/av", `${name}.ts`), "utf8");
     }
     modules["../constants"] = "const SIYUAN_VERSION = 'test', NODE_ENV = 'test';\n" +
@@ -146,7 +160,8 @@ const rendererModules = () => {
     visitSelected(keydownSource);
     assert.ok(selectedBranch);
     modules["wysiwyg/blockSelection"] = readFileSync(path.join(root, "wysiwyg/blockSelection.ts"), "utf8");
-    modules["wysiwyg/selectedNavigationKeydown"] = `import {getEditorRange, focusByRange, setLastNodeRange} from "../util/selection";
+    modules["wysiwyg/selectedNavigationKeydown"] = `import {getEditorRange} from "../util/selection";
+        import {focusByRange, setLastNodeRange} from "../util/selectionOffsets";
         import {getAdjacentVerticalBlock, getAdjacentVisibleBlock} from "./verticalTarget";
         import {focusVerticalBlockSelection} from "./verticalNavigation";
         import {isDocumentBoundaryLoaded} from "../util/documentRange";
@@ -506,6 +521,31 @@ const runEntryCases = async () => {
         [`<div class="bq" data-node-id="hidden" style="display:none">hidden</div>${paragraph}`, "body", false],
         ["<div data-type=\"NodeTable\" data-node-id=\"table\"><table><tr><td id=\"target\" contenteditable=\"true\">cell</td></tr></table></div>", "target", false],
     ];
+    {
+        const tabs = `<div class="tabs" data-node-id="tabs" data-type="NodeTabs">
+<div class="tab-item" data-node-id="tab" data-type="NodeTabItem" data-tabs-hidden="false">
+<div class="tab-item-info" style="display:none"><div id="tab-title" class="tab-item-title" contenteditable="true">Title</div></div>
+<div class="tab-item-content">${paragraph}</div></div></div>`;
+        const {protyle, editor} = setup(`<div data-node-id="before">Before</div>${tabs}`);
+        const before = editor.firstElementChild;
+        assert.equal(focusAdjacentVerticalRegion(protyle, before, "down", 40), "moved");
+        assert.ok(document.getElementById("tab-title").contains(getSelection().anchorNode));
+        assert.equal(focusAdjacentVerticalRegion(protyle, document.getElementById("body").parentElement,
+            "up", 40), "moved");
+        assert.ok(document.getElementById("tab-title").contains(getSelection().anchorNode));
+        cases++;
+    }
+    for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+        const {protyle, editor} = setup(`<div data-node-id="before" data-type="NodeParagraph"><div contenteditable="true">Before</div></div>
+<div data-type="NodeTable" data-node-id="table"><table><tr><td>Cell</td></tr></table></div>
+<div data-node-id="after" data-type="NodeParagraph"><div contenteditable="true">After</div></div>`);
+        const table = editor.querySelector('[data-node-id="table"]');
+        select(table.querySelector("td"));
+        assert.equal(window.navigationModules("util/tableExit").leaveRichTableCell(protyle, table, key, 40), true);
+        const target = editor.querySelector(`[data-node-id="${["ArrowUp", "ArrowLeft"].includes(key) ? "before" : "after"}"]`);
+        assert.ok(target.contains(getSelection().anchorNode), key);
+        cases++;
+    }
     window.titleEnterCalls = 0;
     variants.push([`<div id="target" class="custom-block" data-type="NodeCustomBlock" data-node-id="custom" contenteditable="false">
         <div contenteditable="true">plugin editor</div></div>`, "target", true]);
@@ -590,6 +630,11 @@ const runElectron = async () => {
         });
     });
     let exitCode = 0;
+    win.webContents.on("console-message", (details) => {
+        if (details.level === "error") {
+            console.error(details.message);
+        }
+    });
     try {
         await win.loadURL("data:text/html,<html><body></body></html>");
         win.webContents.debugger.attach("1.3");

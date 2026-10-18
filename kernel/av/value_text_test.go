@@ -26,6 +26,42 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
+func TestValueTextRichEmptyParagraphs(t *testing.T) {
+	emptyDOM := `<div data-node-id="` + ast.NewNodeID() + `" data-type="NodeParagraph"><div contenteditable="true"></div></div>`
+	if content := valueTextRichBlockDOM2Kramdown(newValueTextRichLute(), emptyDOM); "" != content {
+		t.Fatalf("single empty paragraph should be empty, got %q", content)
+	}
+
+	for _, paragraphs := range [][]string{{"", ""}, {"", "first", "", "", "last", ""}} {
+		var dom strings.Builder
+		for _, content := range paragraphs {
+			dom.WriteString(`<div data-node-id="` + ast.NewNodeID() + `" data-type="NodeParagraph"><div contenteditable="true">` + content + `</div></div>`)
+		}
+		rich := &ValueTextRich{Spec: ValueTextRichSpec, Format: ValueTextRichFormatKramdown,
+			Content: valueTextRichBlockDOM2Kramdown(newValueTextRichLute(), dom.String())}
+		for round := 0; round < 3; round++ {
+			before := rich.Content
+			tree, err := NormalizeValueTextRich(rich)
+			if nil != err {
+				t.Fatal(err)
+			}
+			var actual []string
+			ast.Walk(tree.Root, func(node *ast.Node, entering bool) ast.WalkStatus {
+				if entering && ast.NodeParagraph == node.Type {
+					actual = append(actual, strings.TrimRight(node.Content(), "\n"))
+				}
+				return ast.WalkContinue
+			})
+			if len(actual) != len(paragraphs) || strings.Join(actual, "|") != strings.Join(paragraphs, "|") {
+				t.Fatalf("paragraphs changed: want %q, got %q", paragraphs, actual)
+			}
+			if before != rich.Content {
+				t.Fatalf("normalization changed source: %q != %q", before, rich.Content)
+			}
+		}
+	}
+}
+
 func TestValueTextPlainJSONCompatibility(t *testing.T) {
 	const content = "**literal** <tag> ((20240101000000-abcdefg))\nnext"
 	value := &ValueText{}
@@ -211,7 +247,10 @@ func TestValueTextRichEmojiAliasRemainsLiteral(t *testing.T) {
 }
 
 func TestValueTextRichRejectsExecutableCodeFences(t *testing.T) {
-	languages := []string{"abc", "echarts", "flowchart", "graphviz", "infographic", "mermaid", "mindmap", "plantuml"}
+	if isValueTextRichExecutableCodeFence([]byte("mindmap")) {
+		t.Fatal("mindmap is an ordinary code language")
+	}
+	languages := []string{"abc", "echarts", "flowchart", "graphviz", "infographic", "mermaid", "plantuml"}
 	for _, language := range languages {
 		rich := &ValueTextRich{
 			Spec:    ValueTextRichSpec,
@@ -297,6 +336,9 @@ func TestValueTextRichTextMarkStyleIALWhitelist(t *testing.T) {
 		content string
 		style   string
 	}{
+		{`<span data-type="text strong" style="color: var(--b3-card-error-color); ` +
+			`background-color: var(--b3-card-warning-background);">builtin theme</span>`,
+			"color: var(--b3-card-error-color); background-color: var(--b3-card-warning-background);"},
 		{`<span data-type="text" style="color: var(--b3-font-color1);">foreground</span>`,
 			"color: var(--b3-font-color1);"},
 		{`<span data-type="text" style="color: var(--b3-font-color01);">normalized foreground</span>`,
@@ -410,6 +452,11 @@ func TestValueTextRichTextMarkStyleIALWhitelist(t *testing.T) {
 		`<span data-type="text" style="color: var(--b3-font-color8); background-image: url(javascript:alert(1));">URL</span>`,
 		`<span data-type="text" style="color: var(--b3-font-color8); color: var(--b3-font-color9);">duplicate</span>`,
 		`<span data-type="text" style="color: var(--b3-inline-builtin-danger-color, var(--b3-card-danger-color));">unknown builtin</span>`,
+		`<span data-type="text" style="color: var(--b3-card-danger-color);">unknown theme</span>`,
+		`<span data-type="text" style="color: var(--b3-card-info-background);">wrong theme property</span>`,
+		`<span data-type="text" style="background-color: var(--b3-card-info-color);">wrong theme background</span>`,
+		`<span data-type="text" style="color: var(--b3-card-info-color, red);">unexpected fallback</span>`,
+		`<span data-type="text" style="color: var(--b3-inline-builtin-info-color, var(--b3-card-error-color));">mismatched fallback</span>`,
 		`<span data-type="text" style="color: var(--b3-inline-style-invalid-color, #112233);">invalid ID</span>`,
 		`<span data-type="text" style="color: var(--b3-inline-style-20240101000000-abcdefg-color, url(javascript:alert(1)));">custom URL</span>`,
 		`<span data-type="text" custom-foo="bar" style="color: var(--b3-font-color8);">custom attribute</span>`,
@@ -804,9 +851,9 @@ func TestValueTextRichInlineRoundTrip(t *testing.T) {
 }
 
 func TestValueTextRichParserIgnoresEditorMarkdownSettings(t *testing.T) {
-	original := *util.MarkdownSettings
+	original := *util.MarkdownSettings.Load()
 	defer func() {
-		*util.MarkdownSettings = original
+		*util.MarkdownSettings.Load() = original
 	}()
 
 	rich := &ValueTextRich{
@@ -818,18 +865,18 @@ func TestValueTextRichParserIgnoresEditorMarkdownSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	util.MarkdownSettings.InlineAsterisk = false
-	util.MarkdownSettings.InlineUnderscore = false
-	util.MarkdownSettings.InlineSup = false
-	util.MarkdownSettings.InlineSub = false
-	util.MarkdownSettings.InlineTag = false
-	util.MarkdownSettings.InlineMath = false
-	util.MarkdownSettings.InlineStrikethrough = false
-	util.MarkdownSettings.InlineFullWidthStrikethrough = false
-	util.MarkdownSettings.InlineMark = false
+	util.MarkdownSettings.Load().InlineAsterisk = false
+	util.MarkdownSettings.Load().InlineUnderscore = false
+	util.MarkdownSettings.Load().InlineSup = false
+	util.MarkdownSettings.Load().InlineSub = false
+	util.MarkdownSettings.Load().InlineTag = false
+	util.MarkdownSettings.Load().InlineMath = false
+	util.MarkdownSettings.Load().InlineStrikethrough = false
+	util.MarkdownSettings.Load().InlineFullWidthStrikethrough = false
+	util.MarkdownSettings.Load().InlineMark = false
 	disabled := false
-	util.MarkdownSettings.BlockFullWidthTaskList = &disabled
-	util.MarkdownSettings.CodeBlockMiddleDot = &disabled
+	util.MarkdownSettings.Load().BlockFullWidthTaskList = &disabled
+	util.MarkdownSettings.Load().CodeBlockMiddleDot = &disabled
 
 	disabledSettingsRich := &ValueTextRich{
 		Spec:    ValueTextRichSpec,
@@ -940,20 +987,20 @@ func TestValueTextRichLinkTargetPolicy(t *testing.T) {
 	for _, target := range allowed {
 		linkDest := &ast.Node{Type: ast.NodeLinkDest, Tokens: []byte(target)}
 		textMark := &ast.Node{Type: ast.NodeTextMark, TextMarkType: "a", TextMarkAHref: target}
-		if !isAllowedValueTextRichNode(linkDest) {
+		if !isAllowedValueTextRichNode(linkDest, false) {
 			t.Fatalf("allowed classic link destination was rejected: %q", target)
 		}
-		if !isAllowedValueTextMark(textMark) {
+		if !isAllowedValueTextMark(textMark, false) {
 			t.Fatalf("allowed text mark link destination was rejected: %q", target)
 		}
 	}
 	for _, target := range blocked {
 		linkDest := &ast.Node{Type: ast.NodeLinkDest, Tokens: []byte(target)}
 		textMark := &ast.Node{Type: ast.NodeTextMark, TextMarkType: "a", TextMarkAHref: target}
-		if isAllowedValueTextRichNode(linkDest) {
+		if isAllowedValueTextRichNode(linkDest, false) {
 			t.Fatalf("unsafe classic link destination was accepted: %q", target)
 		}
-		if isAllowedValueTextMark(textMark) {
+		if isAllowedValueTextMark(textMark, false) {
 			t.Fatalf("unsafe text mark link destination was accepted: %q", target)
 		}
 	}
@@ -998,13 +1045,13 @@ func TestValueTextRichInlineMemoIsPlainText(t *testing.T) {
 	}
 	for _, content := range allowed {
 		node := &ast.Node{Type: ast.NodeTextMark, TextMarkType: "inline-memo", TextMarkInlineMemoContent: content}
-		if !isAllowedValueTextMark(node) {
+		if !isAllowedValueTextMark(node, false) {
 			t.Fatalf("plain inline memo was rejected: %q", content)
 		}
 	}
 	for _, content := range blocked {
 		node := &ast.Node{Type: ast.NodeTextMark, TextMarkType: "inline-memo", TextMarkInlineMemoContent: content}
-		if isAllowedValueTextMark(node) {
+		if isAllowedValueTextMark(node, false) {
 			t.Fatalf("active or ambiguous inline memo was accepted: %q", content)
 		}
 	}

@@ -1,4 +1,5 @@
-import {focusByRange, focusByWbr, getEditorRange, getUndoFocusContext} from "../protyle/util/selection";
+import {focusByWbr, getEditorRange, getUndoFocusContext} from "../protyle/util/selection";
+import {focusByRange} from "../protyle/util/selectionOffsets";
 import {hasClosestBlock, hasClosestByClassName, isInEmbedBlock} from "../protyle/util/hasClosest";
 import {
     getContenteditableElement,
@@ -25,6 +26,9 @@ import {
 import {shouldFocusJumpTarget, shouldFocusParentDocumentTitle} from "./jumpToParent";
 import {getHorizontalSuperBlockChild} from "./superBlock";
 import {normalizeHTMLAssetIFrameBlockDOM} from "../asset/html";
+import {isMobile} from "../util/functions";
+import {restoreEditorFocusRange} from "../protyle/util/editorFocus";
+import {callMobileAppShowKeyboard} from "../mobile/util/mobileAppUtil";
 
 export const getCancelSBOperations = async (nodeElement: Element, options: {
     notebookID?: string,
@@ -341,7 +345,6 @@ export const insertEmptyBlock = async (protyle: IProtyle, position: InsertPositi
             } else {
                 blockElement = selectElements[selectElements.length - 1];
             }
-            hideElements(["select"], protyle);
         } else {
             blockElement = hasClosestBlock(range.startContainer) as HTMLElement;
             blockElement = getTopAloneElement(blockElement);
@@ -356,6 +359,8 @@ export const insertEmptyBlock = async (protyle: IProtyle, position: InsertPositi
     if (!blockElement) {
         return;
     }
+    // 插入新块前退出块选择模式，避免后续输入重新聚焦选中的块。
+    hideElements(["select"], protyle);
     // 页签项不能容纳同级普通块，上下插入以所属页签组为目标。
     if (blockElement.getAttribute("data-type") === "NodeTabItem" &&
         blockElement.parentElement.getAttribute("data-type") === "NodeTabs") {
@@ -425,8 +430,11 @@ export const insertEmptyBlock = async (protyle: IProtyle, position: InsertPositi
         }
         transaction(protyle, doOperations, undoOperations);
     }
-    focusByWbr(protyle.wysiwyg.element, range);
+    const insertedRange = focusByWbr(protyle.wysiwyg.element, range);
     scrollCenter(protyle);
+    if (isMobile() && insertedRange && restoreEditorFocusRange(protyle.wysiwyg.element, insertedRange)) {
+        callMobileAppShowKeyboard();
+    }
 };
 
 export const insertEmptySuperBlockColumn = (protyle: IProtyle, position: "left" | "right", target?: Element) => {

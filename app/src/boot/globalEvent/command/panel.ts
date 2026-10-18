@@ -6,7 +6,7 @@ import {setStorageVal, updateHotkeyTip} from "../../../protyle/util/compatibilit
 import {isMobile} from "../../../util/functions";
 import {Constants} from "../../../constants";
 import {hasClosestByClassName} from "../../../protyle/util/hasClosest";
-import {focusByRange} from "../../../protyle/util/selection";
+import {focusByRange} from "../../../protyle/util/selectionOffsets";
 import {matchHotKey} from "../../../protyle/util/hotKey";
 import {captureCommandContext} from "../../../command/context";
 import {ensureCommandSystem, executeCommandById} from "../../../command/executor";
@@ -15,6 +15,7 @@ import {
     COMMAND_PALETTE_HISTORY_KEY, createPaletteFocusLifecycle, queryCommandPalette, recordPaletteCommand,
 } from "../../../command/paletteCore";
 import type {ICommandContextSnapshot, ICommandDefinition} from "../../../command/types";
+import {ensureInsertCommands} from "../../../command/insertCommands";
 /// #if MOBILE
 import {activeBlur} from "../../../mobile/util/keyboardToolbar";
 /// #endif
@@ -28,12 +29,16 @@ const renderCommands = (listElement: HTMLElement, commands: ICommandDefinition[]
         const textElement = document.createElement("span");
         textElement.className = "b3-list-item__text";
         textElement.textContent = command.label();
-        const hotkeyElement = document.createElement("span");
-        hotkeyElement.className = `b3-list-item__meta${isMobile() ? " fn__none" : ""}`;
-        hotkeyElement.textContent = command.keymapPath ?
+        const hotkey = command.keymapPath ?
             getKeymapBindings(getKeymapItem(window.siyuan.config.keymap, command.keymapPath)).map(key => updateHotkeyTip(key)).join(" / ") :
             updateHotkeyTip(command.hotkey?.() || "");
-        itemElement.append(textElement, hotkeyElement);
+        itemElement.append(textElement);
+        if (hotkey) {
+            const hotkeyElement = document.createElement("span");
+            hotkeyElement.className = "b3-list-item__meta";
+            hotkeyElement.textContent = hotkey;
+            itemElement.append(hotkeyElement);
+        }
         fragment.append(itemElement);
     });
     listElement.replaceChildren(fragment);
@@ -52,21 +57,33 @@ const executePaletteCommand = (app: App, commandId: string, context: ICommandCon
     });
 };
 
-export const commandPanel = (app: App) => {
+export const commandPanel = (app: App, options: {
+    protyle?: IProtyle;
+    range?: Range;
+    restoreKeyboard?: () => void;
+    openOnly?: boolean;
+} = {}) => {
     const menu = window.siyuan.menus.menu;
     if (isMobile() && menu.element.getAttribute("data-name") === Constants.DIALOG_COMMANDPANEL) {
-        menu.remove();
+        if (!options.openOnly) {
+            menu.closeSheet();
+        }
         return;
     }
     const openCommandPanelDialog = window.siyuan.dialogs.find(item =>
         item.element.getAttribute("data-key") === Constants.DIALOG_COMMANDPANEL);
     if (openCommandPanelDialog) {
-        openCommandPanelDialog.destroy();
+        if (!options.openOnly) {
+            openCommandPanelDialog.destroy();
+        }
         return;
     }
-    const context = captureCommandContext({app, source: "commandPanel"});
+    const context = captureCommandContext({app, source: "commandPanel", protyle: options.protyle, range: options.range});
     const registry = ensureCommandSystem(app);
-    const restoreFocusAfterCancel = !isMobile() || document.body.classList.contains("mobile-keyboard--open");
+    ensureInsertCommands(app, isMobile());
+    const restoreEditorKeyboard = isMobile() && Boolean(options.restoreKeyboard);
+    const restoreFocusAfterCancel = !isMobile() ||
+        (!restoreEditorKeyboard && document.body.classList.contains("mobile-keyboard--open"));
     const focusLifecycle = createPaletteFocusLifecycle(() => {
         if (context.range?.startContainer.isConnected) {
             focusByRange(context.range);
@@ -75,7 +92,7 @@ export const commandPanel = (app: App) => {
     const content = `<div class="fn__flex-column${isMobile() ? " mobile-command-panel" : ""}">
     <div class="b3-form__icon search__header" style="border-top: 0;border-bottom: 1px solid var(--b3-theme-surface-lighter);">
         <svg class="b3-form__icon-icon"><use xlink:href="#iconSearch"></use></svg>
-        <input class="b3-text-field b3-text-field--text" style="padding-left: 32px !important;">
+        <input spellcheck="false" class="b3-text-field b3-text-field--text" style="padding-left: 32px !important;">
     </div>
     <ul class="b3-list b3-list--background search__list" id="commands"></ul>
     <div class="search__tip${isMobile() ? " fn__none" : ""}">
@@ -87,7 +104,7 @@ export const commandPanel = (app: App) => {
     const onClose = () => {
         const canceled = focusLifecycle.restoreAfterCancel(restoreFocusAfterCancel);
         /// #if MOBILE
-        if (canceled && !restoreFocusAfterCancel) {
+        if (canceled && !restoreFocusAfterCancel && !restoreEditorKeyboard) {
             activeBlur(true);
         }
         /// #endif
@@ -104,7 +121,8 @@ export const commandPanel = (app: App) => {
         itemsElement.style.overflow = "hidden";
         menu.element.setAttribute("data-name", Constants.DIALOG_COMMANDPANEL);
         menu.removeCB = onClose;
-        menu.fullscreen("bottom");
+        // 搜索框会立即接管输入焦点，按可见视口展示菜单。
+        menu.fullscreen("bottom", options.restoreKeyboard, {preserveKeyboard: true});
         dialog = {element, destroy: () => menu.remove()};
     } else {
         const desktopDialog = new Dialog({
@@ -132,9 +150,20 @@ export const commandPanel = (app: App) => {
     refresh();
     inputElement.focus();
 
+    const close = () => {
+        if (isMobile()) {
+            menu.closeSheet();
+        } else {
+            dialog.destroy();
+        }
+    };
+
     const run = (commandId: string, event?: Event) => {
         focusLifecycle.prepareCommand(() => event?.preventDefault());
         dialog.destroy();
+        if (restoreEditorKeyboard) {
+            options.restoreKeyboard?.();
+        }
         executePaletteCommand(app, commandId, context);
     };
 
@@ -151,8 +180,7 @@ export const commandPanel = (app: App) => {
         if (event.isComposing) {
             return;
         }
-        if (!event.repeat && matchHotKey(window.siyuan.config.keymap.general.commandPanel, event)) {
-            dialog.destroy();
+        if (matchHotKey(window.siyuan.config.keymap.general.commandPanel, event)) {
             event.preventDefault();
             return;
         }
@@ -163,10 +191,10 @@ export const commandPanel = (app: App) => {
                 run(commandId, event);
             } else {
                 event.preventDefault();
-                dialog.destroy();
+                close();
             }
         } else if (event.key === "Escape") {
-            dialog.destroy();
+            close();
         }
     });
     inputElement.addEventListener("compositionend", refresh);

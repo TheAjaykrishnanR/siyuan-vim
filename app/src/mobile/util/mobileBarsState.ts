@@ -73,7 +73,7 @@ export const createMobileBarsState = (scrollTop = 0): IMobileBarsState => ({
 });
 
 export const isMobileBarsScrollPaused = (state: IMobileBarsState) => {
-    return state.editing || state.selecting || state.panelOpen || state.programmaticScrolling;
+    return state.selecting || state.panelOpen || state.programmaticScrolling;
 };
 
 export const getMobileBarsVisibility = (

@@ -11,9 +11,14 @@ const sources = () => {
         "layout/dock/agent/AgentMarkdownParser",
         "layout/dock/agent/AgentMarkdownWorker",
         "layout/dock/agent/AgentChat",
+        "layout/dock/agent/AgentWelcomeGreeting",
         "layout/dock/agent/AgentMessageRenderer",
         "layout/dock/agent/AgentScrollState",
+        "layout/dock/agent/AgentReasoning",
+        "ai/reasoningEffort",
         "protyle/render/setLute",
+        "protyle/util/inlineElementBoundary",
+        "protyle/util/tableVirtualizationDOM",
         "util/escape",
     ].map(name => [name, ts.transpileModule(readFileSync(path.join(__dirname, "../src", name + ".ts"), "utf8"), {
         compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021},
@@ -92,7 +97,7 @@ const runCases = async (sources, css, luteScript) => {
     const messages = load("layout/dock/agent/AgentMessageRenderer");
     messages.postRender = () => counts.postRender++;
     const {AgentChat} = load("layout/dock/agent/AgentChat");
-    window.siyuan = {languages: {agentChat: "Agent"}};
+    window.siyuan = {languages: {agentChat: "Agent"}, storage: {}};
     for (const method of ["initUI", "bindEvents", "checkConfigChanged"]) {
         AgentChat.prototype[method] = () => {};
     }
@@ -417,18 +422,20 @@ const runCases = async (sources, css, luteScript) => {
     check.equal(longBody.querySelector("strong").textContent, "Last");
 
     const switching = chatFixture(true);
-    const run = {};
     switching.appendToken("# First\n\n**partial**");
-    switching.prepareSessionRunForDetach(run);
-    switching.captureSessionRunView(run);
-    const firstBody = run.viewState.currentAIElement.querySelector(".agent-chat__body");
+    switching.prepareRunViewForDetach();
+    const state = switching.captureRunViewState();
+    switching.captureRunView(state);
+    const firstBody = state.currentAIElement.querySelector(".agent-chat__body");
     switching.currentAIElement = null;
     switching.currentContent = "";
     switching.appendToken("# Second");
     await tick();
     check.match(switching.messagesContainer.textContent, /Second/);
     check.doesNotMatch(firstBody.textContent, /Second/);
-    switching.restoreSessionRunState(run);
+    let consumed = false;
+    check.equal(switching.restoreRunView(state, () => { consumed = true; }), true);
+    check.equal(consumed, true);
     switching.appendToken(" more");
     await tick();
     check.match(switching.messagesContainer.textContent, /partial more/);
@@ -574,7 +581,8 @@ const runCases = async (sources, css, luteScript) => {
     }
     // 实际浏览器 Worker 加载实际 Lute；模块在内存转译，不构建或替换应用产物。
     body.remove();
-    const workerModules = Object.fromEntries(["protyle/render/setLute", "layout/dock/agent/AgentMarkdownWorker"]
+    const workerModules = Object.fromEntries(["protyle/render/setLute", "protyle/util/inlineElementBoundary",
+        "protyle/util/tableVirtualizationDOM", "layout/dock/agent/AgentMarkdownWorker"]
         .map(name => [name, sources[name]]));
     const bootstrap = modules => {
         const cache = {};

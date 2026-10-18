@@ -1,5 +1,9 @@
 import {getAVRichTextBlockDOM, getAVRichTextLute, sanitizeAVRichTextBlockDOM, serializeAVRichTextBlockDOM} from "../render/av/richText";
-import {decodeTableCellRich, encodeTableCellRich, TABLE_CELL_RICH_ATTRIBUTE, TABLE_RICH_ATTRIBUTE} from "./tableCellRichValue";
+import {decodeTableCellRich, encodeTableCellRich, TABLE_CELL_RICH_ATTRIBUTE} from "./tableCellRichValue";
+import {Constants} from "../../constants";
+import {restoreInlineElementBoundaries} from "./inlineElementBoundary";
+import {getTextWithoutSemanticMarkers} from "./inlineElementMarker";
+import {getTableVirtualizationHTML, TABLE_VIRTUAL_ID} from "./tableVirtualizationDOM";
 
 export const TABLE_CELL_INLINE_ATTRIBUTE = "data-sy-table-cell-inline";
 
@@ -8,7 +12,7 @@ export const updateTableCellContentLayout = (element: HTMLElement, blockDOM: str
     element.classList.toggle("table__cell--inline", inline !== null);
     const template = document.createElement("template");
     template.innerHTML = inline || "";
-    const empty = inline !== null && (template.content.textContent || "").replace(/\u200b/g, "") === "" &&
+    const empty = inline !== null && getTextWithoutSemanticMarkers(template.content).replace(/\u200b/g, "") === "" &&
         !template.content.querySelector("br, img, [data-type~='inline-math']");
     element.classList.toggle("table__cell--empty", empty);
 };
@@ -16,6 +20,7 @@ export const updateTableCellContentLayout = (element: HTMLElement, blockDOM: str
 export const getTableCellInlineHTML = (blockDOM: string): string | null => {
     const template = document.createElement("template");
     template.innerHTML = blockDOM;
+    restoreInlineElementBoundaries(template.content);
     const blocks = Array.from(template.content.children);
     if (blocks.length === 0) {
         return "";
@@ -47,7 +52,7 @@ export const getTableCellInlineHTML = (blockDOM: string): string | null => {
 export const getTableCellRichBlockDOM = (cell: Element) => {
     const encoded = cell.getAttribute(TABLE_CELL_RICH_ATTRIBUTE);
     // 普通单元格先转换已有的行级 DOM，文字中的 Markdown 标记保持字面含义。
-    const blockDOM = encoded !== null ? getAVRichTextBlockDOM(decodeTableCellRich(encoded).content, true) :
+    const blockDOM = encoded !== null ? getAVRichTextBlockDOM(decodeTableCellRich(encoded).content, true, true) :
         `<div class="p" data-type="NodeParagraph" data-node-id="${Lute.NewNodeID()}"><div contenteditable="true">` +
         `${(cell.getAttribute(TABLE_CELL_INLINE_ATTRIBUTE) ?? cell.innerHTML) || "\u200b"}</div></div>`;
     const template = document.createElement("template");
@@ -78,7 +83,9 @@ export const getTableCellRichBlockDOM = (cell: Element) => {
 
 export const serializeTableCellRich = (blockDOM: string) => {
     const template = document.createElement("template");
-    template.innerHTML = sanitizeAVRichTextBlockDOM(blockDOM, true);
+    template.innerHTML = sanitizeAVRichTextBlockDOM(blockDOM, true, true);
+    // 光标由事务选区单独记录，不能将临时定位节点序列化为正文。
+    template.content.querySelectorAll("wbr").forEach(marker => marker.remove());
     let prefix = "SYTABLECELLWHITESPACE";
     while (template.innerHTML.includes(prefix)) {
         prefix += "X";
@@ -117,13 +124,13 @@ export const serializeTableCellRich = (blockDOM: string) => {
         }
     }
     const lute = getAVRichTextLute();
-    const value = serializeAVRichTextBlockDOM(template.innerHTML, lute, true);
+    const value = serializeAVRichTextBlockDOM(template.innerHTML, lute, true, true);
     if (whitespace.length === 0) {
         return value;
     }
     const markdown = value.markdown.replace(new RegExp(`${prefix}(\\d+)END`, "g"),
         (_token, index) => whitespace[Number(index)]);
-    const normalizedBlockDOM = getAVRichTextBlockDOM(markdown, true);
+    const normalizedBlockDOM = getAVRichTextBlockDOM(markdown, true, true);
     return {blockDOM: normalizedBlockDOM, markdown, plainText: lute.BlockDOM2Content(normalizedBlockDOM)};
 };
 
@@ -132,7 +139,7 @@ export const updateTableCellEditingValue = (cell: Element, value: {blockDOM: str
     if (cell.hasAttribute(TABLE_CELL_RICH_ATTRIBUTE) || inline === null) {
         cell.removeAttribute(TABLE_CELL_INLINE_ATTRIBUTE);
         cell.setAttribute(TABLE_CELL_RICH_ATTRIBUTE, encodeTableCellRich(value.markdown));
-        cell.closest('[data-type="NodeTable"]')?.setAttribute(TABLE_RICH_ATTRIBUTE, "1");
+        cell.closest('[data-type="NodeTable"]')?.setAttribute(Constants.CUSTOM_SY_TABLE_RICH, "1");
     } else {
         cell.setAttribute(TABLE_CELL_INLINE_ATTRIBUTE, inline);
     }
@@ -148,9 +155,36 @@ export const getTableCellRichInline = (cell: Element) => {
 
 export const getTableCellRichPlainText = (cell: Element) => {
     const template = document.createElement("template");
-    template.innerHTML = getTableCellRichInline(cell);
-    template.content.querySelectorAll("br").forEach(br => br.replaceWith("\n"));
-    return (template.content.textContent || "").replace(/\u200b/g, "").trim();
+    template.innerHTML = getTableCellRichBlockDOM(cell);
+    // 从源内容逐块投影文本，段落分隔保留空行，块内软换行和列表标记保持原样。
+    const projectedCell = document.createElement("td");
+    const projection = document.createElement("template");
+    let boundaryToken = "SYTABLECELLPARAGRAPHBOUNDARY";
+    while (template.innerHTML.includes(boundaryToken)) {
+        boundaryToken += "X";
+    }
+    // 嵌套段落的边界使用临时占位符补足空行，投影时仍保留完整列表结构。
+    template.content.querySelectorAll('[data-type="NodeListItem"] > [data-type="NodeParagraph"], ' +
+        '[data-type="NodeBlockquote"] > [data-type="NodeParagraph"]').forEach(block => {
+        if (block.nextElementSibling?.getAttribute("data-type")?.startsWith("Node")) {
+            block.querySelector('[contenteditable="true"]')?.appendChild(document.createTextNode(boundaryToken));
+        }
+    });
+    return Array.from(template.content.children).map(block => {
+        projectedCell.setAttribute(TABLE_CELL_RICH_ATTRIBUTE, encodeTableCellRich(serializeTableCellRich(block.outerHTML).markdown));
+        projection.innerHTML = getTableCellRichInline(projectedCell);
+        projection.content.querySelectorAll("br").forEach(br => br.replaceWith("\n"));
+        return getTextWithoutSemanticMarkers(projection.content).replace(/\u200b/g, "").split(boundaryToken).join("\n").trim();
+    }).join("\n\n").trim();
+};
+
+export const getTableCellPlainText = (cell: Element) => {
+    if (cell.hasAttribute(TABLE_CELL_RICH_ATTRIBUTE)) {
+        return getTableCellRichPlainText(cell);
+    }
+    const clone = cell.cloneNode(true) as Element;
+    clone.querySelectorAll("br").forEach(br => br.replaceWith("\n"));
+    return getTextWithoutSemanticMarkers(clone).replace(/\u200b/g, "").replace(/\n+$/g, "");
 };
 
 export const renderTableCellRich = (cell: Element) => {
@@ -172,7 +206,7 @@ export const renderTableCellRich = (cell: Element) => {
         `<table><thead><tr><th ${TABLE_CELL_RICH_ATTRIBUTE}="${encoded}"></th></tr></thead></table></div></div>`);
     cell.innerHTML = template.content.querySelector("th").innerHTML;
     cell.setAttribute("contenteditable", "false");
-    cell.closest('[data-type="NodeTable"]')?.setAttribute(TABLE_RICH_ATTRIBUTE, "1");
+    cell.closest('[data-type="NodeTable"]')?.setAttribute(Constants.CUSTOM_SY_TABLE_RICH, "1");
 };
 
 export const setTableCellRich = (cell: Element, content: string) => {
@@ -228,19 +262,34 @@ export const cleanTableCellRichHTML = (html: string) => {
     return template.innerHTML;
 };
 
+// 编辑器界面只在单元格副本中替换，完整表格快照由可见行与屏外缓存拼接。
+export const getTableBlockHTML = (table: Element) => {
+    if (!table.querySelector(`[${TABLE_VIRTUAL_ID}]`)) {
+        return cleanTableCellRichHTML(table.outerHTML);
+    }
+    const replacements = new Map<Element, string>();
+    table.querySelectorAll(`th[${TABLE_CELL_RICH_ATTRIBUTE}], td[${TABLE_CELL_RICH_ATTRIBUTE}], ` +
+        `th[${TABLE_CELL_INLINE_ATTRIBUTE}], td[${TABLE_CELL_INLINE_ATTRIBUTE}]`).forEach(cell => {
+        const clone = cell.cloneNode(false) as Element;
+        renderTableCellRich(clone);
+        replacements.set(cell, clone.outerHTML);
+    });
+    return getTableVirtualizationHTML(table, replacements);
+};
+
 export const retainTableCellRichMetadata = (html: string, changedHTML: string) => {
-    if (!changedHTML.includes(TABLE_RICH_ATTRIBUTE)) {
+    if (!changedHTML.includes(Constants.CUSTOM_SY_TABLE_RICH)) {
         return html;
     }
     const changed = document.createElement("template");
     changed.innerHTML = changedHTML;
     const original = document.createElement("template");
     original.innerHTML = html;
-    changed.content.querySelectorAll(`[data-type="NodeTable"][${TABLE_RICH_ATTRIBUTE}="1"]`).forEach(table => {
+    changed.content.querySelectorAll(`[data-type="NodeTable"][${Constants.CUSTOM_SY_TABLE_RICH}="1"]`).forEach(table => {
         const id = table.getAttribute("data-node-id");
         original.content.querySelectorAll('[data-type="NodeTable"]').forEach(previous => {
             if (previous.getAttribute("data-node-id") === id) {
-                previous.setAttribute(TABLE_RICH_ATTRIBUTE, "1");
+                previous.setAttribute(Constants.CUSTOM_SY_TABLE_RICH, "1");
             }
         });
     });

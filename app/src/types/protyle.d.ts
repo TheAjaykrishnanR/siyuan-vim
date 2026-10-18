@@ -179,6 +179,8 @@ declare class Viewer {
     public destroy(): void
 
     public show(): void
+
+    public hide(): void
 }
 
 declare class Lute {
@@ -189,8 +191,6 @@ declare class Lute {
     public static Caret: string;
 
     public static New(): Lute;
-
-    public static EChartsMindmapStr(text: string): string;
 
     public static NewNodeID(): string;
 
@@ -501,6 +501,7 @@ interface IProtyleOptions {
     }[],
     action?: TProtyleAction[],
     scrollPosition?: ScrollLogicalPosition,
+    scrollAttr?: IScrollAttr,
     mode?: TEditorMode,
     blockId?: string
     rootId?: string

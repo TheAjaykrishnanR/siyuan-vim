@@ -77,13 +77,91 @@ func TestAPIContractSettingConfigCompatibility(t *testing.T) {
 	compareSettingConfig(t, apicontract.SetSecrets, func() *conf.Secrets { return &conf.Secrets{} }, append(common, `{"items":[null,{"allowedHosts":[null,"localhost"]}]}`))
 	compareSettingConfig(t, apicontract.SetVariables, func() *conf.Variables { return &conf.Variables{} }, append(common, `{"items":[null,{"name":null}]}`))
 	compareSettingConfig(t, apicontract.SetFlashcard, conf.NewFlashcard, append(common, `{"newCardLimit":1e0}`, `{"NewCardLimit":7,"newCardLimit":2}`, `{"newCardLimit":1.5}`))
-	compareSettingConfig(t, apicontract.SetEditor, conf.NewEditor, append(common, `{"markdown":{"inlineMath":null}}`, `{"markdown":null,"fontFamilies":null}`, `{"FontFamilies":[],"fontSize":16.0}`, `{"fontSize":1.5}`, `{"markdown":false}`, `{"emoji":[null,"x"]}`))
+	compareSettingConfig(t, apicontract.SetEditor, conf.NewEditor, append(common, `{"backlinkBlockSort":1}`, `{"backlinkBlockSort":2}`, `{"backlinkBlockSort":null}`, `{"backlinkBlockSort":"1"}`, `{"markdown":{"inlineMath":null}}`, `{"markdown":null,"fontFamilies":null}`, `{"FontFamilies":[],"fontSize":16.0}`, `{"fontSize":1.5}`, `{"markdown":false}`, `{"emoji":[null,"x"]}`))
 	compareSettingConfig(t, apicontract.SetExport, func() *conf.Export { return &conf.Export{} }, append(common, `{"blockRefMode":1.0}`, `{"blockRefMode":1.5}`))
 	compareSettingConfig(t, apicontract.SetFiletree, conf.NewFileTree, append(common, `{"maxOpenTabCount":1e0,"boxDocEnabled":null}`, `{"useSVGDefaultIcon":null,"tabStartupMode":null}`, `{"maxOpenTabCount":"x"}`))
 	compareSettingConfig(t, apicontract.SetSearch, func() *conf.Search { return &conf.Search{} }, append(common, `{"hanSensitive":null,"limit":3.0}`, `{"limit":3.2}`, `{"customBlock":true}`, `{"customBlock":false}`, `{"customBlock":null}`, `{"customBlock":"bad"}`))
 	compareSettingConfig(t, apicontract.SetAppearance, func() *conf.Appearance { return &conf.Appearance{} }, append(common, `{"bodyGradient":null}`, `{"BodyGradient":null,"globalFontFamilies":[]}`, `{"statusBar":false}`, `{"notifications":{"selectAllTip":null}}`))
 	compareSettingConfig(t, apicontract.SetEntryVisibility, func() *conf.EntryVisibility { return &conf.EntryVisibility{} }, append(common, `{"profiles":[null,{"orders":{"menu":[null,"id"]}}]}`))
 	compareSettingConfig(t, apicontract.SetPublish, func() *conf.Publish { return &conf.Publish{} }, append(common, `{"auth":null,"port":65535.0}`, `{"port":65536}`, `{"auth":{"accounts":[null]}}`))
+}
+
+func TestAPIContractSettingMindmapCompatibility(t *testing.T) {
+	compareSettingConfig(t, apicontract.SetSearch, func() *conf.Search { return &conf.Search{} }, []string{
+		`{}`, `{"mindmap":true,"mindmapItem":false}`, `{"mindmap":false,"mindmapItem":true}`,
+		`{"mindmap":null,"mindmapItem":null}`, `{"mindmap":"bad"}`, `{"mindmapItem":1}`,
+	})
+}
+
+func TestAPIContractSettingFileTreeClickModeCompatibility(t *testing.T) {
+	compareSettingConfig(t, apicontract.SetFiletree, conf.NewFileTree, []string{
+		`{}`, `{"docIconClickMode":1,"parentDocTitleClickMode":2}`,
+		`{"docIconClickMode":0}`, `{"docIconClickMode":null}`, `{"DocIconClickMode":1}`,
+		`{"parentDocTitleClickMode":0}`, `{"parentDocTitleClickMode":1}`, `{"parentDocTitleClickMode":null}`,
+		`{"ParentDocTitleClickMode":2}`, `{"docIconClickMode":2}`, `{"parentDocTitleClickMode":3}`,
+		`{"docIconClickMode":"1"}`, `{"docIconClickMode":1.5}`, `{"parentDocTitleClickMode":true}`,
+		// 已废弃的布尔字段不再被读取
+		`{"docIconClickExpand":true}`, `{"parentDocClickExpand":true,"parentDocDoubleClickOpen":false}`,
+	})
+}
+
+func TestAPIContractSettingImageDisplayCompatibility(t *testing.T) {
+	compareSettingConfig(t, apicontract.SetEditor, conf.NewEditor, []string{
+		`{}`, `{"displayImgName":true}`, `{"displayImgName":false}`,
+		`{"displayImgName":null}`, `{"DisplayImgName":true}`, `{"displayImgName":"bad"}`,
+		`{"displayImgAlt":true}`, `{"displayImgAlt":false}`, `{"displayImgAlt":null}`,
+		`{"DisplayImgAlt":true}`, `{"displayImgAlt":"bad"}`,
+	})
+}
+
+func TestAPIContractSettingImageDisplayUpdates(t *testing.T) {
+	previousConf, previousReadOnly, previousMarkdown := model.Conf, util.ReadOnly, util.MarkdownSettings.Load()
+	model.Conf = model.NewAppConf()
+	model.Conf.Editor.Store(conf.NewEditor())
+	util.ReadOnly = true
+	t.Cleanup(func() {
+		{
+			derivedValue0, derivedValue1, derivedValue2 := previousConf, previousReadOnly, previousMarkdown
+			model.Conf = derivedValue0
+			util.ReadOnly = derivedValue1
+			util.MarkdownSettings.Store(derivedValue2)
+		}
+	})
+	for _, entry := range []struct {
+		body string
+		want bool
+	}{
+		{`{"displayImgName":true}`, true},
+		{`{}`, true},
+		{`{"displayImgName":false}`, false},
+		{`{"DisplayImgName":true}`, true},
+		{`{"displayImgName":null}`, false},
+	} {
+		code, message, data := settingContractRequest(t, "setEditor", setEditor, entry.body)
+		var response apicontract.SettingEditor
+		if err := json.Unmarshal(data, &response); err != nil {
+			t.Fatal(err)
+		}
+		if code != 0 || model.Conf.Editor.Load().DisplayImgName != entry.want || response.DisplayImgName != entry.want {
+			t.Fatalf("image display update %s: code=%d message=%s data=%s", entry.body, code, message, data)
+		}
+	}
+	for _, entry := range []struct {
+		body string
+		want bool
+	}{
+		{`{"displayImgAlt":true}`, true}, {`{}`, true}, {`{"displayImgAlt":false}`, false},
+		{`{"DisplayImgAlt":true}`, true}, {`{"displayImgAlt":null}`, false},
+	} {
+		code, message, data := settingContractRequest(t, "setEditor", setEditor, entry.body)
+		var response apicontract.SettingEditor
+		if err := json.Unmarshal(data, &response); err != nil {
+			t.Fatal(err)
+		}
+		if code != 0 || model.Conf.Editor.Load().DisplayImgAlt != entry.want || response.DisplayImgAlt != entry.want {
+			t.Fatalf("image tooltip text update %s: code=%d message=%s data=%s", entry.body, code, message, data)
+		}
+	}
 }
 
 func TestAPIContractSettingParserCompatibility(t *testing.T) {
@@ -145,17 +223,17 @@ func TestAPIContractSettingErrorsAndAdmission(t *testing.T) {
 func TestAPIContractSettingEmojiAndPublishValidation(t *testing.T) {
 	previous := model.Conf
 	model.Conf = model.NewAppConf()
-	model.Conf.Editor = conf.NewEditor()
-	model.Conf.Publish = conf.NewPublish()
+	model.Conf.Editor.Store(conf.NewEditor())
+	model.Conf.Publish.Store(conf.NewPublish())
 	t.Cleanup(func() { model.Conf = previous })
 	code, _, data := settingContractRequest(t, "setEmoji", setEmoji, `{"emoji":[]}`)
-	if code != 0 || string(data) != "null" || model.Conf.Editor.Emoji == nil || len(model.Conf.Editor.Emoji) != 0 {
+	if code != 0 || string(data) != "null" || model.Conf.Editor.Load().Emoji == nil || len(model.Conf.Editor.Load().Emoji) != 0 {
 		t.Fatal("empty emoji list changed")
 	}
-	priorPublish := model.Conf.Publish
+	priorPublish := model.Conf.Publish.Load()
 	for _, body := range []string{`{"auth":{"enable":true,"accounts":[null]}}`, `{"auth":{"enable":true,"accounts":[{"username":"u","password":"short"}]}}`, `{"auth":{"enable":true,"accounts":[{"username":"u","password":"12345678"},{"username":"u","password":"12345678"}]}}`} {
 		code, _, _ = settingContractRequest(t, "setPublish", setPublish, body)
-		if code != -1 || model.Conf.Publish != priorPublish {
+		if code != -1 || model.Conf.Publish.Load() != priorPublish {
 			t.Fatal("invalid publish credentials changed configuration")
 		}
 	}
@@ -171,6 +249,9 @@ func fillSettingPayload(value reflect.Value) {
 			if value.Field(i).CanSet() {
 				fillSettingPayload(value.Field(i))
 			}
+		}
+		if value.Type() == reflect.TypeFor[conf.EntryVisibilityProfile]() {
+			value.FieldByName("Defaults").SetString(conf.EntryVisibilityProfileSimple)
 		}
 	case reflect.Slice:
 		value.Set(reflect.MakeSlice(value.Type(), 2, 2))
@@ -205,11 +286,33 @@ func compareSettingPayload[Source, Data any](t *testing.T, route string, convert
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Decision 的旧字段只在响应中投影，持久化配置不重复存储凭证。
+		if ai, ok := any(source).(*conf.AI); ok && ai.Decision != nil {
+			var expected map[string]json.RawMessage
+			if err = json.Unmarshal(before, &expected); err != nil {
+				t.Fatal(err)
+			}
+			expected["decision"], err = json.Marshal(settingDecisionPayload(ai.Decision))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err = json.Marshal(expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		after, err := json.Marshal(convert(source))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(before) != string(after) {
+		var beforeValue, afterValue any
+		if err = json.Unmarshal(before, &beforeValue); err != nil {
+			t.Fatal(err)
+		}
+		if err = json.Unmarshal(after, &afterValue); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(beforeValue, afterValue) {
 			t.Fatalf("%s response mapping changed:\n%s\n%s", route, before, after)
 		}
 		if route == "" {
